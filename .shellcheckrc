@@ -1,0 +1,4 @@
+# ShellCheck settings for every shell file in this repository, found by walking up from the
+# checked file. external-sources lets ShellCheck follow sourced files as -x does. The shell
+# comes from each file's shebang; tests/helpers.bash names it in a directive.
+external-sources=true

@@ -1,0 +1,77 @@
+# gitleaks settings: the default secret rules, plus the rules of .githooks/privacy-scan for disk
+# and partition identifiers, private addresses, .lan host names, user home paths and e-mail
+# addresses. Examples and tests use only synthetic identifiers that start with 5ca1ab1e
+# (5CA1-AB1E for FAT serials, 5ca1ab for LVM UUIDs), which the allowlists let through.
+title = "kernel-updater"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "disk-uuid"
+description = "Filesystem, LUKS or swap UUID"
+regex = '''\b[0-9A-Fa-f]{8,9}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b'''
+[[rules.allowlists]]
+regexes = ['''(?i)^5ca1ab1e''']
+
+[[rules]]
+id = "dashless-uuid"
+description = "LUKS UUID in the dashless form that cryptomount takes"
+regex = '''\b[0-9A-Fa-f]{32}\b'''
+[[rules.allowlists]]
+regexes = ['''(?i)^5ca1ab1e''']
+
+[[rules]]
+id = "ntfs-serial"
+description = "NTFS volume serial"
+regex = '''\b[0-9A-Fa-f]{16}\b'''
+[[rules.allowlists]]
+regexes = ['''(?i)^5ca1ab1e''']
+
+[[rules]]
+id = "fat-serial"
+description = "FAT or exFAT volume serial after UUID= or --fs-uuid"
+regex = '''(?:UUID=.?|--fs-uuid.* )[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}\b'''
+[[rules.allowlists]]
+regexes = ['''(?i)5ca1-ab1e''']
+
+[[rules]]
+id = "lvm-uuid"
+description = "LVM physical or logical volume UUID"
+regex = '''\b[0-9A-Za-z]{6}(?:-[0-9A-Za-z]{4}){5}-[0-9A-Za-z]{6}\b'''
+[[rules.allowlists]]
+regexes = ['''(?i)^5ca1ab''']
+
+[[rules]]
+id = "partuuid"
+description = "PARTUUID or PTUUID, which carry the disk signature"
+regex = '''\b[Pp](?:[Aa][Rr])?[Tt][Uu][Uu][Ii][Dd][^0-9A-Za-z]{0,3}[0-9A-Fa-f]{8}'''
+[[rules.allowlists]]
+regexes = ['''(?i)5ca1ab1e''']
+
+[[rules]]
+id = "private-ipv4"
+description = "Private IPv4 address"
+regex = '''\b(?:10(?:\.[0-9]{1,3}){3}|192\.168(?:\.[0-9]{1,3}){2}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2})\b'''
+
+[[rules]]
+id = "private-ipv6"
+description = "Unique local or link-local IPv6 address"
+regex = '''(?i)\b(?:fd[0-9a-f]{2}|fe[89ab][0-9a-f]):[0-9a-f:]*'''
+
+[[rules]]
+id = "lan-host"
+description = "Host name in the .lan domain"
+regex = '''(?i)\b[a-z0-9-]+\.lan\b'''
+
+[[rules]]
+id = "home-path"
+description = "User home directory path"
+regex = '''/home/[A-Za-z0-9._-]+|[A-Za-z]:[\\/]+(?i:users)[\\/]+|/[A-Za-z]/(?i:u)sers/[A-Za-z0-9._-]+|/Users/[A-Za-z0-9._-]+'''
+
+[[rules]]
+id = "email"
+description = "E-mail address other than a GitHub no-reply one"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'''
+[[rules.allowlists]]
+regexes = ['''(?i)@(?:users\.noreply\.github\.com|example\.(?:com|org|net))$''', '''(?i)^git@github\.com$''']

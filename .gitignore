@@ -1,0 +1,21 @@
+# The owner's real MultiBootUSB config and copies of it. They hold the stick's disk and
+# partition identifiers; only the synthetic configs under examples/ are committed.
+/grub.cfg
+*.real.cfg
+*.bak
+
+# Local test-run logs.
+*.log
+
+# The tool reads no secrets; this guards against committing one by accident.
+.env*
+
+# Editor and OS files.
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+desktop.ini
+.DS_Store
