@@ -1,0 +1,96 @@
+#!/bin/sh
+# Refuse blobs that must never be committed: CRLF line endings, disk and partition identifiers
+# outside the synthetic 5ca1ab1e range, private addresses, .lan host names, user home paths,
+# e-mail addresses, and fixed strings listed in the untracked $GIT_DIR/info/privacy-denylist.
+# Reports file:line and the kind of match, never the value. .gitleaks.toml repeats the rules.
+set -eu
+
+usage() {
+    echo "usage: privacy-scan --staged | --tracked" >&2
+    exit 64
+}
+
+# Stop with exit 2, so a failing tool never passes for a clean scan.
+fail() {
+    echo "privacy-scan: $1" >&2
+    exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+case "$1" in
+    --staged | --tracked) mode=$1 ;;
+    *) usage ;;
+esac
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+tree="$tmp/tree"
+deny="$tmp/deny"
+hits="$tmp/hits"
+mkdir "$tree"
+: > "$hits"
+
+# One fixed string per line, matched case-insensitively; CRs, blank lines and # lines are dropped.
+denylist="$(git rev-parse --git-dir)/info/privacy-denylist"
+if [ -f "$denylist" ]; then
+    tr -d '\r' < "$denylist" | grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' > "$deny" || true
+else
+    : > "$deny"
+fi
+
+# Turn the "./FILE:LINE:MATCH" lines that grep wrote to $tmp/m into "FILE:LINE: $1" lines in
+# $hits, skipping matches that, lowercased, match the ERE $2: the synthetic identifiers. An
+# empty $2 skips nothing.
+report() {
+    KIND=$1 EXEMPT=$2 awk '
+        {
+            rest = substr($0, 3)
+            i = index(rest, ":"); file = substr(rest, 1, i - 1); rest = substr(rest, i + 1)
+            i = index(rest, ":"); line = substr(rest, 1, i - 1); hit = substr(rest, i + 1)
+            if (ENVIRON["EXEMPT"] != "" && tolower(hit) ~ ENVIRON["EXEMPT"]) next
+            print file ":" line ": " ENVIRON["KIND"]
+        }' "$tmp/m" >> "$hits"
+}
+
+# Report every match of the ERE $2 in the blobs under $tree as kind $1, except the synthetic
+# ones that match $3 (see report).
+check() {
+    (cd "$tree" && grep -r -a -n -o -E -e "$2" .) > "$tmp/m" || [ $? -eq 1 ] || fail "grep failed on the $1 rule"
+    report "$1" "$3"
+}
+
+# Write the scanned blobs under $tree. Symlinks become plain files that hold their target, so
+# the target is scanned too.
+if [ "$mode" = --staged ]; then
+    git diff --cached --name-only -z --diff-filter=ACMR > "$tmp/list"
+    [ -s "$tmp/list" ] || exit 0
+    git -c core.symlinks=false checkout-index -z --stdin --prefix="$tree/" < "$tmp/list"
+else
+    git -c core.symlinks=false checkout-index --all --prefix="$tree/"
+fi
+
+# The index records each blob's line endings; a path marked -text may keep CRLF.
+git -c core.quotePath=false ls-files --eol |
+    awk -F '\t' '$1 ~ /^i\/(crlf|mixed) / && $1 !~ /attr\/-text/ { print $2 ": CRLF line endings" }' >> "$hits"
+
+check "disk UUID" '\b[0-9A-Fa-f]{8,9}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b' '^5ca1ab1e'
+check "dashless UUID" '\b[0-9A-Fa-f]{32}\b' '^5ca1ab1e'
+check "NTFS volume serial" '\b[0-9A-Fa-f]{16}\b' '^5ca1ab1e'
+check "FAT volume serial" '(UUID=.?|--fs-uuid.* )[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}\b' '5ca1-ab1e'
+check "LVM UUID" '\b[0-9A-Za-z]{6}(-[0-9A-Za-z]{4}){5}-[0-9A-Za-z]{6}\b' '^5ca1ab'
+check "PARTUUID or PTUUID" '\b[Pp]([Aa][Rr])?[Tt][Uu][Uu][Ii][Dd][^0-9A-Za-z]{0,3}[0-9A-Fa-f]{8}' '5ca1ab1e'
+check "private IPv4 address" '\b(10(\.[0-9]{1,3}){3}|192\.168(\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(\.[0-9]{1,3}){2})\b' ''
+check "private IPv6 address" '\b([Ff][Dd][0-9A-Fa-f]{2}|[Ff][Ee][89ABab][0-9A-Fa-f]):[0-9A-Fa-f:]*' ''
+check ".lan host name" '\b[A-Za-z0-9-]+\.[Ll][Aa][Nn]\b' ''
+check "user home path" '/home/[A-Za-z0-9._-]+|[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+|/[A-Za-z]/[Uu]sers/[A-Za-z0-9._-]+|/Users/[A-Za-z0-9._-]+' ''
+check "e-mail address" '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' '@(users\.noreply\.github\.com|example\.(com|org|net))$|^git@github\.com$'
+if [ -s "$deny" ]; then
+    (cd "$tree" && grep -r -a -n -o -i -F -f "$deny" .) > "$tmp/m" || [ $? -eq 1 ] || fail "grep failed on the denylist"
+    report "denylisted value" ""
+fi
+
+if [ -s "$hits" ]; then
+    sort -t: -k1,1 -k2,2n "$hits" | while IFS= read -r hit; do echo "privacy-scan: $hit" >&2; done
+    echo "privacy-scan: refused. Use the synthetic 5ca1ab1e identifiers instead (CONTRIBUTING.md, Test data)." >&2
+    exit 1
+fi

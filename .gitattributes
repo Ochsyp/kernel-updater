@@ -1,0 +1,2 @@
+# The tool runs on Kali; CRLF would break its shebangs, so every text file is stored LF.
+* text=auto eol=lf
