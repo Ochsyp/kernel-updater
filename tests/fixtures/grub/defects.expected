@@ -1,0 +1,17 @@
+5	error	unknown-module	unknown module 'nfts'
+14	error	unknown-command	unknown command 'terminal'
+18	warning	mbusb-marker	an encrypted entry lies between MultiBootUSB's #start and #end markers, which its uninstaller deletes
+21	error	unknown-command	unknown command 'lload_video'
+22	error	cryptomount-uuid	cryptomount -u is given a UUID with dashes, which GRUB older than 2.12 never matches
+23	error	cryptouuid-dashes	cryptouuid/ device name has dashes, which GRUB older than 2.12 never matches
+24	warning	cryptouuid-dashes	cryptouuid/ device name has dashes, which GRUB older than 2.12 never matches
+24	warning	fs-uuid-is-luks	search --fs-uuid is given the LUKS container's UUID instead of the filesystem's inside it, so it never matches
+25	warning	arch-param	cryptdevice= is mkinitcpio (Arch) syntax; Debian's initramfs ignores it and unlocks from the crypttab in the initrd
+25	warning	live-boot-param	noswap does nothing on an installed system; systemd.swap=0 keeps swap off
+25	warning	overlayroot-option	overlayroot ignores the unknown option 'resurce'; tmpfs takes recurse and swap
+33	error	cryptomount-uuid	cryptomount -u is not given a LUKS UUID (32 hex digits)
+34	error	cryptouuid-malformed	cryptouuid/ device name is not a LUKS UUID (32 hex digits)
+35	error	fs-uuid-malformed	search --fs-uuid is not given a filesystem UUID or volume serial
+40	warning	hard-coded-drive	names a drive as (hdN,...), whose number changes with the machine and the boot path; find the partition by UUID instead
+41	warning	hard-coded-drive	names a drive as (hdN,...), whose number changes with the machine and the boot path; find the partition by UUID instead
+45	warning	mbusb-marker	an encrypted entry lies between MultiBootUSB's #start and #end markers, which its uninstaller deletes

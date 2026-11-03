@@ -1,0 +1,176 @@
+# shellcheck shell=bash
+# -------------------------------------------------------
+# kernel-updater common library
+#
+# Exit codes, logging, the dry-run and confirmation rails, the root check, the single-instance
+# lock, exit traps and path helpers. Defines functions and settings only.
+# -------------------------------------------------------
+
+# Exit codes, the same for every command and listed in the README; the global options set
+# the verbosity (0 quiet, 1 normal, 2 verbose) and the other switches.
+# shellcheck disable=SC2034 # read by the files that source this library
+declare -g KU_EX_FAILURE=1 KU_EX_FINDINGS=2 KU_EX_REFUSED=3 KU_EX_WRITE=4 KU_EX_DECLINED=10 \
+    KU_EX_USAGE=64 KU_EX_NOINPUT=66 KU_EX_BUSY=75 KU_EX_NOPERM=77 KU_EX_CONFIG=78 \
+    KU_VERBOSITY=1 KU_DRY_RUN=0 KU_ASSUME_YES=0 KU_PORCELAIN=0
+
+# Seams for the tests that production never sets: the root every system path is resolved
+# under, the terminal confirmations are read from, and the lock file.
+KU_ROOT=${KU_ROOT:-/}
+KU_TTY=${KU_TTY:-/dev/tty}
+KU_LOCKFILE=${KU_LOCKFILE:-/run/kernel-updater.lock}
+
+# Functions ku_on_exit runs when the process ends, in reverse order of registration.
+KU_CLEANUP=()
+
+# A kernel release as uname -r prints it. Anything else is refused before it reaches a path
+# or a command line.
+KU_RELEASE_RE='^[0-9]+\.[0-9]+[0-9A-Za-z.+~_-]*$'
+
+# =======================================================
+#                       MESSAGES
+# =======================================================
+
+# Print "kernel-updater: LEVEL: MESSAGE" on stderr. info is dropped by --quiet and debug is
+# shown only with --verbose. A closed stderr never turns a log line into a failure.
+ku_log() {
+    local level=$1
+    shift
+    case $level in
+        debug) (( KU_VERBOSITY >= 2 )) || return 0 ;;
+        info) (( KU_VERBOSITY >= 1 )) || return 0 ;;
+    esac
+    printf 'kernel-updater: %s: %s\n' "$level" "$*" >&2 || true
+}
+
+# Log MESSAGE as an error and exit with CODE. Call it in the main shell: inside $(...) the
+# subshell's code reaches the caller only as a failure, which the ERR trap turns into 1.
+ku_die() {
+    local code=$1
+    shift
+    ku_log error "$*"
+    exit "$code"
+}
+
+# Log MESSAGE as an error, point at --help and exit 64.
+ku_usage_error() {
+    ku_log error "$*"
+    printf "Try 'kernel-updater --help'.\n" >&2 || true
+    exit "$KU_EX_USAGE"
+}
+
+# =======================================================
+#                        RAILS
+# =======================================================
+
+# Run a command, or with --dry-run only print it on stderr, each argument shell-quoted.
+# Returns the command's status; a dry run returns 0.
+ku_run() {
+    local quoted
+    printf -v quoted ' %q' "$@"
+    if (( KU_DRY_RUN )); then
+        printf 'kernel-updater: would run:%s\n' "$quoted" >&2
+        return 0
+    fi
+    ku_log debug "run:$quoted"
+    "$@"
+}
+
+# Ask PROMPT on the terminal and return 0 on "y" or "yes"; --yes answers for the user. Exits
+# 10 on any other answer or when no terminal can be read, so nothing runs unconfirmed.
+ku_confirm() {
+    local answer="" fd
+    if (( KU_ASSUME_YES )); then
+        return 0
+    fi
+    if ! { exec {fd}< "$KU_TTY"; } 2> /dev/null; then
+        ku_die "$KU_EX_DECLINED" "no terminal to confirm on; pass --yes to go ahead unattended"
+    fi
+    printf '%s [y/N] ' "$1" >&2
+    IFS= read -r answer <&"$fd" || true
+    exec {fd}<&-
+    case ${answer,,} in
+        y | yes) return 0 ;;
+    esac
+    ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
+}
+
+# Exit 77 unless the effective user is root.
+ku_require_root() {
+    [[ $(id -u) == 0 ]] || ku_die "$KU_EX_NOPERM" "this command must run as root"
+}
+
+# Take the single-instance lock for the rest of the process, or exit 75 when another run
+# holds it or the lock file cannot be opened, and 1 when flock is missing or fails otherwise.
+# The lock goes when the process exits. The file sits in /run, which only root can write.
+ku_lock() {
+    local fd status=0
+    command -v flock > /dev/null || ku_die "$KU_EX_FAILURE" "flock (util-linux) is not installed"
+    : 2> /dev/null >> "$KU_LOCKFILE" || ku_die "$KU_EX_BUSY" "cannot open the lock file $KU_LOCKFILE"
+    exec {fd}>> "$KU_LOCKFILE"
+    flock -n "$fd" || status=$?
+    case $status in
+        0) ;;
+        1) ku_die "$KU_EX_BUSY" "another kernel-updater run holds the lock" ;;
+        *) ku_die "$KU_EX_FAILURE" "flock failed with status $status" ;;
+    esac
+}
+
+# =======================================================
+#                    EXIT AND PATHS
+# =======================================================
+
+# Register the function NAME to run at exit, before those registered earlier.
+ku_cleanup_add() {
+    KU_CLEANUP+=("$1")
+}
+
+# EXIT trap: run the registered cleanups in reverse order and keep the exit status. A
+# failing cleanup is logged and the others still run; signals are ignored meanwhile, so a
+# second Ctrl-C cannot cut the cleanups short.
+ku_on_exit() {
+    local status=$? i
+    trap '' INT TERM HUP
+    trap - ERR
+    for (( i = ${#KU_CLEANUP[@]} - 1; i >= 0; i-- )); do
+        "${KU_CLEANUP[i]}" || ku_log warning "cleanup ${KU_CLEANUP[i]} failed"
+    done
+    exit "$status"
+}
+
+# Signal trap: exit with STATUS (128 plus the signal number) through the EXIT trap.
+ku_on_signal() {
+    trap - "$1"
+    ku_log error "interrupted by SIG$1"
+    exit "$2"
+}
+
+# ERR trap: report an unexpected failure with the function and line it happened in and exit
+# 1, so a failed tool never ends with an exit code that means something else. A subshell
+# only passes its status up, so the main shell reports each failure once.
+ku_on_error() {
+    local status=$?
+    if [[ $BASHPID != "$$" ]]; then
+        exit "$status"
+    fi
+    ku_log error "unexpected failure in ${FUNCNAME[1]:-main}, line $1"
+    exit "$KU_EX_FAILURE"
+}
+
+# Install the EXIT, ERR and signal traps; INT, TERM and HUP exit 130, 143 and 129.
+ku_install_traps() {
+    trap ku_on_exit EXIT
+    trap 'ku_on_error "$LINENO"' ERR
+    trap 'ku_on_signal INT 130' INT
+    trap 'ku_on_signal TERM 143' TERM
+    trap 'ku_on_signal HUP 129' HUP
+}
+
+# Print the absolute PATH resolved under KU_ROOT.
+ku_path() {
+    printf '%s\n' "${KU_ROOT%/}$1"
+}
+
+# Return 0 when RELEASE has the shape of a kernel release.
+ku_valid_release() {
+    [[ $1 =~ $KU_RELEASE_RE ]]
+}

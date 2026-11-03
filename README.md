@@ -57,6 +57,57 @@ The phases, one pull request each:
 7. `cleanup` of leftover kernel packages and module trees, removal of the legacy script, and
    release 1.0.0
 
+## Usage
+
+The redesigned tool is `bin/kernel-updater`. Until phase 4 adds an installer, run it from a
+checkout. It needs Bash 4.4 or later, GNU coreutils and awk; `grub-script-check` (Debian
+package `grub-common`) adds a syntax check to `lint`.
+
+```text
+kernel-updater [OPTIONS] COMMAND [ARGS]
+```
+
+| Command | Does |
+|---|---|
+| `lint FILE...` | Checks GRUB configs for errors GRUB reports only at boot: syntax errors, unknown commands and modules, malformed or misused LUKS and filesystem UUIDs, kernel parameters that do nothing, drives named as `(hdN,...)`, and encrypted entries between MultiBootUSB's `#start` and `#end` markers. Findings name the kind of identifier, never its value |
+| `help`, `version` | Print the usage or the version |
+
+`lint` takes `--floor VERSION`, the oldest GRUB the files must run on: 2.02 (the default),
+2.06, 2.12 or 2.14. Below 2.12, LUKS UUIDs written with dashes are errors, because older GRUB
+never matches them. `--grub-dir DIR` takes the command and module names from a stick's own
+`command.lst` and `moddep.lst`, `--strict` fails on warnings too, and `--porcelain` prints
+tab-separated fields.
+
+Global options: `-c`/`--config FILE`, `-n`/`--dry-run`, `-y`/`--yes`, `-v`/`--verbose`,
+`-q`/`--quiet`, `--porcelain`, `-h`/`--help` and `-V`/`--version`. Results go to stdout and
+messages to stderr.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Unexpected error |
+| 2 | Findings: `lint` found an error, or a warning with `--strict` |
+| 3 | Refused: a check failed and nothing was changed |
+| 4 | A write failed and the previous state was restored |
+| 10 | Declined, or no terminal to confirm on without `--yes` |
+| 64 | Usage error |
+| 66 | An input file cannot be read |
+| 75 | Busy: another run holds the lock |
+| 77 | Not run as root |
+| 78 | Bad configuration |
+| 128+N | Interrupted by signal N |
+
+### Configuration
+
+`/etc/kernel-updater.conf` holds `key = value` lines; a line that starts with `#` is a
+comment. The file is parsed, never sourced. A key the tool does not know is ignored with a
+warning; a bad line or value and a key set twice exit 78; and when the tool runs as root the
+file must be owned by root and not writable by group or others. `examples/kernel-updater.conf` lists the keys:
+
+| Key | Meaning |
+|---|---|
+| `grub_floor` | Default of `lint --floor` |
+
 ## Examples
 
 `examples/grub.cfg` is a synthetic MultiBootUSB config with the versioned Kali entries the
@@ -76,8 +127,9 @@ bats tests/
 
 - ShellCheck must report nothing for any shell file. That test is skipped when `shellcheck`
   is not on PATH.
-- `grub-script-check` (Debian package `grub-common`) checks the example configs. That test is
-  skipped when it is missing, as it is on Windows.
+- `grub-script-check` (Debian package `grub-common`) checks the example configs and a syntax
+  error for `lint`, and the lint fixture runs under both `mawk` and `gawk`. Those tests are
+  skipped where the tools are missing, as on Windows, and so is the test with a real `flock`.
 - CI runs the suite on every pull request and every push to `main`
   (`.github/workflows/tests.yml`), with a pinned ShellCheck and with `grub-common`
   installed, and fails when any test is skipped.
