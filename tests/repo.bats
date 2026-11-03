@@ -100,7 +100,7 @@ scratch_repo() {
 @test "The scripts and hooks are stored executable" {
     cd "$REPO_DIR"
     local f
-    for f in update_kernel.sh .githooks/pre-commit .githooks/pre-push .githooks/privacy-scan; do
+    for f in update_kernel.sh bin/kernel-updater .githooks/pre-commit .githooks/pre-push .githooks/privacy-scan; do
         run git ls-files -s -- "$f"
         [[ "$output" == "100755 "* ]] || { printf '%s is not stored executable: %s\n' "$f" "$output" >&2; return 1; }
     done

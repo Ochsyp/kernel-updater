@@ -42,11 +42,10 @@ jobs:
           echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
           tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
           sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
-          # grub-common ships grub-script-check; install it only when the image lacks it.
-          if ! command -v grub-script-check > /dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --no-install-recommends grub-common
-          fi
+          # grub-common ships grub-script-check; mawk (Debian's default awk) and gawk both run
+          # the lint tests.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends grub-common mawk gawk
           "$RUNNER_TEMP/bats/node_modules/.bin/bats" --version
           shellcheck --version | grep -qx "version: ${SHELLCHECK_VERSION}"
           command -v grub-script-check

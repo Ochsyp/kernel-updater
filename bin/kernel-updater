@@ -1,0 +1,101 @@
+#!/bin/bash
+# -------------------------------------------------------
+# kernel-updater
+#
+# Keeps the Kali entries of a MultiBootUSB stick bootable across kernel updates. Parses the
+# global options, loads the configuration and runs one command.
+# -------------------------------------------------------
+
+set -Eeuo pipefail
+shopt -s inherit_errexit
+
+# The libraries and data sit beside the script, in ../lib/kernel-updater and
+# ../share/kernel-updater, both in a checkout and under an install prefix.
+KU_SELF=$(readlink -f -- "${BASH_SOURCE[0]}")
+KU_LIBDIR=${KU_SELF%/*}/../lib/kernel-updater
+KU_SHAREDIR=${KU_SELF%/*}/../share/kernel-updater
+
+# shellcheck source=lib/kernel-updater/common.sh
+. "$KU_LIBDIR/common.sh"
+# shellcheck source=lib/kernel-updater/config.sh
+. "$KU_LIBDIR/config.sh"
+# shellcheck source=lib/kernel-updater/lint.sh
+. "$KU_LIBDIR/lint.sh"
+
+# Print the usage on stdout.
+ku_usage() {
+    cat << 'EOF'
+Usage: kernel-updater [OPTIONS] COMMAND [ARGS]
+
+Keeps the Kali entries of a MultiBootUSB stick bootable across kernel updates.
+
+Commands:
+  lint FILE...       check GRUB configs for errors GRUB reports only at boot
+                     (kernel-updater lint --help lists its options)
+  help               show this help
+  version            print the version
+
+Options:
+  -c, --config FILE  read FILE instead of /etc/kernel-updater.conf
+  -n, --dry-run      print what would change, change nothing
+  -y, --yes          answer yes to every confirmation
+  -v, --verbose      also print debug messages
+  -q, --quiet        print only warnings and errors
+      --porcelain    print results as tab-separated fields
+  -h, --help         show this help
+  -V, --version      print the version
+
+Results go to stdout and messages to stderr. Exit codes: 0 ok, 1 unexpected error,
+2 findings, 3 refused, 4 write failed, 10 declined, 64 usage error, 66 missing input,
+75 busy, 77 not root, 78 bad configuration, 128+N killed by signal N.
+EOF
+}
+
+# Print the program name and version on stdout.
+ku_print_version() {
+    local version
+    version=$(< "$KU_SHAREDIR/VERSION")
+    printf 'kernel-updater %s\n' "$version"
+}
+
+# Parse the global options and run the command, which loads the configuration once it has
+# parsed its own options. Exits through the traps installed here once the command is known.
+ku_main() {
+    local config="" cmd
+    while (( $# )); do
+        case $1 in
+            -c | --config)
+                if (( $# < 2 )) || [[ -z $2 ]]; then
+                    ku_usage_error "$1 needs a file"
+                fi
+                config=$2
+                shift 2
+                ;;
+            --config=?*) config=${1#*=}; shift ;;
+            -n | --dry-run) KU_DRY_RUN=1; shift ;;
+            -y | --yes) KU_ASSUME_YES=1; shift ;;
+            -v | --verbose) KU_VERBOSITY=2; shift ;;
+            -q | --quiet) KU_VERBOSITY=0; shift ;;
+            --porcelain) KU_PORCELAIN=1; shift ;;
+            -h | --help) ku_usage; exit 0 ;;
+            -V | --version) ku_print_version; exit 0 ;;
+            --) shift; break ;;
+            -*) ku_usage_error "unknown option $1" ;;
+            *) break ;;
+        esac
+    done
+    (( $# )) || ku_usage_error "no command given"
+    cmd=$1
+    shift
+    case $cmd in
+        help) ku_usage; exit 0 ;;
+        version) ku_print_version; exit 0 ;;
+        lint) ;;
+        *) ku_usage_error "unknown command '$cmd'" ;;
+    esac
+    ku_install_traps
+    KU_CONFIG_FILE=$config
+    "ku_cmd_$cmd" "$@"
+}
+
+ku_main "$@"

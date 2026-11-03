@@ -3,8 +3,8 @@
 # kernel-updater test helpers
 #
 # Sourced by every .bats file in tests/ through `load helpers`. Holds the repository
-# paths, PATH stubs that log their arguments, and the ShellCheck runners the lint
-# checks use.
+# paths, PATH stubs that log their arguments, runners for update_kernel.sh and
+# bin/kernel-updater, a loader for the libraries, and the ShellCheck runners.
 # -------------------------------------------------------
 
 bats_require_minimum_version 1.5.0
@@ -50,6 +50,27 @@ EOF
 # stderr. Only the script sees the stubs; the test's own commands stay real.
 run_legacy() {
     run --separate-stderr env PATH="$STUB_BIN:$PATH" bash "$REPO_DIR/update_kernel.sh" "$@"
+}
+
+# Run bin/kernel-updater with the stubs first on PATH and the KU_ROOT, KU_TTY and KU_LOCKFILE
+# seams inside the test's temp directory, through bats' run with separate stderr.
+run_ku() {
+    run --separate-stderr env PATH="$STUB_BIN:$PATH" KU_ROOT="$BATS_TEST_TMPDIR/root" \
+        KU_TTY="$BATS_TEST_TMPDIR/tty" KU_LOCKFILE="$BATS_TEST_TMPDIR/lock" \
+        bash "$REPO_DIR/bin/kernel-updater" "$@"
+}
+
+# Source the libraries into the test shell as bin/kernel-updater does, without its strict
+# mode and traps, so tests can call the functions directly.
+load_ku_libs() {
+    # shellcheck disable=SC2034 # read by the sourced libraries
+    KU_LIBDIR="$REPO_DIR/lib/kernel-updater" KU_SHAREDIR="$REPO_DIR/share/kernel-updater"
+    # shellcheck source=lib/kernel-updater/common.sh
+    . "$KU_LIBDIR/common.sh"
+    # shellcheck source=lib/kernel-updater/config.sh
+    . "$KU_LIBDIR/config.sh"
+    # shellcheck source=lib/kernel-updater/lint.sh
+    . "$KU_LIBDIR/lint.sh"
 }
 
 # Fail the test when the ERE $1 matches a line of file $2. A bare `! grep` would not fail
