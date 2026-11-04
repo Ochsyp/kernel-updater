@@ -64,7 +64,7 @@ ku_cmd_lint() {
     (( ${#files[@]} )) || ku_usage_error "lint: no file given"
     ku_load_config
     floor=${floor:-${KU_CONF[grub_floor]}}
-    _ku_check_grub_version "$floor" || ku_usage_error "lint: --floor takes 2.02, 2.06, 2.12 or 2.14"
+    _ku_valid_grub_version "$floor" || ku_usage_error "lint: --floor takes 2.02, 2.06, 2.12 or 2.14"
     if (( ${#cmds[@]} )); then
         exact=1
     else

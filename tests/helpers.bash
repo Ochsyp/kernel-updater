@@ -2,15 +2,17 @@
 # -------------------------------------------------------
 # kernel-updater test helpers
 #
-# Sourced by every .bats file in tests/ through `load helpers`. Holds the repository
-# paths, PATH stubs that log their arguments, runners for update_kernel.sh and
-# bin/kernel-updater, a loader for the libraries, and the ShellCheck runners.
+# Sourced by the .bats files under tests/ through `load`: repository paths, PATH and system
+# stubs, runners for both scripts, a library loader, check result readers and ShellCheck runners.
 # -------------------------------------------------------
 
 bats_require_minimum_version 1.5.0
 
+# The directory of the running .bats file, and the repository root, found from this file so
+# that tests in subdirectories share it.
+# shellcheck disable=SC2034 # read by the .bats files
 TESTS_DIR="$BATS_TEST_DIRNAME"
-REPO_DIR="${TESTS_DIR%/*}"
+REPO_DIR=$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)
 
 # Create the per-test stub directory and the log every stub appends its call to.
 # Call from setup() before writing any stub.
@@ -71,6 +73,109 @@ load_ku_libs() {
     . "$KU_LIBDIR/config.sh"
     # shellcheck source=lib/kernel-updater/lint.sh
     . "$KU_LIBDIR/lint.sh"
+    # shellcheck source=lib/kernel-updater/probe.sh
+    . "$KU_LIBDIR/probe.sh"
+    # shellcheck source=lib/kernel-updater/check.sh
+    . "$KU_LIBDIR/check.sh"
+}
+
+# Make ln -s create symlinks. Git Bash copies files instead unless MSYS asks for Cygwin-style
+# links, which may dangle, or native ones. Returns 1 when neither works, so the test can skip.
+use_symlinks() {
+    local probe="$BATS_TEST_TMPDIR/symlink-probe" mode
+    : > "$probe.target"
+    for mode in winsymlinks:sys winsymlinks:nativestrict; do
+        export MSYS=$mode
+        if ln -s symlink-probe.target "$probe" 2> /dev/null && [[ -L $probe ]]; then
+            rm -f "$probe" "$probe.target"
+            return 0
+        fi
+        rm -f "$probe"
+    done
+    return 1
+}
+
+# Write a uname stub that prints UNAME_R, the running kernel's release, for any arguments:
+# 9.0.2+kali-amd64 when UNAME_R is unset, and nothing when it is empty.
+stub_uname() {
+    mkstub uname <<'EOF'
+printf '%s\n' "${UNAME_R-9.0.2+kali-amd64}"
+EOF
+}
+
+# Write an lsinitramfs stub that lists what a healthy initrd of the version in its file name
+# holds, key file included: LSINITRAMFS_DROP, an ERE, drops lines, and LSINITRAMFS_FAIL names
+# a version whose initrd it cannot read.
+stub_lsinitramfs() {
+    mkstub lsinitramfs <<'EOF'
+version=${1##*/initrd.img-}
+[[ $version != "${LSINITRAMFS_FAIL:-}" ]] || exit 1
+listing=$(printf '%s\n' . usr usr/lib usr/lib/modules "usr/lib/modules/$version" \
+    "usr/lib/modules/$version/modules.dep" usr/sbin usr/sbin/cryptsetup cryptroot \
+    cryptroot/crypttab cryptroot/keyfiles cryptroot/keyfiles/root_crypt.key)
+if [[ -n ${LSINITRAMFS_DROP:-} ]]; then
+    grep -v -E -e "$LSINITRAMFS_DROP" <<< "$listing"
+else
+    printf '%s\n' "$listing"
+fi
+EOF
+}
+
+# Write stubs for the tools check reads that a test machine cannot answer for: uname,
+# lsinitramfs, cryptsetup and dumpe2fs. They report a healthy system unless the variables
+# named in each stub say otherwise.
+stub_system_tools() {
+    export LUKS_DEVICE=/dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0-part3
+    export LUKS_DUMP="$REPO_DIR/tests/fixtures/system/luks1.dump"
+    export BOOT_FS_UUID=5ca1ab1e-0000-4000-8000-000000000b01
+    export EXT_FEATURES="has_journal ext_attr resize_inode dir_index filetype extent 64bit flex_bg"
+    EXT_FEATURES+=" sparse_super large_file huge_file dir_nlink extra_isize metadata_csum"
+    stub_uname
+    stub_lsinitramfs
+    # LUKS_TYPE is what status reports (empty: no crypt device); luksDump prints LUKS_DUMP for
+    # the device status names, and fails for any other.
+    mkstub cryptsetup <<'EOF'
+case $1 in
+    status)
+        [[ -n ${LUKS_TYPE-LUKS1} ]] || exit 4
+        printf '/dev/mapper/%s is active and is in use.\n' "$2"
+        printf '  type:    %s\n  cipher:  aes-xts-plain64\n' "${LUKS_TYPE-LUKS1}"
+        printf '  keysize: 512 bits\n  key location: dm-crypt\n  device:  %s\n' "$LUKS_DEVICE"
+        printf '  sector size:  512\n  mode:    read/write\n'
+        ;;
+    luksDump)
+        [[ $2 == "$LUKS_DEVICE" ]] || exit 1
+        cat "$LUKS_DUMP"
+        ;;
+    *) exit 1 ;;
+esac
+EOF
+    # EXT_FEATURES is the features line; DUMPE2FS_FAIL=1 makes it fail as on a foreign
+    # filesystem.
+    mkstub dumpe2fs <<'EOF'
+printf 'dumpe2fs 1.47.2 (1-Jan-2025)\n' >&2
+[[ -z ${DUMPE2FS_FAIL:-} ]] || exit 1
+printf 'Filesystem volume name:   <none>\nLast mounted on:          /boot\n'
+printf 'Filesystem UUID:          %s\nFilesystem magic number:  0xEF53\n' "$BOOT_FS_UUID"
+printf 'Filesystem features:      %s\n' "$EXT_FEATURES"
+printf 'Filesystem flags:         signed_directory_hash\n'
+EOF
+}
+
+# Print STATUS<TAB>DETAIL of ITEM from the porcelain output of the last check run.
+check_item() {
+    # shellcheck disable=SC2154 # bats' run sets output
+    awk -F '\t' -v item="$1" '$1 == item { print $2 "\t" $3 }' <<< "$output"
+}
+
+# Fail unless ITEM has STATUS and a detail that contains TEXT in the last check run.
+expect_item() {
+    local got
+    got=$(check_item "$1")
+    if [[ "$got" != "$2"$'\t'*"$3"* ]]; then
+        printf '%s: expected %s with "%s", got "%s"\n' "$1" "$2" "$3" "$got" >&2
+        return 1
+    fi
 }
 
 # Fail the test when the ERE $1 matches a line of file $2. A bare `! grep` would not fail

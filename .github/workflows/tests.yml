@@ -1,13 +1,16 @@
-# Runs the bats suite on every pull request and every push to main, and fails when a test is
-# skipped. ShellCheck is pinned and checksum-verified, and grub-common provides
-# grub-script-check for the example configs, so every test runs. Actions are pinned to commit
-# SHAs; Dependabot proposes updates.
+# Runs the bats suite on every pull request, every push to main and once a week, and fails when
+# a test is skipped. ShellCheck is pinned and checksum-verified, and grub-common provides
+# grub-script-check for the example configs, so every test runs. The kali job runs the container
+# suite in tests/container on a Kali rolling image built from ci/kali/Dockerfile; the weekly run
+# catches changes in Kali rolling. Actions are pinned to commit SHAs; Dependabot proposes updates.
 name: tests
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -55,5 +58,31 @@ jobs:
         run: |
           if grep -E '^ok [0-9]+ .* # skip' "$RUNNER_TEMP/bats.tap"; then
             echo "::error::Tests were skipped; every test must run in CI."
+            exit 1
+          fi
+
+  kali:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # An explicit bash adds -o pipefail, so the tee below cannot hide a failing bats run.
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the Kali image
+        run: docker build --tag kernel-updater-kali ci/kali
+      - name: Run the container tests
+        # --privileged lets the tests mount a tmpfs on /boot and check bind-mount / read-only.
+        # The checkout is mounted read-only; the tests change only the container.
+        run: |
+          docker run --rm --privileged --volume "$PWD:/src:ro" kernel-updater-kali \
+            bats --tap tests/container | tee "$RUNNER_TEMP/kali.tap"
+      - name: Fail on skipped tests
+        run: |
+          if grep -E '^ok [0-9]+ .* # skip' "$RUNNER_TEMP/kali.tap"; then
+            echo "::error::Container tests were skipped; every one must run in the Kali job."
             exit 1
           fi

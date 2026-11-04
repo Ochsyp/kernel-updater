@@ -10,3 +10,10 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+  # The digest of the Kali rolling image the container tests run on.
+  - package-ecosystem: docker
+    directory: /ci/kali
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

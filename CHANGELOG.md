@@ -52,6 +52,35 @@ with the owner's original script.
   keys.
 - Tests for the command line, the rails, the configuration and `lint`, with a synthetic
   fixture holding every defect class and the findings it must produce.
+- `kernel-updater check [--strict] [--porcelain]` reports, as root (exit 77 otherwise) and
+  without changing anything, whether the system keeps the Kali entries bootable, item by item:
+  `boot-mounted`, `boot-identity`, `boot-shadowed`, `kernel-img`, `boot-links`,
+  `stale-root-links`, `kernels`, `reboot-pending`, `initrd`, `boot-luks`, `boot-ext`,
+  `fstab-crypttab` and `grub-pc`. Each is `ok`, `warn`, `fail` or `skip`, with a detail that
+  names kinds and counts, never an identifier; `--porcelain` prints tab-separated fields. It
+  exits 2 when an item fails, or warns with `--strict`. To look under the `/boot` mount point
+  it bind-mounts `/` read-only on a private directory in `/run`, never in `TMPDIR`, and
+  removes that mount before it exits, lazily when it is busy; `boot-shadowed` fails when the
+  mount stays. `boot-luks` and `boot-ext` judge `/boot` by the GRUB that `grub_floor` names:
+  the LUKS versions and keyslot KDFs it unlocks and the incompatible ext features it reads.
+- Read-only probes for `check` in `lib/kernel-updater/probe.sh`: the kernel packages and the
+  dpkg state of each version from one `dpkg-query` call, removed only when all its packages
+  are, ordered by `linux-version` or else `sort -V`; the `/boot` mount, its LUKS header, or
+  that `cryptsetup` is missing, and its ext features; `/etc/kernel-img.conf` as linux-base
+  reads it; the four links in `/boot`; crypttab and fstab; initrd listings; and the number of
+  devices in `grub-pc/install_devices`.
+- `boot_fs_uuid` and `boot_luks_uuid` in `/etc/kernel-updater.conf`: the UUIDs `check`
+  expects for the filesystem at `/boot` and its LUKS container. Both are optional and kept
+  lower case.
+- Tests for the probes and `check` with stub tools and a synthetic system tree, and a
+  container suite in `tests/container` that runs only with `KU_CONTAINER=1`: dummy kernel
+  packages built with equivs, whose maintainer scripts call `linux-update-symlinks` as real
+  kernels do, show how linux-base moves the links in `/boot` on install, reinstall and
+  removal, which states dpkg gives held, removed and half-configured kernels, and how `check`
+  reports a real system.
+- A `kali` job in the tests workflow that builds a Kali rolling image from
+  `ci/kali/Dockerfile`, pinned by digest, and runs the container suite in it with
+  `docker run --privileged`, failing when a test is skipped. Dependabot updates the image.
 
 ### Changed
 
@@ -64,5 +93,9 @@ with the owner's original script.
   not have.
 - `tests/lint.bats` is now `tests/static.bats`. It also syntax-checks and ShellChecks
   `bin/kernel-updater` and the libraries, and runs `lint.awk` under the system awk.
+- `tests/static.bats` also covers `probe.sh`, `check.sh` and the container suite, and fails
+  when a library in `lib/kernel-updater` is missing from its list.
+- The tests workflow also runs once a week, so a change in Kali rolling shows up without a
+  push.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

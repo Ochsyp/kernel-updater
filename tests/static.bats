@@ -9,7 +9,8 @@
 load helpers
 
 SCRIPTS=(update_kernel.sh bin/kernel-updater lib/kernel-updater/common.sh
-    lib/kernel-updater/config.sh lib/kernel-updater/lint.sh)
+    lib/kernel-updater/config.sh lib/kernel-updater/lint.sh lib/kernel-updater/probe.sh
+    lib/kernel-updater/check.sh)
 HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan)
 
 @test "The bash scripts and libraries pass a bash -n syntax check" {
@@ -18,6 +19,17 @@ HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan)
         run bash -n "$REPO_DIR/$script"
         [ "$status" -eq 0 ]
         [ -z "$output" ]
+    done
+}
+
+@test "SCRIPTS lists every library in lib/kernel-updater, so none escapes the checks" {
+    local lib
+    cd "$REPO_DIR"
+    for lib in lib/kernel-updater/*.sh; do
+        if [[ " ${SCRIPTS[*]} " != *" $lib "* ]]; then
+            printf '%s is missing from SCRIPTS\n' "$lib" >&2
+            return 1
+        fi
     done
 }
 
@@ -41,7 +53,8 @@ HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan)
     command -v shellcheck > /dev/null || skip "shellcheck is not on PATH"
     # The glob expands here, so it must be relative to the repository root.
     cd "$REPO_DIR"
-    run_shellcheck -x -f gcc "${SCRIPTS[@]}" "${HOOKS[@]}" tests/helpers.bash tests/*.bats
+    run_shellcheck -x -f gcc "${SCRIPTS[@]}" "${HOOKS[@]}" tests/helpers.bash tests/*.bats \
+        tests/container/container.bash tests/container/*.bats
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }

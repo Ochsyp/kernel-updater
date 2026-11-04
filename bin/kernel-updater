@@ -21,6 +21,10 @@ KU_SHAREDIR=${KU_SELF%/*}/../share/kernel-updater
 . "$KU_LIBDIR/config.sh"
 # shellcheck source=lib/kernel-updater/lint.sh
 . "$KU_LIBDIR/lint.sh"
+# shellcheck source=lib/kernel-updater/probe.sh
+. "$KU_LIBDIR/probe.sh"
+# shellcheck source=lib/kernel-updater/check.sh
+. "$KU_LIBDIR/check.sh"
 
 # Print the usage on stdout.
 ku_usage() {
@@ -30,6 +34,9 @@ Usage: kernel-updater [OPTIONS] COMMAND [ARGS]
 Keeps the Kali entries of a MultiBootUSB stick bootable across kernel updates.
 
 Commands:
+  check              report, as root and changing nothing, whether /boot, its links, the
+                     kernels, their initrds and grub-pc keep the Kali entries bootable
+                     (kernel-updater check --help lists its options)
   lint FILE...       check GRUB configs for errors GRUB reports only at boot
                      (kernel-updater lint --help lists its options)
   help               show this help
@@ -90,7 +97,7 @@ ku_main() {
     case $cmd in
         help) ku_usage; exit 0 ;;
         version) ku_print_version; exit 0 ;;
-        lint) ;;
+        check | lint) ;;
         *) ku_usage_error "unknown command '$cmd'" ;;
     esac
     ku_install_traps

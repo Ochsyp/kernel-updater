@@ -1,0 +1,32 @@
+LUKS header information for /dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0-part3
+
+Version:       	1
+Cipher name:   	aes
+Cipher mode:   	xts-plain64
+Hash spec:     	sha256
+Payload offset:	4096
+MK bits:       	512
+MK digest:     	5c a1 ab 1e 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+MK salt:       	5c a1 ab 1e 00 00 00 00 00 00 00 00 00 00 00 00
+               	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+MK iterations: 	123456
+UUID:          	5ca1ab1e-0000-4000-8000-000000000c01
+
+Key Slot 0: ENABLED
+	Iterations:         	2000000
+	Salt:               	5c a1 ab 1e 00 00 00 00 00 00 00 00 00 00 00 00
+	                      	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+	Key material offset:	8
+	AF stripes:            	4000
+Key Slot 1: ENABLED
+	Iterations:         	2000000
+	Salt:               	5c a1 ab 1e 00 00 00 00 00 00 00 00 00 00 00 01
+	                      	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+	Key material offset:	512
+	AF stripes:            	4000
+Key Slot 2: DISABLED
+Key Slot 3: DISABLED
+Key Slot 4: DISABLED
+Key Slot 5: DISABLED
+Key Slot 6: DISABLED
+Key Slot 7: DISABLED
