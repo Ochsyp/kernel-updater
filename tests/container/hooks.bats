@@ -15,11 +15,20 @@ load container
 K1=9.1.1+kali-amd64 K2=9.1.2+kali-amd64 K3=9.1.3+kali-amd64 K4=9.1.4+kali-amd64
 FS_UUID=5ca1ab1e-0000-4000-8000-000000000b01
 
+# The lsinitramfs stub goes where initramfs-tools puts the real one: apt runs dpkg, and so the
+# kernel hooks, with PATH set to DPkg::Path (/usr/sbin:/usr/bin:/sbin:/bin), which leaves a
+# test's stub directory out. The container has no real lsinitramfs to cover up.
+LSINITRAMFS=/usr/bin/lsinitramfs
+
 # Build the dummy kernels: K3 split into linux-image and linux-binary, K4 with its vmlinuz in
 # /usr/lib/modules; a dummy grub-pc and an unrelated dummy; and install kernel-updater from the
 # read-only checkout.
 setup_file() {
     in_test_container || return 0
+    if [[ -e $LSINITRAMFS ]] && ! grep -q '^STUB_NAME=lsinitramfs$' "$LSINITRAMFS"; then
+        printf '%s is a real lsinitramfs, which the stub must not replace\n' "$LSINITRAMFS" >&2
+        return 1
+    fi
     build_hooked_kernel "$K1"
     build_hooked_kernel "$K2"
     build_hooked_kernel "$K3" split
@@ -29,12 +38,15 @@ setup_file() {
     bash "$REPO_DIR/install.sh"
 }
 
-# Disarm the hooks, remove the dummies and kernel-updater, and unmount /boot, so the next file
-# finds the container as container_setup_file expects it.
+# Disarm the hooks, remove the dummies, kernel-updater and the lsinitramfs stub, and unmount
+# /boot, so the next file finds the container as container_setup_file expects it.
 teardown_file() {
     in_test_container || return 0
     reset_hooks
     bash "$REPO_DIR/install.sh" --uninstall
+    if grep -q '^STUB_NAME=lsinitramfs$' "$LSINITRAMFS" 2> /dev/null; then
+        rm -f "$LSINITRAMFS"
+    fi
     unmount_boot
 }
 
@@ -48,8 +60,8 @@ setup() {
     printf 'boot_fs_uuid = %s\n' "$FS_UUID" > /etc/kernel-updater.conf
     stub_init
     stub_lsinitramfs
+    install -m 0755 "$STUB_BIN/lsinitramfs" "$LSINITRAMFS"
     export LSINITRAMFS_DROP='^cryptroot/keyfiles' DEBIAN_FRONTEND=noninteractive
-    export PATH="$STUB_BIN:$PATH"
 }
 
 # Disarm the hooks, purge every dummy whatever its state, and clear grub-pc's answer and the
@@ -76,6 +88,14 @@ unmounted_boot_entries() {
     else
         find /boot -mindepth 1 ! -type l
     fi
+}
+
+# Fail unless package NAME is installed, whatever dpkg's selection for it: a refused dpkg -r
+# leaves it ri, marked for removal but still installed.
+installed() {
+    local state
+    state=$(package_state "$1")
+    [[ $state == ?i ]] || { printf '%s is %s\n' "$1" "$state" >&2; return 1; }
 }
 
 # Fail unless package NAME is unknown to dpkg or not installed.
@@ -151,7 +171,7 @@ not_installed() {
     run --separate-stderr dpkg -r "linux-image-$K1"
     [ "$status" -ne 0 ]
     [[ "$stderr" == *"error: refusing to remove kernel $K1: /boot is not mounted"* ]]
-    [ "$(package_state "linux-image-$K1")" = ii ]
+    installed "linux-image-$K1"
     # Once /boot is back, the removal goes through.
     mount_boot_image
     run dpkg -r "linux-image-$K1"
@@ -198,6 +218,9 @@ not_installed() {
     [ "$status" -eq 0 ]
     [ "$(package_state "linux-image-$K2")" = ii ]
     [[ "$stderr" != *apt-guard* ]]
+    # The kernel hooks ran too, with apt's PATH. apt runs dpkg on a pseudo-terminal, whose
+    # output, the hooks' stderr included, reaches apt's stdout.
+    [[ "$output$stderr" == *"info: kernel $K2 passes"* ]]
 }
 
 @test "apt-get refuses a split kernel while /boot is not mounted, before dpkg unpacks any part" {
@@ -226,7 +249,7 @@ not_installed() {
     run --separate-stderr apt-get install --yes "$(package_deb ku-test-tool)"
     [ "$status" -eq 0 ]
     [ "$(package_state ku-test-tool)" = ii ]
-    [[ "$stderr" != *kernel-updater* ]]
+    [[ "$output$stderr" != *kernel-updater* ]]
 }
 
 @test "apt-get refuses grub-pc while grub-pc/install_devices names a device" {
@@ -253,14 +276,15 @@ not_installed() {
     [[ "$stderr" == *"warning: $tool is missing, so the new kernel was not checked"* ]]
     # The kernel hooks' messages go to stderr, never to dpkg's stdout.
     [[ "$output" != *kernel-updater* ]]
-    # Without apt-guard the run reaches dpkg, where the prerm guard refuses the removal.
+    # Without apt-guard the run reaches dpkg, where the prerm guard refuses the removal. apt
+    # runs dpkg on a pseudo-terminal, so the hook's message reaches apt's stdout.
     mv "$guard" "$BATS_TEST_TMPDIR/apt-guard"
     run --separate-stderr apt-get remove --yes "linux-image-$K1"
     mv "$BATS_TEST_TMPDIR/apt-guard" "$guard"
     [ "$status" -ne 0 ]
-    [[ "$stderr" != *"apt-guard refused"* ]]
-    [[ "$stderr" == *"error: refusing to remove kernel $K1: /boot is not mounted"* ]]
-    [ "$(package_state "linux-image-$K1")" = ii ]
+    [[ "$output$stderr" != *"apt-guard refused"* ]]
+    [[ "$output$stderr" == *"error: refusing to remove kernel $K1: /boot is not mounted"* ]]
+    installed "linux-image-$K1"
 }
 
 @test "Without boot_fs_uuid the hooks only warn" {
