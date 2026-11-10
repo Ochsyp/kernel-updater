@@ -25,6 +25,8 @@ KU_SHAREDIR=${KU_SELF%/*}/../share/kernel-updater
 . "$KU_LIBDIR/probe.sh"
 # shellcheck source=lib/kernel-updater/check.sh
 . "$KU_LIBDIR/check.sh"
+# shellcheck source=lib/kernel-updater/hook.sh
+. "$KU_LIBDIR/hook.sh"
 
 # Print the usage on stdout.
 ku_usage() {
@@ -39,6 +41,8 @@ Commands:
                      (kernel-updater check --help lists its options)
   lint FILE...       check GRUB configs for errors GRUB reports only at boot
                      (kernel-updater lint --help lists its options)
+  hook NAME ARGS...  run by the kernel and apt hooks install.sh installs, not by hand
+                     (kernel-updater hook --help lists the hooks)
   help               show this help
   version            print the version
 
@@ -97,7 +101,7 @@ ku_main() {
     case $cmd in
         help) ku_usage; exit 0 ;;
         version) ku_print_version; exit 0 ;;
-        check | lint) ;;
+        check | hook | lint) ;;
         *) ku_usage_error "unknown command '$cmd'" ;;
     esac
     ku_install_traps

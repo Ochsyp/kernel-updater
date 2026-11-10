@@ -90,10 +90,148 @@ EOF
     mv "$dir"/linux-image-"$version"_*.deb "$KU_DEBS/"
 }
 
+# Build the dummy package NAME into KU_DEBS from the equivs control LINES, which give at least
+# its Version, unless it is there.
+build_package() {
+    local name=$1 dir="$KU_DEBS/build-$1"
+    shift
+    if compgen -G "$KU_DEBS/${name}_*.deb" > /dev/null; then
+        return 0
+    fi
+    mkdir -p "$dir"
+    {
+        printf 'Section: misc\nPriority: optional\nPackage: %s\n' "$name"
+        printf 'Maintainer: kernel-updater tests <tests@example.org>\n'
+        printf '%s\n' "$@"
+        printf 'Description: dummy %s for the kernel-updater container tests\n' "$name"
+    } > "$dir/control"
+    if ! (cd "$dir" && TMPDIR="$dir" equivs-build control > build.log 2>&1); then
+        cat "$dir/build.log" >&2
+        return 1
+    fi
+    mv "$dir/${name}"_*.deb "$KU_DEBS/"
+}
+
+# Build the dummy package linux-image-VERSION with a real kernel's maintainer scripts, as
+# image.{preinst,postinst,prerm,postrm}.in in Debian's linux source has them: preinst marks a
+# fresh install, postinst and postrm move the links with linux-update-symlinks, and each runs
+# its hooks in /etc/kernel through linux-run-hooks. It ships /boot/initrd.img-VERSION, standing
+# in for the one initramfs-tools builds, and the vmlinuz as LAYOUT says: boot, the default, ships
+# /boot/vmlinuz-VERSION; split puts that in linux-binary-VERSION, which it depends on, as Kali's
+# kernels from 6.19 to 7.1 do; usrlib ships /usr/lib/modules/VERSION/vmlinuz, which linux-base's
+# 00-legacy-boot hook copies to /boot, as Debian's kernels from 7.2 on do.
+build_hooked_kernel() {
+    local version=$1 layout=${2:-boot} dir="$KU_DEBS/scripts-$1" name script
+    local -a lines=()
+    mkdir -p "$dir"
+    for name in preinst postinst prerm postrm; do
+        IFS= read -r -d '' script <<'EOF' || true
+#!/bin/sh
+set -e
+version=@VERSION@
+image_path=/boot/vmlinuz-$version
+case @SCRIPT@ in
+    preinst)
+        [ "$1" != abort-upgrade ] || exit 0
+        if [ "$1" = install ]; then
+            mkdir -p "/lib/modules/$version"
+            touch "/lib/modules/$version/.fresh-install"
+        fi
+        ;;
+    postinst)
+        [ "$1" = configure ] || exit 0
+        if [ -f "/lib/modules/$version/.fresh-install" ]; then
+            change=install
+        else
+            change=upgrade
+        fi
+        linux-update-symlinks "$change" "$version" "$image_path"
+        rm -f "/lib/modules/$version/.fresh-install"
+        ;;
+    prerm)
+        [ "$1" = remove ] || exit 0
+        ;;
+    postrm)
+        rm -f "/lib/modules/$version/.fresh-install"
+        if [ "$1" != upgrade ] && command -v linux-update-symlinks > /dev/null; then
+            linux-update-symlinks remove "$version" "$image_path"
+        fi
+        command -v linux-run-hooks > /dev/null || exit 0
+        ;;
+esac
+linux-run-hooks image @SCRIPT@ "$version" "$image_path" -- "$@"
+EOF
+        script=${script//@VERSION@/$version}
+        printf '%s' "${script//@SCRIPT@/$name}" > "$dir/$name"
+    done
+    lines=("Version: ${version%%+*}-1" "Preinst: $dir/preinst" "Postinst: $dir/postinst"
+        "Prerm: $dir/prerm" "Postrm: $dir/postrm")
+    case $layout in
+        split)
+            build_package "linux-binary-$version" "Version: ${version%%+*}-1" \
+                "File: /boot/vmlinuz-$version" " dummy kernel $version"
+            lines+=("Depends: linux-binary-$version")
+            ;;
+        usrlib) lines+=("File: /usr/lib/modules/$version/vmlinuz" " dummy kernel $version") ;;
+        *) lines+=("File: /boot/vmlinuz-$version" " dummy kernel $version") ;;
+    esac
+    lines+=("File: /boot/initrd.img-$version" " dummy initrd $version")
+    build_package "linux-image-$version" "${lines[@]}"
+}
+
 # Print the path of the dummy package of kernel VERSION.
 kernel_deb() {
     local debs=("$KU_DEBS"/linux-image-"$1"_*.deb)
     printf '%s\n' "${debs[0]}"
+}
+
+# Print the path of the dummy package NAME.
+package_deb() {
+    local debs=("$KU_DEBS/$1"_*.deb)
+    printf '%s\n' "${debs[0]}"
+}
+
+# Print package NAME's state as ${db:Status-Abbrev} gives it, such as ii or iF, without
+# spaces, or nothing when dpkg does not know it.
+package_state() {
+    local state
+    # shellcheck disable=SC2016 # dpkg-query expands the ${...} field itself
+    state=$(dpkg-query -W -f '${db:Status-Abbrev}' "$1" 2> /dev/null) || state=""
+    printf '%s' "${state// /}"
+}
+
+# The ext4 image the hook tests mount on /boot through a loop device.
+BOOT_IMAGE="$BATS_RUN_TMPDIR/boot.img"
+
+# Unmount everything mounted on /boot and detach BOOT_IMAGE's loop devices.
+unmount_boot() {
+    local dev
+    while mountpoint -q /boot; do
+        umount /boot
+    done
+    for dev in $(losetup --list --noheadings --output NAME --associated "$BOOT_IMAGE" \
+        2> /dev/null); do
+        losetup --detach "$dev"
+    done
+}
+
+# Unmount /boot, empty the directory under it and write a fresh ext4 filesystem with UUID
+# into BOOT_IMAGE.
+make_boot_image() {
+    unmount_boot
+    find /boot -mindepth 1 -delete
+    truncate -s 16M "$BOOT_IMAGE"
+    mkfs.ext4 -q -F -U "$1" "$BOOT_IMAGE"
+}
+
+# Mount BOOT_IMAGE on /boot through a loop device, as the stick's unlocked /boot is. Makes the
+# loop device's node when the container's /dev lacks it.
+mount_boot_image() {
+    local dev
+    dev=$(losetup --find)
+    [[ -b $dev ]] || mknod -m 0660 "$dev" b 7 "${dev#/dev/loop}"
+    losetup "$dev" "$BOOT_IMAGE"
+    mount "$dev" /boot
 }
 
 # Install the dummy kernels VERSION... with dpkg, one after the other in the order given.

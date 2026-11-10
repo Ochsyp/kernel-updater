@@ -326,3 +326,26 @@ EOF
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
+
+@test "The /boot mount probe asks blkid for a UUID findmnt lacks, and only for a device" {
+    mkstub findmnt <<'EOF'
+printf '%s\n' "$FINDMNT_OUT"
+EOF
+    mkstub blkid <<'EOF'
+[[ -n ${BLKID_UUID:-} ]] || exit 2
+printf '%s\n' "$BLKID_UUID"
+EOF
+    export FINDMNT_OUT="/dev/mapper/boot_crypt ext4" BLKID_UUID=5ca1ab1e-0000-4000-8000-000000000b01
+    run ku_probe_boot_mount
+    [ "$output" = $'/dev/mapper/boot_crypt\text4\t5ca1ab1e-0000-4000-8000-000000000b01' ]
+    grep -q -x -F -- "blkid$(printf ' %q' -p -s UUID -o value -- /dev/mapper/boot_crypt)" \
+        "$STUB_LOG"
+    export BLKID_UUID=""
+    run ku_probe_boot_mount
+    [ "$output" = $'/dev/mapper/boot_crypt\text4\t-' ]
+    : > "$STUB_LOG"
+    export FINDMNT_OUT="tmpfs tmpfs"
+    run ku_probe_boot_mount
+    [ "$output" = $'tmpfs\ttmpfs\t-' ]
+    refute_line_match '^blkid' "$STUB_LOG"
+}

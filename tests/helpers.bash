@@ -55,16 +55,19 @@ run_legacy() {
 }
 
 # Run bin/kernel-updater with the stubs first on PATH and the KU_ROOT, KU_TTY and KU_LOCKFILE
-# seams inside the test's temp directory, through bats' run with separate stderr.
+# seams inside the test's temp directory, which KU_TEST=1 lets it take from the environment,
+# through bats' run with separate stderr.
 run_ku() {
-    run --separate-stderr env PATH="$STUB_BIN:$PATH" KU_ROOT="$BATS_TEST_TMPDIR/root" \
-        KU_TTY="$BATS_TEST_TMPDIR/tty" KU_LOCKFILE="$BATS_TEST_TMPDIR/lock" \
-        bash "$REPO_DIR/bin/kernel-updater" "$@"
+    run --separate-stderr env PATH="$STUB_BIN:$PATH" KU_TEST=1 \
+        KU_ROOT="$BATS_TEST_TMPDIR/root" KU_TTY="$BATS_TEST_TMPDIR/tty" \
+        KU_LOCKFILE="$BATS_TEST_TMPDIR/lock" bash "$REPO_DIR/bin/kernel-updater" "$@"
 }
 
 # Source the libraries into the test shell as bin/kernel-updater does, without its strict
-# mode and traps, so tests can call the functions directly.
+# mode and traps, so tests can call the functions directly. KU_TEST=1 keeps the seams a test
+# set before loading them.
 load_ku_libs() {
+    KU_TEST=1
     # shellcheck disable=SC2034 # read by the sourced libraries
     KU_LIBDIR="$REPO_DIR/lib/kernel-updater" KU_SHAREDIR="$REPO_DIR/share/kernel-updater"
     # shellcheck source=lib/kernel-updater/common.sh
@@ -77,6 +80,8 @@ load_ku_libs() {
     . "$KU_LIBDIR/probe.sh"
     # shellcheck source=lib/kernel-updater/check.sh
     . "$KU_LIBDIR/check.sh"
+    # shellcheck source=lib/kernel-updater/hook.sh
+    . "$KU_LIBDIR/hook.sh"
 }
 
 # Make ln -s create symlinks. Git Bash copies files instead unless MSYS asks for Cygwin-style

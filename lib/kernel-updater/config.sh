@@ -8,8 +8,9 @@
 
 # Known keys and the check their values must pass (the _ku_valid_* function of that name),
 # and the defaults; an empty default leaves an optional key unset. Later phases add keys here.
-declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid)
-declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="")
+declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid
+    [verify_action]=verify_action)
+declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="" [verify_action]=fail)
 
 # The config file named by --config, or empty for the default path. Set by the option parser.
 KU_CONFIG_FILE=""
@@ -85,4 +86,10 @@ _ku_valid_grub_version() {
 # case.
 _ku_valid_uuid() {
     [[ $1 =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+}
+
+# What the kernel postinst hook does when a new kernel would not boot: fail, which stops the
+# package's configuration, or warn.
+_ku_valid_verify_action() {
+    [[ $1 =~ ^(fail|warn)$ ]]
 }

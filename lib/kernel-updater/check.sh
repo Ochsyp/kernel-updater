@@ -11,12 +11,13 @@ KU_CHECK_STATUS=() KU_CHECK_ITEM=() KU_CHECK_DETAIL=()
 
 # What the probes found, shared by the items and set by _ku_check_collect: the /boot mount,
 # the links' directory, the kernels and their states (KU_CK_KERNELS is ku_probe_kernels'
-# status: 0 read, 1 unreadable, 2 unsorted), the running release, the /boot links and the LUKS
-# header (KU_CK_LUKS is ku_probe_boot_luks' status: 0 read, 1 unreadable, 2 none, 3 no cryptsetup).
+# status: 0 read, 1 unreadable, 2 unsorted), the running release, the /boot links (KU_CK_LINKS
+# is ku_probe_boot_links' output) and the LUKS header (KU_CK_LUKS is ku_probe_boot_luks'
+# status: 0 read, 1 unreadable, 2 none, 3 no cryptsetup).
 KU_CK_MOUNTED=0 KU_CK_SOURCE="" KU_CK_FSTYPE="" KU_CK_FS_UUID="" KU_CK_DO_SYMLINKS=1
 KU_CK_LINK_DIR=/ KU_CK_KERNELS=0 KU_CK_RUNNING="" KU_CK_LUKS=2 KU_CK_LUKS_VERSION=""
-KU_CK_LUKS_UUID="" KU_CK_VERSIONS=() KU_CK_LUKS_KDFS=()
-declare -gA KU_CK_STATE=() KU_CK_TARGET=() KU_CK_RELATIVE=() KU_CK_RESOLVES=()
+KU_CK_LUKS_UUID="" KU_CK_LINKS="" KU_CK_VERSIONS=() KU_CK_LUKS_KDFS=()
+declare -gA KU_CK_STATE=() KU_CK_TARGET=() KU_CK_RESOLVES=()
 
 # The shadow scan's private directory in /run, and 1 while a bind mount of / may be at its
 # root/.
@@ -156,12 +157,11 @@ _ku_check_collect() {
     fi
     KU_CK_RUNNING=$(uname -r) || KU_CK_RUNNING=""
     ku_valid_release "$KU_CK_RUNNING" || KU_CK_RUNNING=""
-    out=$(ku_probe_boot_links)
-    while IFS=$'\t' read -r name value relative resolves; do
+    KU_CK_LINKS=$(ku_probe_boot_links)
+    while IFS=$'\t' read -r name value _ resolves; do
         KU_CK_TARGET[$name]=$value
-        KU_CK_RELATIVE[$name]=$relative
         KU_CK_RESOLVES[$name]=$resolves
-    done <<< "$out"
+    done <<< "$KU_CK_LINKS"
 }
 
 # boot-mounted: /boot must be a mount point of its own, the filesystem GRUB unlocks and reads.
@@ -291,25 +291,35 @@ _ku_check_kernel_img() {
 # boot-links: with the links in /boot, each of the four must be relative and reach a
 # non-empty file in /boot, or the menu entries that boot them fail.
 _ku_check_boot_links() {
-    local name detail=""
+    local detail
     if [[ $KU_CK_LINK_DIR != /boot ]]; then
         _ku_check_add skip boot-links "link_in_boot is off"
         return 0
     fi
-    for name in vmlinuz vmlinuz.old initrd.img initrd.img.old; do
-        if [[ ${KU_CK_TARGET[$name]:--} == - ]]; then
-            detail+="${detail:+; }$name is missing or no symlink"
-        elif [[ ${KU_CK_RELATIVE[$name]:-0} != 1 ]]; then
-            detail+="${detail:+; }$name is absolute"
-        elif [[ ${KU_CK_RESOLVES[$name]:-0} != 1 ]]; then
-            detail+="${detail:+; }$name does not reach a non-empty file in /boot"
-        fi
-    done
+    detail=$(ku_boot_links_problems <<< "$KU_CK_LINKS")
     if [[ -n $detail ]]; then
         _ku_check_add fail boot-links "$detail"
     else
         _ku_check_add ok boot-links "the 4 links are relative and reach non-empty files in /boot"
     fi
+}
+
+# Print what is wrong with the /boot links in ku_probe_boot_links' output on stdin, one
+# "; "-separated phrase per link that is missing or no symlink, absolute, or does not reach a
+# non-empty file in /boot. Prints nothing when the four are fine. Shared with the postinst hook.
+ku_boot_links_problems() {
+    local name target relative resolves detail=""
+    while IFS=$'\t' read -r name target relative resolves; do
+        [[ -n $name ]] || continue
+        if [[ $target == - ]]; then
+            detail+="${detail:+; }$name is missing or no symlink"
+        elif [[ $relative != 1 ]]; then
+            detail+="${detail:+; }$name is absolute"
+        elif [[ $resolves != 1 ]]; then
+            detail+="${detail:+; }$name does not reach a non-empty file in /boot"
+        fi
+    done
+    printf '%s' "$detail"
 }
 
 # stale-root-links: with the links in /boot, vmlinuz and initrd.img entries left in / are
@@ -421,48 +431,24 @@ _ku_check_reboot_pending() {
 # its modules, cryptsetup and the cryptroot configuration, plus key files when crypttab names
 # one. One that holds key files and is readable by group or others warns.
 _ku_check_initrd() {
-    local version file flags modules cryptsetup crypttab keyfiles mode missing target key
-    local need_keys=0 checked=0 failed="" readable=""
+    local version problem status need_keys=0 checked=0 failed="" readable=""
     if (( KU_CK_KERNELS != 0 )); then
         _ku_check_add skip initrd "the installed kernels are unknown"
         return 0
     fi
-    while IFS=$'\t' read -r target _ key; do
-        if [[ -n $target && $key != - && $key != /dev/* ]]; then
-            need_keys=1
-        fi
-    done <<< "$(ku_probe_crypttab)"
+    if ku_crypttab_names_keys; then
+        need_keys=1
+    fi
     for version in "${KU_CK_VERSIONS[@]}"; do
         [[ ${KU_CK_STATE[$version]} == ?i ]] || continue
         checked=$((checked + 1))
-        file=$(ku_path "/boot/initrd.img-$version")
-        if [[ ! -f $file || ! -s $file ]]; then
-            failed+="${failed:+; }$version has no initrd"
-            continue
-        fi
-        if ! flags=$(ku_probe_initrd "$file" "$version"); then
-            failed+="${failed:+; }lsinitramfs cannot read the initrd of $version"
-            continue
-        fi
-        IFS=$'\t' read -r modules cryptsetup crypttab keyfiles <<< "$flags"
-        missing=""
-        (( modules )) || missing+="${missing:+, }its modules"
-        (( cryptsetup )) || missing+="${missing:+, }cryptsetup"
-        (( crypttab )) || missing+="${missing:+, }the cryptroot configuration"
-        if (( need_keys && ! keyfiles )); then
-            missing+="${missing:+, }the key files crypttab names, so root would ask for a"
-            missing+=" second password or not unlock"
-        fi
-        if [[ -n $missing ]]; then
-            failed+="${failed:+; }the initrd of $version lacks $missing"
-            continue
-        fi
-        if (( keyfiles )); then
-            mode=$(stat -L -c %a -- "$file") || mode=""
-            if [[ $mode =~ ^[0-7]+$ ]] && (( (8#$mode & 8#044) != 0 )); then
-                readable+="${readable:+, }$version"
-            fi
-        fi
+        status=0
+        problem=$(ku_initrd_verdict "$version" "$need_keys") || status=$?
+        case $status in
+            0) ;;
+            2) readable+="${readable:+, }$version" ;;
+            *) failed+="${failed:+; }$problem" ;;
+        esac
     done
     if (( ! checked )); then
         _ku_check_add skip initrd "no kernel is installed"
@@ -478,6 +464,56 @@ _ku_check_initrd() {
         _ku_check_add ok initrd \
             "$checked initrd(s) hold their modules, cryptsetup and the cryptroot configuration"
     fi
+}
+
+# Return 0 when an /etc/crypttab entry names a key file, which the initrds must then hold so
+# that root unlocks without a second password. A key that is a device, or none, does not count.
+ku_crypttab_names_keys() {
+    local target key
+    while IFS=$'\t' read -r target _ key; do
+        if [[ -n $target && $key != - && $key != /dev/* ]]; then
+            return 0
+        fi
+    done <<< "$(ku_probe_crypttab)"
+    return 1
+}
+
+# Check the initrd of kernel VERSION, which must exist, be readable by lsinitramfs and hold
+# VERSION's modules, cryptsetup and the cryptroot configuration, and key files when NEED_KEYS is
+# 1. Prints why it would not boot VERSION and returns 1 when it fails; returns 2 when it passes
+# but holds key files that group or others can read, and 0 otherwise. Shared by check's initrd
+# item and the postinst hook.
+ku_initrd_verdict() {
+    local version=$1 need_keys=$2 file flags modules cryptsetup crypttab keyfiles missing mode
+    file=$(ku_path "/boot/initrd.img-$version")
+    if [[ ! -f $file || ! -s $file ]]; then
+        printf '%s has no initrd' "$version"
+        return 1
+    fi
+    if ! flags=$(ku_probe_initrd "$file" "$version"); then
+        printf 'lsinitramfs cannot read the initrd of %s' "$version"
+        return 1
+    fi
+    IFS=$'\t' read -r modules cryptsetup crypttab keyfiles <<< "$flags"
+    missing=""
+    (( modules )) || missing+="${missing:+, }its modules"
+    (( cryptsetup )) || missing+="${missing:+, }cryptsetup"
+    (( crypttab )) || missing+="${missing:+, }the cryptroot configuration"
+    if (( need_keys && ! keyfiles )); then
+        missing+="${missing:+, }the key files crypttab names, so root would ask for a second"
+        missing+=" password or not unlock"
+    fi
+    if [[ -n $missing ]]; then
+        printf 'the initrd of %s lacks %s' "$version" "$missing"
+        return 1
+    fi
+    if (( keyfiles )); then
+        mode=$(stat -L -c %a -- "$file") || mode=""
+        if [[ $mode =~ ^[0-7]+$ ]] && (( (8#$mode & 8#044) != 0 )); then
+            return 2
+        fi
+    fi
+    return 0
 }
 
 # boot-luks: the GRUB grub_floor names must unlock the container that holds /boot. 2.02 unlocks
