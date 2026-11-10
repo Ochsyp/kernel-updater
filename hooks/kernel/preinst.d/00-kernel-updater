@@ -1,0 +1,21 @@
+#!/bin/sh
+# -------------------------------------------------------
+# kernel-updater /boot guard for kernel installs
+#
+# install.sh puts this in /etc/kernel/preinst.d, where linux-run-hooks runs it with the kernel
+# version and image path before the kernel package's files are unpacked. It refuses the
+# install while /boot is not the filesystem /etc/kernel-updater.conf names. The 00- prefix
+# runs it before the other preinst hooks.
+# -------------------------------------------------------
+
+set -eu
+
+# Kernel hooks keep stdout clean, since debconf may be using it, and read nothing.
+exec < /dev/null >&2
+
+tool=/usr/local/bin/kernel-updater
+if [ ! -x "$tool" ]; then
+    echo "kernel-updater: warning: $tool is missing, so the /boot guard did not run"
+    exit 0
+fi
+exec "$tool" hook boot-guard preinst "$@"

@@ -1,0 +1,22 @@
+#!/bin/sh
+# -------------------------------------------------------
+# kernel-updater /boot guard for kernel configures
+#
+# install.sh puts this in /etc/kernel/postinst.d, where linux-run-hooks runs it with the kernel
+# version and image path when a kernel package is configured, as by 'dpkg --configure -a'
+# after an earlier failure. The 00- prefix runs it before linux-base copies the kernel to /boot
+# and initramfs-tools builds the initrd there, and it refuses while /boot is not the
+# filesystem /etc/kernel-updater.conf names.
+# -------------------------------------------------------
+
+set -eu
+
+# Kernel hooks keep stdout clean, since debconf may be using it, and read nothing.
+exec < /dev/null >&2
+
+tool=/usr/local/bin/kernel-updater
+if [ ! -x "$tool" ]; then
+    echo "kernel-updater: warning: $tool is missing, so the /boot guard did not run"
+    exit 0
+fi
+exec "$tool" hook boot-guard postinst "$@"

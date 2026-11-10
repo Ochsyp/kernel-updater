@@ -11,7 +11,7 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
-[{.githooks/*,bin/*,*.awk}]
+[{.githooks/*,bin/*,hooks/kernel/**,lib/kernel-updater/apt-guard,*.awk}]
 indent_style = space
 indent_size = 4
 

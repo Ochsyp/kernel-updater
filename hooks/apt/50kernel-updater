@@ -1,0 +1,8 @@
+// kernel-updater apt-guard, put here by kernel-updater's install.sh. Before dpkg runs, APT
+// passes the actions it plans to apt-guard, which refuses a run that changes kernel packages
+// while /boot is not the filesystem /etc/kernel-updater.conf names, or upgrades grub-pc while
+// grub-pc/install_devices names a device. A refused run changes nothing. When apt-guard is
+// gone or not executable, the test after || lets every run through. APT takes the options from
+// the command up to its first space, the path the Version line names.
+DPkg::Pre-Install-Pkgs { "/usr/local/lib/kernel-updater/apt-guard || [ ! -x /usr/local/lib/kernel-updater/apt-guard ]"; };
+DPkg::Tools::Options::/usr/local/lib/kernel-updater/apt-guard::Version "3";

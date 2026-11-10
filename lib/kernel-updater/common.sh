@@ -13,11 +13,17 @@ declare -g KU_EX_FAILURE=1 KU_EX_FINDINGS=2 KU_EX_REFUSED=3 KU_EX_WRITE=4 KU_EX_
     KU_EX_USAGE=64 KU_EX_NOINPUT=66 KU_EX_BUSY=75 KU_EX_NOPERM=77 KU_EX_CONFIG=78 \
     KU_VERBOSITY=1 KU_DRY_RUN=0 KU_ASSUME_YES=0 KU_PORCELAIN=0
 
-# Seams for the tests that production never sets: the root every system path is resolved
-# under, the terminal confirmations are read from, and the lock file.
-KU_ROOT=${KU_ROOT:-/}
-KU_TTY=${KU_TTY:-/dev/tty}
-KU_LOCKFILE=${KU_LOCKFILE:-/run/kernel-updater.lock}
+# Seams for the tests: the root every system path is resolved under, the terminal
+# confirmations are read from, and the lock file. They come from the environment only with
+# KU_TEST=1, which the tests set, so a KU_ROOT left in root's environment, as with sudo -E,
+# never steers what the tool and the hooks dpkg and apt run as root read or write.
+if [[ ${KU_TEST:-} == 1 ]]; then
+    KU_ROOT=${KU_ROOT:-/}
+    KU_TTY=${KU_TTY:-/dev/tty}
+    KU_LOCKFILE=${KU_LOCKFILE:-/run/kernel-updater.lock}
+else
+    KU_ROOT=/ KU_TTY=/dev/tty KU_LOCKFILE=/run/kernel-updater.lock
+fi
 
 # Functions ku_on_exit runs when the process ends, in reverse order of registration.
 KU_CLEANUP=()

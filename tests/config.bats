@@ -21,6 +21,19 @@ setup() {
     [ "${KU_CONF[grub_floor]}" = 2.02 ]
     [ -z "${KU_CONF[boot_fs_uuid]}" ]
     [ -z "${KU_CONF[boot_luks_uuid]}" ]
+    [ "${KU_CONF[verify_action]}" = fail ]
+}
+
+@test "verify_action takes fail or warn, and nothing else" {
+    printf 'verify_action = warn\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[verify_action]}" = warn ]
+    local value
+    for value in Fail ignore "fail warn"; do
+        printf 'verify_action = %s\n' "$value" > "$CONF"
+        run ku_config_load "$CONF"
+        [ "$status" -eq 78 ] || { printf 'accepted: %s\n' "$value" >&2; return 1; }
+    done
 }
 
 @test "Each key's check is a _ku_valid_ function, which a default that is set passes" {

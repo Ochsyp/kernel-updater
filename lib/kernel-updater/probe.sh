@@ -59,12 +59,20 @@ ku_probe_kernels() {
 }
 
 # Print SOURCE<TAB>FSTYPE<TAB>UUID of the filesystem mounted at /boot, the topmost one when
-# several are, or nothing when /boot is not a mount point.
+# several are, or nothing when /boot is not a mount point or findmnt cannot read the mounts.
 ku_probe_boot_mount() {
-    local out source fstype uuid
-    out=$(findmnt -r -n -o SOURCE,FSTYPE,UUID --mountpoint "$(ku_path /boot)" 2> /dev/null) || true
+    local boot out source fstype uuid
+    boot=$(ku_path /boot)
+    # Looking inside /boot first mounts it when it is an automount nothing has used yet.
+    [[ -d $boot/. ]] || :
+    out=$(findmnt -r -n -o SOURCE,FSTYPE,UUID --mountpoint "$boot" 2> /dev/null) || true
     [[ -n $out ]] || return 0
     read -r source fstype uuid <<< "${out##*$'\n'}"
+    # findmnt takes the UUID from udev, which a chroot or container may lack; as root, blkid
+    # reads it from the device itself.
+    if [[ -z $uuid && $source == /dev/?* ]]; then
+        uuid=$(blkid -p -s UUID -o value -- "$source" 2> /dev/null) || uuid=""
+    fi
     printf '%s\t%s\t%s\n' "${source:--}" "${fstype:--}" "${uuid:--}"
 }
 

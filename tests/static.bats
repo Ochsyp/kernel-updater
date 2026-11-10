@@ -3,15 +3,19 @@
 # kernel-updater static checks
 #
 # Syntax-checks every shell file and the awk linter, and requires ShellCheck to report
-# nothing for any shell file: the scripts, the libraries, the git hooks and the tests.
+# nothing for any shell file: the scripts, the libraries, the git hooks, apt-guard, the kernel
+# hooks and the tests.
 # -------------------------------------------------------
 
 load helpers
 
-SCRIPTS=(update_kernel.sh bin/kernel-updater lib/kernel-updater/common.sh
+SCRIPTS=(update_kernel.sh install.sh bin/kernel-updater lib/kernel-updater/common.sh
     lib/kernel-updater/config.sh lib/kernel-updater/lint.sh lib/kernel-updater/probe.sh
-    lib/kernel-updater/check.sh)
-HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan)
+    lib/kernel-updater/check.sh lib/kernel-updater/hook.sh)
+# POSIX sh scripts: the git hooks, apt-guard and the kernel hooks install.sh installs.
+HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan lib/kernel-updater/apt-guard
+    hooks/kernel/preinst.d/00-kernel-updater hooks/kernel/prerm.d/00-kernel-updater
+    hooks/kernel/postinst.d/00-kernel-updater hooks/kernel/postinst.d/kernel-updater)
 
 @test "The bash scripts and libraries pass a bash -n syntax check" {
     local script
@@ -33,7 +37,18 @@ HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan)
     done
 }
 
-@test "The git hooks pass a POSIX sh -n syntax check" {
+@test "HOOKS lists every kernel hook, so none escapes the checks" {
+    local hook
+    cd "$REPO_DIR"
+    for hook in hooks/kernel/*.d/*; do
+        if [[ " ${HOOKS[*]} " != *" $hook "* ]]; then
+            printf '%s is missing from HOOKS\n' "$hook" >&2
+            return 1
+        fi
+    done
+}
+
+@test "The POSIX sh scripts pass a sh -n syntax check" {
     local hook
     for hook in "${HOOKS[@]}"; do
         run sh -n "$REPO_DIR/$hook"

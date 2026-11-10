@@ -1,0 +1,22 @@
+#!/bin/sh
+# -------------------------------------------------------
+# kernel-updater check that a new kernel would boot
+#
+# install.sh puts this in /etc/kernel/postinst.d, where linux-run-hooks runs it with the kernel
+# version and image path when a kernel package is configured. Its name sorts it after
+# initramfs-tools, which builds the initrd, and before zz-update-grub. It fails the configure
+# when the kernel, its initrd or the /boot links would not boot it, or only warns with
+# verify_action = warn in /etc/kernel-updater.conf.
+# -------------------------------------------------------
+
+set -eu
+
+# Kernel hooks keep stdout clean, since debconf may be using it, and read nothing.
+exec < /dev/null >&2
+
+tool=/usr/local/bin/kernel-updater
+if [ ! -x "$tool" ]; then
+    echo "kernel-updater: warning: $tool is missing, so the new kernel was not checked"
+    exit 0
+fi
+exec "$tool" hook verify "$@"

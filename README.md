@@ -59,12 +59,13 @@ The phases, one pull request each:
 
 ## Usage
 
-The redesigned tool is `bin/kernel-updater`. Until phase 4 adds an installer, run it from a
-checkout. It needs Bash 4.4 or later, GNU coreutils and awk; `grub-script-check` (Debian
-package `grub-common`) adds a syntax check to `lint`. `check` also reads the system through
-`findmnt` (util-linux), `mount` and `umount` (Debian package `mount`), `dpkg-query`,
-`linux-version` (linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which
-a Kali install has.
+The redesigned tool is `bin/kernel-updater`. Run it from a checkout, or install it, together
+with its hooks, with `install.sh` (see [Installing](#installing)). It needs Bash 4.4 or later,
+GNU coreutils and awk; `grub-script-check` (Debian package `grub-common`) adds a syntax check
+to `lint`. `check` and the hooks also read the system through `findmnt` and `blkid`
+(util-linux), `mount` and `umount` (Debian package `mount`), `dpkg-query`, `linux-version`
+(linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which a Kali install
+has.
 
 ```text
 kernel-updater [OPTIONS] COMMAND [ARGS]
@@ -74,6 +75,7 @@ kernel-updater [OPTIONS] COMMAND [ARGS]
 |---|---|
 | `check` | Reports, as root and without changing anything, whether the system keeps the Kali entries bootable: `/boot`, its links and LUKS container, the kernel packages and their initrds, fstab, crypttab and grub-pc. See [check](#check) |
 | `lint FILE...` | Checks GRUB configs for errors GRUB reports only at boot: syntax errors, unknown commands and modules, malformed or misused LUKS and filesystem UUIDs, kernel parameters that do nothing, drives named as `(hdN,...)`, and encrypted entries between MultiBootUSB's `#start` and `#end` markers. Findings name the kind of identifier, never its value |
+| `hook NAME ARGS...` | Runs a hook for the files `install.sh` puts in `/etc/kernel` and `/etc/apt`, not by hand. See [Hooks](#hooks) |
 | `help`, `version` | Print the usage or the version |
 
 `lint` takes `--floor VERSION`, the oldest GRUB the files must run on: 2.02 (the default),
@@ -90,8 +92,8 @@ messages to stderr.
 |---|---|
 | 0 | Success |
 | 1 | Unexpected error |
-| 2 | Findings: `lint` found an error or a `check` item failed, or either warned with `--strict` |
-| 3 | Refused: a check failed and nothing was changed |
+| 2 | Findings: `lint` found an error or a `check` item failed, or either warned with `--strict`; the postinst hook found a kernel that may not boot |
+| 3 | Refused before a change: a check failed, apt-guard refused an apt run, or a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links) |
 | 4 | A write failed and the previous state was restored |
 | 10 | Declined, or no terminal to confirm on without `--yes` |
 | 64 | Usage error |
@@ -100,6 +102,37 @@ messages to stderr.
 | 77 | Not run as root |
 | 78 | Bad configuration |
 | 128+N | Interrupted by signal N |
+
+### Installing
+
+```bash
+sudo ./install.sh
+```
+
+`install.sh` copies the tool from the checkout to `/usr/local/lib/kernel-updater`,
+`/usr/local/share/kernel-updater` and `/usr/local/bin/kernel-updater`, the kernel hooks to
+`/etc/kernel/{preinst,prerm,postinst}.d` and last apt-guard's configuration to
+`/etc/apt/apt.conf.d/50kernel-updater`, and lists every file with its SHA-256 in
+`/var/lib/kernel-updater/install.manifest`. Run it again after updating the checkout: it
+replaces what changed and removes the files the checkout no longer has. Before it changes a
+file, the manifest lists both its old and its new contents, so a run cut short can be run
+again or undone with `--uninstall`. It refuses with exit 3, before changing anything, when a
+file in its way was not installed by it or has changed since; move that file away and run it
+again. `--dry-run` (`-n`) prints what would change, and
+`--uninstall` removes every file the manifest lists, the APT configuration first, and leaves
+`/etc/kernel-updater.conf` alone. It needs root (exit 77 otherwise) and takes the tool's lock
+(exit 75 while another run holds it).
+
+The hooks only warn until `boot_fs_uuid` is set, and `install.sh` says so while it is not. To
+arm them, mount `/boot`, copy the example config and set `boot_fs_uuid` in it to the UUID that
+`findmnt` prints:
+
+```bash
+sudo install -m 0644 examples/kernel-updater.conf /etc/kernel-updater.conf
+findmnt -n -o UUID /boot
+```
+
+Then `sudo kernel-updater check` should report `boot-identity` as `ok`.
 
 ### check
 
@@ -136,6 +169,42 @@ Results go to stdout as aligned `STATUS ITEM DETAIL` lines, or with `--porcelain
 never a disk identifier, device name or key file. `check` exits 0 unless an item fails, and 2
 when one does or, with `--strict`, when one warns.
 
+### Hooks
+
+`install.sh` installs four kernel hooks, which `linux-run-hooks` runs from the maintainer
+scripts of every kernel package, and apt-guard, which APT runs before dpkg. They are armed
+while `boot_fs_uuid` is set. Until then they run the same checks but only warn, so the tool
+never blocks apt on a system it was not set up for. While armed:
+
+| Hook | Runs | Refuses |
+|---|---|---|
+| `/etc/kernel/preinst.d/00-kernel-updater` | Before a kernel package is unpacked | The install while `/boot` is not mounted or another filesystem is; a new kernel ends not installed, and an upgrade or reinstall leaves the installed one as it was |
+| `/etc/kernel/prerm.d/00-kernel-updater` | Before a kernel package is removed | The removal in the same case; the package stays installed |
+| `/etc/kernel/postinst.d/00-kernel-updater` | When a kernel package is configured, before linux-base copies the kernel to `/boot` and initramfs-tools builds its initrd there | The configure in the same case; the package stays half-configured |
+| `/etc/kernel/postinst.d/kernel-updater` | After initramfs-tools has built the initrd | A kernel whose `/boot/vmlinuz-VERSION` is missing or empty, whose initrd is missing, unreadable, or lacks its modules, `cryptsetup`, the cryptroot configuration or the key files `/etc/crypttab` names, or, with `link_in_boot = yes`, whose links in `/boot` are absolute or dangle. The package stays half-configured; with `verify_action = warn` the hook only warns |
+| apt-guard, run through `/etc/apt/apt.conf.d/50kernel-updater` | Before dpkg, with the actions APT is about to take | An apt run that installs, removes or configures a versioned `linux-image`, `linux-binary`, `linux-modules` or `linux-base` package, `linux-base` or `initramfs-tools` while `/boot` is not the filesystem `boot_fs_uuid` names, or that unpacks or configures `grub-pc` while `grub-pc/install_devices` names a device. A refused run changes nothing |
+
+apt-guard covers the split kernel packages, whose `linux-binary` part can be unpacked before
+the `linux-image` preinst runs the hooks, and runs that only remove kernels. `cryptsetup`,
+`dkms` and the other GRUB packages pass, and any run without the packages above passes at
+once. While `apt-guard` is missing or not executable, the APT configuration lets every run
+through. The kernel hooks back apt-guard up for `dpkg -i` and `dpkg --configure -a`, and let
+everything through while `/usr/local/bin/kernel-updater` is missing. A kernel's own postinst
+moves the links before any hook runs, so a configure refused while `/boot` is not mounted can
+still leave links under the mount point (`check` reports them as `boot-shadowed`), and one
+refused while another filesystem is mounted there moves the links on that filesystem.
+
+A refusal says why and what to do: unlock and mount `/boot`; or, when another filesystem is
+mounted there, mount the stick's `/boot` instead, or set `boot_fs_uuid` anew if `/boot` was
+made anew; or mount `/proc` in a chroot, where `findmnt` cannot read the mount table. Then run
+apt again, or `dpkg --configure -a` for a half-configured kernel. When a new kernel fails the
+check with the links in `/boot`, `/boot/vmlinuz` and `/boot/initrd.img` already point at it:
+until it passes, boot the previous kernel, which the `.old` links point at. Fix the cause,
+rebuild its initrd with `update-initramfs -u -k VERSION`, then run `dpkg --configure -a`. The
+messages name kinds, never a disk identifier or key file. To get past the hooks on purpose,
+comment out `boot_fs_uuid`, which disarms them, or run `install.sh --uninstall`. The hooks
+take no lock and need no terminal; `kernel-updater hook` runs them for the installed files.
+
 ### Configuration
 
 `/etc/kernel-updater.conf` holds `key = value` lines; a line that starts with `#` is a
@@ -146,8 +215,9 @@ file must be owned by root and not writable by group or others. `examples/kernel
 | Key | Meaning |
 |---|---|
 | `grub_floor` | Oldest GRUB the stick must run on: 2.02 (the default), 2.06, 2.12 or 2.14. It is the default of `lint --floor`, and `check` judges by it whether GRUB unlocks and reads `/boot` |
-| `boot_fs_uuid` | UUID of the ext filesystem mounted at `/boot`, as `findmnt -n -o UUID /boot` prints it. `check` fails when another filesystem is mounted there, and warns while the key is not set |
+| `boot_fs_uuid` | UUID of the ext filesystem mounted at `/boot`, as `findmnt -n -o UUID /boot` prints it. Setting it arms the [hooks](#hooks), which refuse while another filesystem or none is mounted there. `check` fails when another filesystem is mounted there, and warns while the key is not set |
 | `boot_luks_uuid` | UUID of the LUKS container that holds `/boot`, as `cryptsetup luksUUID` prints it. `check` fails when `/boot` is in another container |
+| `verify_action` | What the postinst hook does with a new kernel that may not boot: `fail` (the default) stops its configure, `warn` only warns |
 
 Both UUIDs are optional, are written in the 8-4-4-4-12 hex form in either case, and are kept
 lower case.
@@ -169,6 +239,9 @@ or on Linux:
 bats tests/
 ```
 
+- The tests point the tool at a fixture tree, a terminal file and a lock file of their own
+  through `KU_ROOT`, `KU_TTY` and `KU_LOCKFILE`. The tool takes those from the environment only
+  with `KU_TEST=1`, which the tests set, so a stray `KU_ROOT` never reaches the hooks.
 - ShellCheck must report nothing for any shell file. That test is skipped when `shellcheck`
   is not on PATH.
 - `grub-script-check` (Debian package `grub-common`) checks the example configs and a syntax
@@ -180,8 +253,12 @@ bats tests/
 - `tests/container` holds tests that change the system they run on: they build dummy kernel
   packages with equivs whose maintainer scripts call `linux-update-symlinks` as real kernels
   do, install, hold and remove them, mount a tmpfs on `/boot`, and run `check` with stubs only
-  for `uname` and `lsinitramfs`. They run only with `KU_CONTAINER=1` inside a container, fail
-  with it set anywhere else, and skip without it; `bats tests/` leaves the subdirectory out.
+  for `uname` and `lsinitramfs`. `hooks.bats` installs kernel-updater with `install.sh` and
+  drives its hooks through real `dpkg`, `apt-get` and `linux-run-hooks` runs, with dummy
+  kernels whose maintainer scripts run the hooks as real ones do and an ext4 image with a
+  synthetic UUID loop-mounted on `/boot`. They run only with `KU_CONTAINER=1` inside a
+  container, fail with it set anywhere else, and skip without it; `bats tests/` leaves the
+  subdirectory out.
   The `kali` job of the tests workflow builds the Kali rolling image of `ci/kali/Dockerfile`,
   pinned by digest and updated by Dependabot, and runs them in it, failing when any is
   skipped. To run them locally:

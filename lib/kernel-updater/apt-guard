@@ -1,0 +1,53 @@
+#!/bin/sh
+# -------------------------------------------------------
+# kernel-updater apt-guard
+#
+# APT runs this before dpkg as a DPkg::Pre-Install-Pkgs hook, with protocol version 3 as
+# /etc/apt/apt.conf.d/50kernel-updater asks, and aborts the run when it exits non-zero. It
+# picks the actions on kernel packages, linux-base, initramfs-tools and grub-pc out of what
+# APT sends on stdin and hands them to "kernel-updater hook apt-guard", which decides. Any
+# other run passes at once, without starting the tool.
+# -------------------------------------------------------
+
+set -eu
+
+# The tool sits in ../../bin from here, in a checkout and under the install prefix alike.
+self=$(readlink -f -- "$0")
+tool=${self%/*}/../../bin/kernel-updater
+
+# APT sends "VERSION N", its configuration up to a blank line, then one action per line: the
+# package name, its old and new versions (each with architecture and multi-arch type in
+# version 3) and the action, a .deb file to unpack, **CONFIGURE** or **REMOVE**. Without a
+# VERSION line (protocol version 1), each line is a .deb file to unpack. awk reads all of it,
+# so APT never writes into a closed pipe, and prints NAME<TAB>ACTION for the packages that
+# matter: versioned kernel packages but not their -dbg builds, linux-base, initramfs-tools
+# and grub-pc.
+actions=$(awk '
+    NR == 1 && /^VERSION [0-9]+$/ { protocol = 1; next }
+    protocol && !body { if ($0 == "") body = 1; next }
+    NF == 0 { next }
+    {
+        if (protocol) {
+            name = $1
+            action = $NF
+        } else {
+            name = $0
+            sub(/^.*\//, "", name)
+            sub(/_.*$/, "", name)
+            action = $0
+        }
+        sub(/:.*$/, "", name)
+        if (action == "**CONFIGURE**") action = "configure"
+        else if (action == "**REMOVE**") action = "remove"
+        else action = "unpack"
+        if ((name ~ /^linux-(image|binary|modules|base)-[0-9]/ && name !~ /-dbg(sym)?$/) ||
+            name == "linux-base" || name ~ /^initramfs-tools(-core|-bin)?$/ || name == "grub-pc")
+            print name "\t" action
+    }
+')
+[ -n "$actions" ] || exit 0
+if [ ! -x "$tool" ]; then
+    echo "kernel-updater: warning: $tool is missing, so apt-guard let this apt run through" >&2
+    exit 0
+fi
+printf '%s\n' "$actions" | "$tool" hook apt-guard

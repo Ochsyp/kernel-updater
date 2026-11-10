@@ -75,8 +75,9 @@ jobs:
       - name: Build the Kali image
         run: docker build --tag kernel-updater-kali ci/kali
       - name: Run the container tests
-        # --privileged lets the tests mount a tmpfs on /boot and check bind-mount / read-only.
-        # The checkout is mounted read-only; the tests change only the container.
+        # --privileged lets the tests mount a tmpfs or a loop-mounted ext4 image on /boot and
+        # check bind-mount / read-only. The checkout is mounted read-only; the tests change
+        # only the container, where they install kernel-updater and its hooks.
         run: |
           docker run --rm --privileged --volume "$PWD:/src:ro" kernel-updater-kali \
             bats --tap tests/container | tee "$RUNNER_TEMP/kali.tap"

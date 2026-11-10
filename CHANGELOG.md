@@ -81,6 +81,40 @@ with the owner's original script.
 - A `kali` job in the tests workflow that builds a Kali rolling image from
   `ci/kali/Dockerfile`, pinned by digest, and runs the container suite in it with
   `docker run --privileged`, failing when a test is skipped. Dependabot updates the image.
+- `install.sh`, which installs the tool from the checkout under `/usr/local`, the kernel hooks
+  in `/etc/kernel` and apt-guard's configuration in `/etc/apt/apt.conf.d/50kernel-updater`, in
+  that order, and lists every file with its SHA-256 in `/var/lib/kernel-updater/install.manifest`.
+  A rerun updates what changed and removes files the checkout no longer has; `--uninstall`
+  removes what the manifest lists, the APT configuration first; `--dry-run` changes nothing.
+  The manifest lists old and new contents while files change, so a run cut short can be run
+  again or undone. It refuses with exit 3, before changing anything, when a file in its way was
+  not installed by it or changed since, and needs root.
+- Kernel hooks: `preinst.d`, `prerm.d` and `postinst.d/00-kernel-updater` refuse, with exit 3,
+  to let a kernel be installed, removed or configured while `/boot` is not mounted or holds
+  another filesystem than `boot_fs_uuid` names. `postinst.d/kernel-updater`, which runs after
+  initramfs-tools, fails a kernel whose vmlinuz is missing or empty, whose initrd is missing,
+  unreadable, or lacks its modules, `cryptsetup`, the cryptroot configuration or the key files
+  crypttab names, or whose links in `/boot` are absolute or dangle, leaving the package
+  half-configured; with the links in `/boot` it says they already point at that kernel and
+  that the `.old` links boot the previous one. The wrappers let everything through, with a
+  warning, while `/usr/local/bin/kernel-updater` is missing.
+- apt-guard, a `DPkg::Pre-Install-Pkgs` hook with protocol version 3 in
+  `lib/kernel-updater/apt-guard`, refuses an apt run before dpkg starts when it installs,
+  removes or configures a versioned `linux-image`, `linux-binary`, `linux-modules` or
+  `linux-base` package, `linux-base` or `initramfs-tools` while `/boot` is not the filesystem
+  `boot_fs_uuid` names, or unpacks or configures `grub-pc` while `grub-pc/install_devices`
+  names a device. Any other run passes without starting the tool, and every run passes while
+  apt-guard is missing or not executable. A refusal names the remedy for its cause: an
+  unmounted `/boot`, another filesystem there, or a mount table `findmnt` cannot read.
+- `kernel-updater hook boot-guard|verify|apt-guard`, which the installed hooks run. The hooks
+  are armed while `boot_fs_uuid` is set; until then they only warn.
+- `verify_action` in `/etc/kernel-updater.conf`: `fail`, the default, or `warn`, which makes the
+  postinst check only warn.
+- Tests for the hooks, apt-guard with protocol versions 3, 2 and 1, and the installer, and a
+  container suite, `tests/container/hooks.bats`, that installs kernel-updater and drives the
+  hooks through real dpkg, apt-get and linux-run-hooks runs, with dummy kernels whose
+  maintainer scripts run the hooks as real ones do and an ext4 image loop-mounted on `/boot`.
+  The Kali image adds e2fsprogs for it.
 
 ### Changed
 
@@ -97,5 +131,13 @@ with the owner's original script.
   when a library in `lib/kernel-updater` is missing from its list.
 - The tests workflow also runs once a week, so a change in Kali rolling shows up without a
   push.
+- The `/boot` probe behind `check` and the hooks reads the filesystem's UUID with `blkid -p`
+  when `findmnt` has none, as in a chroot or container without udev, and looks inside `/boot`
+  first, so an automount is mounted before it is probed.
+- `KU_ROOT`, `KU_TTY` and `KU_LOCKFILE` are taken from the environment only with `KU_TEST=1`,
+  which the tests set, so a stray `KU_ROOT` in root's environment cannot steer the hooks.
+- `check`'s initrd and link rules are shared with the postinst hook; its results do not change.
+- `tests/static.bats` and `tests/repo.bats` also cover `install.sh`, `hook.sh`, apt-guard and
+  the kernel hooks.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
