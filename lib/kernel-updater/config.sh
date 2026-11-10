@@ -6,10 +6,10 @@
 # lines. The file is parsed, never sourced, and every value must pass its key's check.
 # -------------------------------------------------------
 
-# Known keys and the check their values must pass (the _ku_check_* function of that name),
-# and the defaults. Later phases add keys here.
-declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version)
-declare -gA KU_CONF=([grub_floor]=2.02)
+# Known keys and the check their values must pass (the _ku_valid_* function of that name),
+# and the defaults; an empty default leaves an optional key unset. Later phases add keys here.
+declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid)
+declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="")
 
 # The config file named by --config, or empty for the default path. Set by the option parser.
 KU_CONFIG_FILE=""
@@ -54,8 +54,10 @@ ku_config_load() {
         fi
         [[ -z ${seen[$key]+set} ]] || ku_die "$KU_EX_CONFIG" "$file:$n: '$key' is set twice"
         seen[$key]=$n
-        "_ku_check_${KU_CONF_SCHEMA[$key]}" "$value" ||
+        "_ku_valid_${KU_CONF_SCHEMA[$key]}" "$value" ||
             ku_die "$KU_EX_CONFIG" "$file:$n: invalid value for '$key'"
+        # UUIDs are kept lower case, as blkid and cryptsetup print them.
+        [[ ${KU_CONF_SCHEMA[$key]} != uuid ]] || value=${value,,}
         # shellcheck disable=SC2034 # read by the commands
         KU_CONF[$key]=$value
     done
@@ -74,7 +76,13 @@ _ku_config_check_owner() {
         ku_die "$KU_EX_CONFIG" "the config file $name must not be writable by group or others"
 }
 
-# A GRUB version that lint knows the features of: 2.02, 2.06, 2.12 or 2.14.
-_ku_check_grub_version() {
+# A GRUB version whose features lint and check know: 2.02, 2.06, 2.12 or 2.14.
+_ku_valid_grub_version() {
     [[ $1 =~ ^2\.(02|06|12|14)$ ]]
+}
+
+# A filesystem or LUKS UUID in the 8-4-4-4-12 hex form blkid and cryptsetup print, in either
+# case.
+_ku_valid_uuid() {
+    [[ $1 =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
 }

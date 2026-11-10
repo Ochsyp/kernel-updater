@@ -19,6 +19,36 @@ setup() {
 @test "A missing config file keeps the defaults" {
     ku_config_load "$BATS_TEST_TMPDIR/none.conf"
     [ "${KU_CONF[grub_floor]}" = 2.02 ]
+    [ -z "${KU_CONF[boot_fs_uuid]}" ]
+    [ -z "${KU_CONF[boot_luks_uuid]}" ]
+}
+
+@test "Each key's check is a _ku_valid_ function, which a default that is set passes" {
+    local key
+    for key in "${!KU_CONF_SCHEMA[@]}"; do
+        declare -F "_ku_valid_${KU_CONF_SCHEMA[$key]}" > /dev/null
+        [ -z "${KU_CONF[$key]}" ] || "_ku_valid_${KU_CONF_SCHEMA[$key]}" "${KU_CONF[$key]}"
+    done
+}
+
+@test "boot_fs_uuid and boot_luks_uuid take UUIDs in either case and keep them lower case" {
+    printf 'boot_fs_uuid = %s\nboot_luks_uuid=%s\n' 5CA1AB1E-0000-4000-8000-000000000B01 \
+        5ca1ab1e-0000-4000-8000-000000000c01 > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[boot_fs_uuid]}" = 5ca1ab1e-0000-4000-8000-000000000b01 ]
+    [ "${KU_CONF[boot_luks_uuid]}" = 5ca1ab1e-0000-4000-8000-000000000c01 ]
+}
+
+@test "A UUID that is not 8-4-4-4-12 hex digits exits 78 without echoing the value" {
+    local value
+    for value in 5ca1ab1e 5ca1ab1e000040008000000000000b01 5ca1ab1e-0000-4000-8000-000000000b0 \
+        5ca1ab1e-0000-4000-8000-000000000b01x "{5ca1ab1e-0000-4000-8000-000000000b01}" \
+        5ca1ab1g-0000-4000-8000-000000000b01 "5ca1ab1e-0000-4000-8000-000000000b01 x"; do
+        printf 'boot_luks_uuid = %s\n' "$value" > "$CONF"
+        run ku_config_load "$CONF"
+        [ "$status" -eq 78 ] || { printf 'accepted: %s\n' "$value" >&2; return 1; }
+        [[ "$output" == *"$CONF:1: invalid value for 'boot_luks_uuid'"* && "$output" != *5ca1ab1* ]]
+    done
 }
 
 @test "A config file sets its keys, with comments, blank lines, spaces and CRLF allowed" {
