@@ -995,14 +995,69 @@ EOF
     [[ "$stderr" == *"plan: output_dir holds an export from an earlier run that lists other"* ]]
     [[ "$stderr" == *"info: removed the export in output_dir, which this write made stale"* ]]
     [ -z "$(find "$out" -mindepth 1)" ]
-    # The baseline takes the grub.cfg finalize wrote, and nothing else.
-    [[ "$stderr" == *"the tripwire's baseline takes grub.cfg only, but the stick differs from"* ]]
-    [[ "$stderr" == *"changed: multibootusb/grub/i386-pc/normal.mod; new:"* ]]
+    # grub.cfg came from Windows, so it differed from the baseline before finalize wrote it:
+    # the baseline keeps every old entry, and finalize leaves all three files to baseline.
+    [[ "$stderr" == *"plan: multibootusb/grub/grub.cfg differs from the tripwire's baseline"* ]]
+    [[ "$stderr" == *"the stick differs from the tripwire's baseline in files finalize does"* ]]
+    [[ "$stderr" == *"changed: multibootusb/grub/grub.cfg, multibootusb/grub/i386-pc/normal"* ]]
     [[ "$stderr" == *"new: multibootusb/grub/kali.cfg. Check those files, then run 'sudo"* ]]
-    grep -q -x "$(sha256sum < "$GRUB/grub.cfg" | cut -c 1-64)  multibootusb/grub/grub.cfg" \
-        "$ROOT/var/lib/kernel-updater/baseline"
-    grep -q -x -F "$(grep 'normal\.mod$' <<< "$stored")" "$ROOT/var/lib/kernel-updater/baseline"
-    refute_line_match 'kali\.cfg$' "$ROOT/var/lib/kernel-updater/baseline"
+    [ "$(< "$ROOT/var/lib/kernel-updater/baseline")" = "$stored" ]
+    private_output
+}
+
+@test "A write keeps the baseline entry of a file changed since, as the plan and a warning say" {
+    local base="$ROOT/var/lib/kernel-updater/baseline" grub=multibootusb/grub/grub.cfg a b c
+    local kali=multibootusb/grub/kali.cfg mod=multibootusb/grub/i386-pc/normal.mod
+    a=$(printf 'a' | sha256sum | cut -c 1-64)
+    b=$(printf 'b' | sha256sum | cut -c 1-64)
+    c=$(printf 'c' | sha256sum | cut -c 1-64)
+    mkdir -p "${base%/*}"
+    printf '%s  %s\n' "$a" "$grub" "$a" "$mod" > "$base"
+    # grub.cfg read as b, not the a stored: changed outside the tool, it keeps its entry, while
+    # kali.cfg, missing and without an entry, gets one. Exported, nothing is planned.
+    # shellcheck disable=SC2016 # the code run_ku_lib runs expands its own variables
+    run_ku_lib 'KU_DK_DEPLOY=export; _ku_mg_drift_plan "$1" - "$2" "$3"
+        KU_DK_DEPLOY=direct; _ku_mg_drift_plan "$1" - "$2" "$3"
+        _ku_mg_baseline_set "$1" - "$4" "$2" "$3" "$4"; _ku_mg_drift_warn' \
+        "$kali" "$grub" "$b" "$c"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "plan: $grub differs from the tripwire's baseline" <<< "$stderr")" -eq 1 ]
+    [[ "$stderr" != *"$kali differs"* ]]
+    [[ "$stderr" == *"warning: $grub differed from the tripwire's baseline before this write"* ]]
+    [ "$(< "$base")" = "$(printf '%s  %s\n' "$a" "$grub" "$a" "$mod" "$c" "$kali")" ]
+    # Read as stored, grub.cfg takes the new entry, and a file whose entry has no file stays.
+    # shellcheck disable=SC2016 # the code run_ku_lib runs expands its own variables
+    run_ku_lib '_ku_mg_baseline_set "$1" "$3" "$4" "$2" - "$4"; _ku_mg_drift_warn' \
+        "$grub" "$mod" "$a" "$b"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: $mod differed from the tripwire's baseline"* ]]
+    [ "$(< "$base")" = "$(printf '%s  %s\n' "$b" "$grub" "$a" "$mod" "$c" "$kali")" ]
+    # Without a stored baseline, nothing drifts and nothing is recorded.
+    rm "$base"
+    # shellcheck disable=SC2016 # the code run_ku_lib runs expands its own variables
+    run_ku_lib 'KU_DK_DEPLOY=direct; _ku_mg_drift_plan "$1" "$2"
+        ! _ku_mg_baseline_set "$1" "$2" "$2"' "$grub" "$b"
+    [ "$status" -eq 0 ]
+    [ -z "$stderr" ]
+    [ ! -e "$base" ]
+}
+
+@test "menu keeps the baseline entry of a grub.cfg changed outside the tool, and says so" {
+    local base="$ROOT/var/lib/kernel-updater/baseline" stored
+    system_done
+    run_ku baseline --yes
+    [ "$status" -eq 0 ]
+    stored=$(grep 'grub\.cfg$' "$base")
+    # A change from Windows outside the Kali submenu, which the tripwire must keep reporting.
+    printf 'menuentry "Other" {\r\n\ttrue\r\n}\r\n' >> "$GRUB/grub.cfg"
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"plan: multibootusb/grub/grub.cfg differs from the tripwire's baseline"* ]]
+    [[ "$stderr" == *"warning: multibootusb/grub/grub.cfg differed from the tripwire's"* ]]
+    grep -q 'menuentry "Other"' "$GRUB/grub.cfg"
+    # grub.cfg keeps its old entry; kali.cfg, new and without one, gets its own.
+    grep -q -x -F "$stored" "$base"
+    grep -q -x "$(sha256sum < "$GRUB/kali.cfg" | cut -c 1-64)  multibootusb/grub/kali.cfg" "$base"
     private_output
 }
 

@@ -212,13 +212,17 @@ with the owner's original script.
   sources `kali.cfg`, keeping the submenu behind it as legacy entries. A byte guard,
   `grub-script-check` and `lint` with the stick's own GRUB lists check both files before
   `kali.cfg` is written, then `grub.cfg`, or both are exported; its plan shows a kernel
-  parameter that may name a device, a UUID or a key file as `NAME=<value>`. Run again while
+  parameter that may name a device, a UUID or a key file as `NAME=<value>`. A write sets the
+  baseline entries of the files it wrote, but not that of a file that differed from a stored
+  baseline before it, as after a change from Windows: the plan and a warning name it, and
+  check's tripwire keeps reporting the change until `kernel-updater baseline` records it, so
+  no write of `migrate` hides a change made outside the tool. Run again while
   the legacy entries remain, `menu` writes `kali.cfg` alone anew from them when it is missing
   or differs, as after `menu_variants` changed. `live` and `forensic` need overlayroot in each
   initrd their entries boot. `finalize`
-  removes the legacy entries, sets `grub.cfg`'s entry in the stored baseline and names the
-  other files that differ from it, which `kernel-updater baseline` records once checked, or
-  records the whole baseline when none is stored. A write of `menu`, `finalize` or a rollback
+  removes the legacy entries, sets `grub.cfg`'s entry in the stored baseline, as `menu` does,
+  and names the files that still differ from it, which `kernel-updater baseline` records once
+  checked, or records the whole baseline when none is stored. A write of `menu`, `finalize` or a rollback
   removes an export in `output_dir` that it makes stale. `--deploy` and `--output-dir` hold for
   one run, and an export `--output-dir` takes elsewhere gets a warning, since `check` reads only
   the configured `output_dir`.

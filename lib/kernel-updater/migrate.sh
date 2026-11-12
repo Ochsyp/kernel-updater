@@ -32,6 +32,10 @@ KU_MG_KEYS=(boot_fs_uuid boot_luks_uuid disk_ptuuid p1_fs_uuid root_device)
 KU_MG_TMP="" KU_MG_BACKUP="" KU_MG_STAMP="" KU_MG_SEALED=0 KU_MG_ETC_TMP="" KU_MG_CLEANUP=0
 KU_MG_CHANGED=0
 
+# The files on partition 1 that _ku_mg_drifted found changed since the tripwire's baseline was
+# recorded, by their names there: a write of migrate leaves their baseline entries as they were.
+KU_MG_DRIFTED=()
+
 # The root= of the running kernel's command line, once _ku_mg_cmdline_root read it; the title
 # of the Kali submenu, once _ku_mg_title read it; --deploy and --output-dir, which hold for this
 # run even after detect loads the configuration anew; and the output_dir the configuration
@@ -914,6 +918,7 @@ _ku_mg_stage_menu() {
     fi
     KU_MG_CHANGED=1
     _ku_mg_menu_plan "$title" "$expk" "$n" "$sumk" "$sumg"
+    _ku_mg_drift_plan "$KU_MG_KALI" "$expk" "$KU_MG_GRUB" "$expg"
     if (( KU_DRY_RUN )); then
         _ku_mg_deploy "$tmp" "$expk" "$expg" "$sumk" "$sumg"
         ku_log info "dry run: nothing was changed"
@@ -933,10 +938,13 @@ _ku_mg_stage_menu() {
     _ku_mg_written kali.cfg "$sumk" grub.cfg "$sumg"
     _ku_mg_manifest
     _ku_mg_deploy "$tmp" "$expk" "$expg" "$sumk" "$sumg"
-    if [[ $KU_DK_DEPLOY != export ]] &&
-        ! ku_baseline_update "$KU_MG_KALI" "$sumk" "$KU_MG_GRUB" "$sumg"; then
-        ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
-            "damaged: run 'kernel-updater baseline' after the finalize stage"
+    if [[ $KU_DK_DEPLOY != export ]]; then
+        if ! _ku_mg_baseline_set "$KU_MG_KALI" "$expk" "$sumk" "$KU_MG_GRUB" "$expg" "$sumg"
+        then
+            ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
+                "damaged: run 'kernel-updater baseline' after the finalize stage"
+        fi
+        _ku_mg_drift_warn
     fi
     _ku_mg_menu_done
 }
@@ -1007,6 +1015,7 @@ _ku_mg_menu_again() {
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export kali.cfg "$sumk"; then
         _ku_mg_stale_plan
     fi
+    _ku_mg_drift_plan "$KU_MG_KALI" "$expk"
     if (( KU_DRY_RUN )); then
         _ku_mg_kali_deploy "$tmp/kali.cfg" "$expk" "$sumk"
         ku_log info "dry run: nothing was changed"
@@ -1047,7 +1056,8 @@ _ku_mg_deploy() {
 
 # Write the file FILE, named kali.cfg, with the SHA-256 SUM, to partition 1 as kali.cfg, over
 # the one read with the SHA-256 EXPECTED, or - for none, then remove an export it makes stale
-# and set its entry in the tripwire's baseline; or export it. A dry run only says what it would.
+# and set its entry in the tripwire's baseline, unless kali.cfg had drifted from it
+# (_ku_mg_baseline_set); or export it. A dry run only says what it would.
 _ku_mg_kali_deploy() {
     if [[ $KU_DK_DEPLOY == export ]]; then
         _ku_mg_export "$1"
@@ -1055,10 +1065,11 @@ _ku_mg_kali_deploy() {
     fi
     ku_deploy_files "$KU_DK_ROOT" "$KU_MG_KALI" "$1" "$2"
     _ku_mg_retire_export kali.cfg "$3"
-    if ! ku_baseline_update "$KU_MG_KALI" "$3"; then
+    if ! _ku_mg_baseline_set "$KU_MG_KALI" "$2" "$3"; then
         ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
             "damaged: run 'kernel-updater baseline'"
     fi
+    _ku_mg_drift_warn
 }
 
 # Export the FILEs to output_dir with ku_export. When --output-dir took the export elsewhere
@@ -1588,6 +1599,7 @@ _ku_mg_stage_finalize() {
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export grub.cfg "$sum"; then
         _ku_mg_stale_plan
     fi
+    _ku_mg_drift_plan "$KU_MG_GRUB" "$expg"
     if (( KU_DRY_RUN )); then
         _ku_mg_finalize_deploy "$tmp" "$expg" "$sum"
         ku_log info "dry run: nothing was changed"
@@ -1617,20 +1629,20 @@ _ku_mg_finalize_deploy() {
     fi
     ku_deploy_files "$KU_DK_ROOT" "$KU_MG_GRUB" "$1/grub.cfg" "$2"
     _ku_mg_retire_export grub.cfg "$3"
-    _ku_mg_finalize_baseline "$3"
+    _ku_mg_finalize_baseline "$2" "$3"
 }
 
-# Bring check's tripwire up to date once finalize wrote grub.cfg with the SHA-256 SUM. Without a
-# stored baseline, record the whole one, as 'kernel-updater baseline --yes' would. With one,
-# set grub.cfg's entry alone, as the menu stage sets those of the files it writes, and warn,
-# naming them, about the other entries that differ from the stick, such as a kali.cfg copied
-# from an export or a boot file that changed since: recorded unseen here, the tripwire would
-# never report them, so they wait for 'kernel-updater baseline', which shows them and asks. A
-# damaged baseline is left to that command too. Only warns when it cannot do its part, as
-# grub.cfg is written by then.
+# Bring check's tripwire up to date once finalize wrote grub.cfg, read with the SHA-256 READ,
+# with the SHA-256 SUM. Without a stored baseline, record the whole one, as 'kernel-updater
+# baseline --yes' would. With one, set grub.cfg's entry alone, as the menu stage sets those of
+# the files it writes, unless grub.cfg had drifted from it (_ku_mg_baseline_set), and warn,
+# naming them, about the entries that still differ from the stick, such as that grub.cfg, a
+# kali.cfg copied from an export or a boot file that changed since: recorded unseen here, the
+# tripwire would never report them, so they wait for 'kernel-updater baseline', which shows
+# them and asks. A damaged baseline is left to that command too. Only warns when it cannot do
+# its part, as grub.cfg is written by then.
 _ku_mg_finalize_baseline() {
-    local file stored current name
-    local -a changed=() new=() missing=()
+    local file stored current
     file=$(ku_path "$KU_BASELINE")
     if [[ ! -e $file && ! -L $file ]]; then
         if ! ku_baseline_record "$KU_DK_ROOT"; then
@@ -1639,7 +1651,8 @@ _ku_mg_finalize_baseline() {
         fi
         return 0
     fi
-    if ! stored=$(ku_baseline_read "$file") || ! ku_baseline_update "$KU_MG_GRUB" "$1"; then
+    if ! _ku_mg_baseline_set "$KU_MG_GRUB" "$1" "$2" || ! stored=$(ku_baseline_read "$file")
+    then
         ku_log warning "the tripwire's baseline is damaged, so grub.cfg's entry was not" \
             "updated: run 'sudo kernel-updater baseline'"
         return 0
@@ -1649,22 +1662,92 @@ _ku_mg_finalize_baseline() {
             "tripwire's baseline beyond grub.cfg is unknown: run 'sudo kernel-updater baseline'"
         return 0
     fi
+    # grub.cfg's entry holds the file written now, unless it drifted, so only what the
+    # baseline must not take unseen still differs.
     ku_baseline_compare "$stored" "$current"
-    for name in "${KU_BL_CHANGED[@]}"; do
-        [[ $name == "$KU_MG_GRUB" ]] || changed+=("$name")
-    done
-    for name in "${KU_BL_NEW[@]}"; do
-        [[ $name == "$KU_MG_GRUB" ]] || new+=("$name")
-    done
-    for name in "${KU_BL_MISSING[@]}"; do
-        [[ $name == "$KU_MG_GRUB" ]] || missing+=("$name")
-    done
-    KU_BL_CHANGED=("${changed[@]}") KU_BL_NEW=("${new[@]}") KU_BL_MISSING=("${missing[@]}")
-    if (( ${#changed[@]} + ${#new[@]} + ${#missing[@]} )); then
-        ku_log warning "the tripwire's baseline takes grub.cfg only, but the stick differs from" \
-            "it elsewhere too: $(ku_baseline_summary). Check those files, then run 'sudo" \
+    # shellcheck disable=SC2153 # ku_baseline_compare in baseline.sh sets the KU_BL_ arrays
+    if (( ${#KU_BL_CHANGED[@]} + ${#KU_BL_NEW[@]} + ${#KU_BL_MISSING[@]} )); then
+        ku_log warning "the stick differs from the tripwire's baseline in files finalize does" \
+            "not record: $(ku_baseline_summary). Check those files, then run 'sudo" \
             "kernel-updater baseline', which shows them again and records them"
     fi
+}
+
+# Set KU_MG_DRIFTED to the NAMEs, given as NAME READ pairs, whose entry in the tripwire's
+# baseline does not match READ, the SHA-256 the file on partition 1 had when the plan read it,
+# or - when it was missing: such a file changed outside kernel-updater since the baseline was
+# recorded, as by a copy from Windows, or else an entry with no file or a file with no entry.
+# Returns 1, leaving KU_MG_DRIFTED empty, when no baseline is stored or it is damaged.
+_ku_mg_drifted() {
+    local file stored hash name
+    local -A sums=()
+    KU_MG_DRIFTED=()
+    file=$(ku_path "$KU_BASELINE")
+    [[ -e $file || -L $file ]] || return 1
+    stored=$(ku_baseline_read "$file") || return 1
+    while read -r hash name; do
+        [[ -z $name ]] || sums[$name]=$hash
+    done <<< "$stored"
+    while (( $# >= 2 )); do
+        if [[ -n ${sums[$1]+set} && ${sums[$1]} != "$2" ]] ||
+            [[ -z ${sums[$1]+set} && $2 != - ]]; then
+            KU_MG_DRIFTED+=("$1")
+        fi
+        shift 2
+    done
+}
+
+# After a write of migrate to partition 1, set the tripwire's baseline entries of the files
+# given as NAME READ SUM triples, READ as _ku_mg_drifted takes it and SUM the SHA-256 written,
+# but not those of the files that had drifted (KU_MG_DRIFTED): recorded here unseen, their
+# change would never show in check's tripwire, so their entries stay as they were, which
+# _ku_mg_drift_warn says. Returns 1, recording nothing, when no baseline is stored or it is
+# damaged, or the update fails.
+_ku_mg_baseline_set() {
+    local i
+    local -a all=("$@") reads=() pairs=()
+    for (( i = 0; i + 2 < ${#all[@]}; i += 3 )); do
+        reads+=("${all[i]}" "${all[i + 1]}")
+    done
+    _ku_mg_drifted "${reads[@]}" || return 1
+    for (( i = 0; i + 2 < ${#all[@]}; i += 3 )); do
+        if [[ " ${KU_MG_DRIFTED[*]} " != *" ${all[i]} "* ]]; then
+            pairs+=("${all[i]}" "${all[i + 2]}")
+        fi
+    done
+    (( ! ${#pairs[@]} )) || ku_baseline_update "${pairs[@]}"
+}
+
+# Print the plan line that says, when files given as NAME READ pairs drifted from the
+# tripwire's baseline (_ku_mg_drifted), that the write leaves their baseline entries as they
+# were, so that check's tripwire keeps reporting the change until 'kernel-updater baseline'
+# records it, and that the owner should look at the stick first. An export changes no
+# baseline, so it gets no such line.
+_ku_mg_drift_plan() {
+    local verb=differs
+    if [[ $KU_DK_DEPLOY == export ]] || ! _ku_mg_drifted "$@" || (( ! ${#KU_MG_DRIFTED[@]} ))
+    then
+        return 0
+    fi
+    (( ${#KU_MG_DRIFTED[@]} == 1 )) || verb=differ
+    _ku_mg_plan "$(_ku_mg_join "${KU_MG_DRIFTED[@]}") $verb from the tripwire's baseline, as" \
+        "after a change from Windows since it was recorded: look at the stick before you" \
+        "answer. The write leaves the baseline entry as it was, so check's tripwire keeps" \
+        "reporting the change until 'kernel-updater baseline' records it"
+}
+
+# Warn, after a write, that the files in KU_MG_DRIFTED differed from the tripwire's baseline
+# before it, so that their entries stayed as they were and check's tripwire keeps reporting
+# them until the owner looked at them and ran 'kernel-updater baseline'. Silent in a dry run,
+# whose plan said so already.
+_ku_mg_drift_warn() {
+    if (( KU_DRY_RUN || ! ${#KU_MG_DRIFTED[@]} )); then
+        return 0
+    fi
+    ku_log warning "$(_ku_mg_join "${KU_MG_DRIFTED[@]}") differed from the tripwire's baseline" \
+        "before this write, so the baseline keeps its old entry and check's tripwire keeps" \
+        "reporting the change: look at the stick, then run 'sudo kernel-updater baseline'," \
+        "which shows what differs and records it"
 }
 
 # =======================================================
@@ -1973,6 +2056,9 @@ _ku_mg_rollback_menu() {
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export grub.cfg "$sum"; then
         _ku_mg_stale_plan
     fi
+    if (( write )); then
+        _ku_mg_drift_plan "$KU_MG_GRUB" "$expected"
+    fi
     if (( drops )) && [[ $KU_DK_DEPLOY == export ]]; then
         _ku_mg_plan "grub.cfg on partition 1 changed after the $stage stage run $stamp wrote it," \
             "as when MultiBootUSB adds an ISO: copied over it, the export drops those changes," \
@@ -2053,6 +2139,9 @@ _ku_mg_rollback_kali() {
         if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export kali.cfg "$sum"; then
             _ku_mg_stale_plan
         fi
+        if (( write )); then
+            _ku_mg_drift_plan "$KU_MG_KALI" "$expected"
+        fi
     fi
     if (( ! KU_DRY_RUN )); then
         _ku_mg_ask rollback "Roll the menu stage run $stamp back as planned?"
@@ -2079,10 +2168,11 @@ _ku_mg_rollback_write() {
     fi
     ku_deploy_files "$KU_DK_ROOT" "$KU_MG_GRUB" "$1/grub.cfg" "$2"
     _ku_mg_retire_export grub.cfg "$3"
-    if ! ku_baseline_update "$KU_MG_GRUB" "$3"; then
+    if ! _ku_mg_baseline_set "$KU_MG_GRUB" "$2" "$3"; then
         ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
             "damaged: run 'kernel-updater baseline'"
     fi
+    _ku_mg_drift_warn
 }
 
 # Check the Kali entries of the grub.cfg FILE from the backup STAMP, which a rollback of the menu

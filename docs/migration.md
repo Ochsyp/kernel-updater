@@ -135,6 +135,12 @@ it is. `menu_variants` and `previous_variants` choose the entries. To change the
 them and run the menu stage again while the legacy entries remain: it leaves `grub.cfg` as it
 is and writes `kali.cfg` alone anew, with a backup of its own.
 
+Written to partition 1, both files take their entries in the baseline of check's tripwire, if
+one is stored. When the plan says that `grub.cfg` differs from that baseline, something changed
+it since, such as MultiBootUSB adding an ISO from Windows: look at `grub.cfg` on the stick before
+you answer, since what changed outside the Kali submenu stays. Its entry then keeps the old
+value, so the tripwire keeps reporting the change until step 11 records it.
+
 In the VM, or with `--deploy export`, the files go to `output_dir` instead: copy them in
 Windows, `kali.cfg` first, into `BOOT:\multibootusb\grub\`, as `DEPLOY.txt` there says, then
 run `sudo kernel-updater check`, whose `deployed` item compares the stick with the export. Its
@@ -158,10 +164,10 @@ sudo kernel-updater migrate --stage finalize
 
 It removes the legacy submenu from `grub.cfg`, and nothing else. Written to partition 1, the
 new `grub.cfg` takes its entry in the baseline of check's tripwire, or finalize records the
-whole baseline when none is stored yet. Where partition 1 differs from a stored baseline in
-other files too, such as a `kali.cfg` copied from an export or a GRUB file that changed, it
-names them and leaves them to the next step, since recorded unseen the tripwire would never
-report them.
+whole baseline when none is stored yet. Where partition 1 differs from a stored baseline, such
+as a `grub.cfg` and `kali.cfg` copied from an export or a GRUB file that changed, it names
+those files and leaves their entries to the next step, since recorded unseen the tripwire
+would never report them.
 
 ## 11. Record the baseline
 
