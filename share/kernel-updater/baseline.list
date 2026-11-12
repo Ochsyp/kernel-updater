@@ -1,0 +1,25 @@
+# The stick's boot files that kernel-updater baseline hashes and check's tripwire compares, as
+# paths relative to partition 1's root, one per line. A line's last component may be a glob.
+# Files that do not exist are not recorded. The baseline also holds the MBR boot code
+# (mbr:boot-code) and partition 1's boot sector (p1:boot-sector), where syslinux keeps its own.
+
+# The boot menus: MultiBootUSB's, the Kali entries phase 6 writes, Windows' and the ISO loader's.
+multibootusb/grub/grub.cfg
+multibootusb/grub/kali.cfg
+multibootusb/grub/win.cfg
+multibootusb/grub/load_iso.cfg
+boot/grub/config.cfg
+
+# GRUB's core image and the image syslinux chain-loads it with.
+multibootusb/grub/core.img
+multibootusb/grub/lnxboot.img
+
+# syslinux, which starts from the boot sector and loads GRUB.
+multibootusb/ldlinux.sys
+multibootusb/ldlinux.c32
+multibootusb/syslinux.cfg
+multibootusb/extlinux.cfg
+
+# GRUB's modules and the lists of its commands and module dependencies.
+multibootusb/grub/i386-pc/*.mod
+multibootusb/grub/i386-pc/*.lst

@@ -115,6 +115,81 @@ with the owner's original script.
   hooks through real dpkg, apt-get and linux-run-hooks runs, with dummy kernels whose
   maintainer scripts run the hooks as real ones do and an ext4 image loop-mounted on `/boot`.
   The Kali image adds e2fsprogs for it.
+- Finding the stick's partition 1, in `lib/kernel-updater/disk.sh`: from the filesystem at
+  `/boot`, `lsblk -s` walks up through the LUKS mapping to the one disk under it, refusing none
+  or several, and takes its partition 1, never a `/dev/sdX` or by-id name; `blkid -p` reads
+  what `lsblk` leaves empty without udev. Its identity is checked against `disk_ptuuid` and
+  `p1_fs_uuid`, and messages name the part that differs, never a value. Partition 1 is reached
+  through `p1_path`, a mount that is there, or a private mount in `/run` with
+  `nosuid,nodev,noexec`: read-only with `ntfs3` first and `ntfs-3g` second, and read-write
+  with `ntfs3` alone, never forced and never clearing what Windows left. Since `ntfs3` replays
+  the log Windows left on any read-write mount, a read-write mount of its own waits until
+  `ntfs-3g.probe --readwrite` finds partition 1 neither hibernated, nor kept in Windows' cache
+  for Fast Startup, nor unclean; `ntfs3` then refuses a volume marked dirty, which `ntfs-3g`
+  would mount read-write all the same; and `ntfs-3g` gets `norecover`. `p1_path` serves only
+  while it is a mount point that holds `multibootusb/grub/grub.cfg`, the same as partition 1's
+  when that can be read, so neither an empty mount point nor another stick's share passes for
+  partition 1. A writer takes a mount that is there, or `p1_path`, only while it is read-write,
+  no user but root can change its files, its root is root's, and its filesystem is mounted
+  nowhere else; it gives up a mount of its own that another one joined meanwhile, and checks
+  that it is read-write; a read-write mount that root made is taken as it is; a dry run mounts
+  read-only. `systemd-detect-virt` tells whether it runs in a VM, and the deploy
+  mode is resolved for phase 6: in a VM `auto` and `direct` export, since the guest never
+  writes partition 1, and natively they write directly; `direct` or `path` fall back to an
+  export, saying why, when they cannot write, and every export says why it exports. What a
+  plan reads to build the new files comes only from a root no user but root can change, for an
+  export too, so while a desktop has partition 1 mounted for its user the tool asks to unmount
+  it there.
+- A safe writer for partition 1 in `lib/kernel-updater/deploy.sh`, for phase 6: it refuses
+  with exit 3 when a file changed since the plan read it, a symlink lies on its way or a user
+  other than root could change a directory on its path; keeps `NAME.ku-<UTC stamp>.bak`
+  backups beside it, the one it makes and the newest others, `backups_keep` in all, even when
+  the clock went back; writes a synced temporary file and puts it in the file's place without
+  renaming over the file, which `ntfs3` loses when such a rename fails: the file moves aside to
+  a free name first, and back should the rename fail, also from the exit trap of a run cut
+  short before the new file took the name, after which the exit names the old file aside;
+  reads it back from the stick, past the cached pages, but for a file small enough to
+  live in its MFT record; and exits 4 when anything fails: with the file unchanged or moved
+  back when the temporary file cannot be written or put in place, and else once it put the old
+  file back, saying whether that worked, or naming the backup to copy by hand. Given several
+  files, it checks them all before it writes the first, and a later failure names the files
+  written. It follows no symlink, refuses a source that is one, and
+  removes its temporary files on every path, in a subshell too. Bytes are kept as they are,
+  CRLF included. `ku_deploy_read` copies a file from partition 1 for a plan, following no
+  symlink, with the SHA-256 the write then expects. An export writes the files to
+  `output_dir`, a directory of root's with mode 0700, with `SHA256SUMS` and a `DEPLOY.txt`
+  that says how to copy them from Windows, after removing the files of the earlier export it
+  does not hold, and a verifier compares the stick with it.
+- `kernel-updater baseline [--show]`, which records, as root and after asking, the SHA-256 of
+  the stick's boot code in `/var/lib/kernel-updater/baseline`: the files
+  `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector.
+  It refuses with 78 while `disk_ptuuid` or `p1_fs_uuid` is not set or names another stick,
+  prints how the stick differs from the stored baseline, and supports `--yes` and
+  `--dry-run`. `--show` changes nothing and prints the identity verdicts, the stick's GRUB
+  version and the comparison, and does not read a partition 1 that mismatches. A disk that
+  cannot be read is named by its kind, never by its device. `ku_baseline_update` lets a writer
+  record just the files it wrote, and records nothing in a dry run.
+- Five partition-1 items for `check`, after the others: `p1-identity`, which also fails when
+  the one key that is set names another stick, `grub-version`, which reads the version from
+  the stick's `normal.mod` and compares it with `grub_floor`, `tripwire`, `deployed`, which
+  warns against copying an export over a stick that changed since, and `kali-cfg`, which lints
+  `kali.cfg` with the stick's own command and module lists. `check` reads partition 1
+  read-only, never one the configuration rejects, follows no symlink on it, as `baseline`
+  does not either, and removes its mount before it exits, also when interrupted;
+  `--no-partition` skips the five.
+- `disk_ptuuid`, `p1_fs_uuid`, `deploy`, `p1_path`, `output_dir` and `backups_keep` in
+  `/etc/kernel-updater.conf`, each with its check, and in `examples/kernel-updater.conf`.
+  Paths lose their trailing slashes.
+- Test seams `KU_P1_DIR`, `KU_P1_DISK`, `KU_P1_FSTYPES` and `KU_P1_PROBE`, taken from the
+  environment only with `KU_TEST=1`, and tests for partition 1, the safe writer and reader, the
+  export and the baseline with stub tools, a partition-1 tree and a disk image.
+- An `ntfs` job in the tests workflow that runs `tests/ntfs` as root: it builds a synthetic
+  stick in a loop file with `sfdisk`, `mkntfs` and `ntfslabel`, finds partition 1 from an ext4
+  `/boot` on it, mounts it with `ntfs3` and `ntfs-3g`, has `ntfs-3g.probe` keep a volume
+  marked hibernated, and `ntfs3` one marked dirty, from a read-write mount, writes and
+  restores through the safe writer,
+  turns down a mount a user owns, and has the tripwire catch a changed byte, failing when a
+  test is skipped.
 
 ### Changed
 
@@ -139,5 +214,17 @@ with the owner's original script.
 - `check`'s initrd and link rules are shared with the postinst hook; its results do not change.
 - `tests/static.bats` and `tests/repo.bats` also cover `install.sh`, `hook.sh`, apt-guard and
   the kernel hooks.
+- `check` reports 18 items: the five partition-1 items follow `grub-pc`. The container suite
+  expects them to skip on its tmpfs `/boot`, which lies on no disk.
+- Keys in `/etc/kernel-updater.conf` may hold digits after the first character, as
+  `p1_path` does.
+- The check that a directory's entries only root can rename, which the shadow scan of `check`
+  uses, moved to `common.sh` as `ku_root_only_dir`, so the private mount of partition 1 uses
+  it too; `common.sh` also gains `ku_sha256`, and `lint.sh` shares its findings with `check`
+  through `ku_lint_findings`.
+- `tests/static.bats` also covers `disk.sh`, `deploy.sh`, `baseline.sh` and the NTFS suite,
+  and `tests/helpers.bash` runs library code under the tool's strict mode with `run_ku_lib`.
+- `KU_AWK`, the awk that runs `lint.awk`, is taken from the environment only with
+  `KU_TEST=1`, as the other seams are, since `check` now lints `kali.cfg` as root.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

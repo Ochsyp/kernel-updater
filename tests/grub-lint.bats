@@ -181,6 +181,19 @@ setup() {
     [ -z "$output" ]
 }
 
+@test "KU_AWK counts only with KU_TEST=1, so root's environment cannot choose the awk" {
+    # check lints kali.cfg as root, where a KU_AWK kept by sudo -E must not run.
+    # shellcheck disable=SC2016 # the inner script expands its own variables
+    local code='. "$1"; . "$2"; printf "%s\n" "$KU_AWK"'
+    run env -u KU_TEST KU_AWK=/srv/awk bash -c "$code" _ \
+        "$REPO_DIR/lib/kernel-updater/common.sh" "$REPO_DIR/lib/kernel-updater/lint.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" = awk ]
+    run env KU_TEST=1 KU_AWK=mawk bash -c "$code" _ \
+        "$REPO_DIR/lib/kernel-updater/common.sh" "$REPO_DIR/lib/kernel-updater/lint.sh"
+    [ "$output" = mawk ]
+}
+
 @test "lint.awk gives the same findings under mawk and under gawk" {
     local awk_bin
     for awk_bin in mawk gawk; do
