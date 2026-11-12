@@ -653,6 +653,14 @@ multibootusb/grub/kali.cfg was written before it"* ]]
     run_ku_lib "$verify" "$P1"
     [ "$status" -eq 0 ]
     [ "$output" = $'kali.cfg\tsame\ngrub.cfg\tsame' ]
+    # A symlink to the very bytes exported is not followed, so it differs.
+    if use_symlinks; then
+        mv "$GRUB/kali.cfg" "$BATS_TEST_TMPDIR/elsewhere.cfg"
+        ln -s "$BATS_TEST_TMPDIR/elsewhere.cfg" "$GRUB/kali.cfg"
+        run_ku_lib "$verify" "$P1"
+        [ "$status" -eq 2 ]
+        [ "$output" = $'kali.cfg\tdiffers\ngrub.cfg\tsame' ]
+    fi
     printf 'not a sum\n' >> "$OUT/SHA256SUMS"
     run_ku_lib "$verify" "$P1"
     [ "$status" -eq 1 ]

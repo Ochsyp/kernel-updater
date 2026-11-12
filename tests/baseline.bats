@@ -288,6 +288,21 @@ EOF
     cmp "$BATS_TEST_TMPDIR/damaged" "$ROOT$BASELINE"
 }
 
+@test "A symlink in the boot tree is not followed: its files show as missing, GRUB as unknown" {
+    use_symlinks || skip "this platform cannot make symlinks"
+    run_ku baseline --yes
+    [ "$status" -eq 0 ]
+    # multibootusb/grub turns into a link to the same files elsewhere.
+    mv "$KU_P1_DIR/multibootusb/grub" "$BATS_TEST_TMPDIR/grub"
+    ln -s "$BATS_TEST_TMPDIR/grub" "$KU_P1_DIR/multibootusb/grub"
+    run_ku --porcelain baseline --show
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'grub-version\tunknown\n'* ]]
+    [[ "$output" == *$'missing\tmultibootusb/grub/grub.cfg'* ]]
+    [[ "$output" == *$'missing\tmultibootusb/grub/i386-pc/normal.mod'* ]]
+    [[ "$output" != *$'changed\t'* ]]
+}
+
 @test "baseline exits 77 when not root, 75 while locked, and 64 on a usage error" {
     export ID_U=1000
     run_ku baseline --yes

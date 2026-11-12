@@ -174,8 +174,9 @@ with the owner's original script.
   the stick's `normal.mod` and compares it with `grub_floor`, `tripwire`, `deployed`, which
   warns against copying an export over a stick that changed since, and `kali-cfg`, which lints
   `kali.cfg` with the stick's own command and module lists. `check` reads partition 1
-  read-only, never one the configuration rejects, and removes its mount before it exits, also
-  when interrupted; `--no-partition` skips the five.
+  read-only, never one the configuration rejects, follows no symlink on it, as `baseline`
+  does not either, and removes its mount before it exits, also when interrupted;
+  `--no-partition` skips the five.
 - `disk_ptuuid`, `p1_fs_uuid`, `deploy`, `p1_path`, `output_dir` and `backups_keep` in
   `/etc/kernel-updater.conf`, each with its check, and in `examples/kernel-updater.conf`.
   Paths lose their trailing slashes.

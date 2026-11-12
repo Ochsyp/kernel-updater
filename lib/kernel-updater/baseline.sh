@@ -338,9 +338,11 @@ ku_baseline_hash() {
 }
 
 # Print the names under partition 1's ROOT that baseline.list names and that are regular files,
-# one per line and sorted; the last component of a line may be a glob. A name with a control
-# character or a backslash is left out with a warning, since no boot file has one. Returns 1
-# when the list cannot be read or holds a line that is no relative path.
+# one per line and sorted; the last component of a line may be a glob. A name that is or passes
+# a symlink is left out (ku_p1_no_symlink), so that the tripwire reports it missing rather than
+# hash a file elsewhere, and so is a name with a control character or a backslash, with a
+# warning, since no boot file has one. Returns 1 when the list cannot be read or holds a line
+# that is no relative path.
 _ku_baseline_names() {
     local root=$1 list=$KU_SHAREDIR/baseline.list line name
     local -a patterns=()
@@ -362,7 +364,7 @@ _ku_baseline_names() {
                 if [[ $name == *[[:cntrl:]\\]* ]]; then
                     ku_log warning "the tripwire leaves out a file under ${line%/*} whose name" \
                         "holds a control character or a backslash"
-                elif [[ -f $name && ! -L $name ]]; then
+                elif [[ -f $name ]] && ku_p1_no_symlink . "$name"; then
                     printf '%s\n' "$name"
                 fi
             done
@@ -462,10 +464,12 @@ _ku_baseline_some() {
 
 # Print the version of the stick's GRUB, read from the NUL-separated strings of the i386-pc
 # normal.mod under partition 1's ROOT: the one distinct string that is exactly a GRUB 2
-# version, or unknown when there is no normal.mod, no such string, or several.
+# version, or unknown when there is no normal.mod, no such string, or several, and when it is
+# or passes a symlink, which this reader does not follow.
 ku_grub_version() {
     local file=$1/multibootusb/grub/i386-pc/normal.mod out=""
-    if [[ -f $file && -r $file ]]; then
+    if ku_p1_no_symlink "$1" multibootusb/grub/i386-pc/normal.mod && [[ -f $file && -r $file ]]
+    then
         out=$(tr '\0' '\n' < "$file" | LC_ALL=C grep -a -E -e "$KU_GRUB_VERSION_RE" |
             LC_ALL=C sort -u) || out=""
     fi

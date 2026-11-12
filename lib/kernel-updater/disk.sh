@@ -440,6 +440,24 @@ ku_p1_root_only() {
     done
 }
 
+# Return 0 when no component of the relative path REL under ROOT, its directories and the file
+# alike, is a symlink. Readers of partition 1 follow none, since one that Windows or a user who
+# owns a mount of it made could lead root to files elsewhere, and in a boot tree it means that
+# something changed.
+ku_p1_no_symlink() {
+    local path=$1 rest=$2 part
+    while [[ -n $rest ]]; do
+        part=${rest%%/*}
+        if [[ $rest == */* ]]; then
+            rest=${rest#*/}
+        else
+            rest=""
+        fi
+        path+=/$part
+        [[ ! -L $path ]] || return 1
+    done
+}
+
 # Remove the private mount ku_p1_open made, if it made one, and forget partition 1's root.
 # Returns 1 when the mount stays, which the exit trap then tries again to remove.
 ku_p1_close() {

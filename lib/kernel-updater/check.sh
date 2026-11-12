@@ -853,19 +853,28 @@ _ku_check_deployed() {
 
 # kali-cfg: once phase 6 wrote multibootusb/grub/kali.cfg, it must pass lint with the stick's
 # own command and module lists, as lint --grub-dir takes them: fails on errors and warns on
-# warnings. Skips while the file does not exist.
+# warnings, and fails when kali.cfg or a directory on its way is a symlink, which it does not
+# follow. Skips while the file does not exist.
 _ku_check_kali_cfg() {
     local cfg=$KU_DK_ROOT/multibootusb/grub/kali.cfg dir=$KU_DK_ROOT/multibootusb/grub/i386-pc
     local lists="the stick's command and module lists" syntax=1 findings severity rule
-    local errors=0 warnings=0 rules=""
+    local errors=0 warnings=0 rules="" list
     if [[ ! -e $cfg && ! -L $cfg ]]; then
         _ku_check_add skip kali-cfg "multibootusb/grub/kali.cfg does not exist yet"
         return 0
     fi
-    if [[ ! -f $dir/command.lst || ! -r $dir/command.lst || ! -f $dir/moddep.lst ||
-        ! -r $dir/moddep.lst ]]; then
-        dir="" lists="GRUB 2.02's lists, since the stick's cannot be read"
+    if ! ku_p1_no_symlink "$KU_DK_ROOT" multibootusb/grub/kali.cfg; then
+        _ku_check_add fail kali-cfg "multibootusb/grub/kali.cfg or a directory on its way is a" \
+            "symlink, which check does not follow"
+        return 0
     fi
+    for list in command.lst moddep.lst; do
+        if ! ku_p1_no_symlink "$KU_DK_ROOT" "multibootusb/grub/i386-pc/$list" ||
+            [[ ! -f $dir/$list || ! -r $dir/$list ]]; then
+            dir="" lists="GRUB 2.02's lists, since the stick's cannot be read"
+            break
+        fi
+    done
     if ! command -v grub-script-check > /dev/null; then
         syntax=0
         lists+=", without a syntax check (grub-script-check is not installed)"

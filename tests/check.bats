@@ -816,3 +816,13 @@ others_ok() {
     run_check
     expect_item kali-cfg skip "multibootusb/grub/kali.cfg does not exist yet"
 }
+
+@test "kali-cfg follows no symlink, which it reports as a failure" {
+    use_symlinks || skip "this platform cannot make symlinks"
+    # A link to a file elsewhere, which lints clean, in the place of kali.cfg.
+    write_kali_cfg
+    mv "$GRUB/kali.cfg" "$BATS_TEST_TMPDIR/elsewhere.cfg"
+    ln -s "$BATS_TEST_TMPDIR/elsewhere.cfg" "$GRUB/kali.cfg"
+    run_check
+    expect_item kali-cfg fail "multibootusb/grub/kali.cfg or a directory on its way is a symlink"
+}

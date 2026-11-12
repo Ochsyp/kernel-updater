@@ -634,7 +634,8 @@ ku_export_verify() {
         if [[ ! -e $file && ! -L $file ]]; then
             out+=$name$'\t'missing$'\n'
             status=2
-        elif [[ -f $file ]] && got=$(ku_sha256 "$file") && [[ $got == "$hash" ]]; then
+        elif ku_p1_no_symlink "$root" "multibootusb/grub/$name" && [[ -f $file ]] &&
+            got=$(ku_sha256 "$file") && [[ $got == "$hash" ]]; then
             out+=$name$'\t'same$'\n'
         else
             out+=$name$'\t'differs$'\n'

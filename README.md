@@ -184,9 +184,9 @@ partition 1 is never read. `--no-partition` skips all five and leaves partition 
 | `grub-pc` | The debconf answer `grub-pc/install_devices` is empty, so a grub-pc upgrade cannot write GRUB over the stick's boot loader; fails while it names a device |
 | `p1-identity` | Partition 1, found from `/boot`, is the NTFS filesystem `p1_fs_uuid` names, on the disk `disk_ptuuid` names; fails when it is another, naming the disk or partition 1 but no value, also when only one of the keys is set and names another, and, with both keys set, when it cannot be found; skips otherwise while either key is not set |
 | `grub-version` | The stick's GRUB, whose version `multibootusb/grub/i386-pc/normal.mod` holds, is at least as new as `grub_floor`, or lint and check would trust features it lacks; fails when it is older, warns when its version is unknown, and names the higher floor a newer GRUB allows |
-| `tripwire` | The stick's boot code matches the baseline `kernel-updater baseline` recorded: the files `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector; fails naming what changed, is new or is missing, and warns while no baseline is stored |
+| `tripwire` | The stick's boot code matches the baseline `kernel-updater baseline` recorded: the files `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector; fails naming what changed, is new or is missing, a file that is or passes a symlink counting as missing, and warns while no baseline is stored |
 | `deployed` | The files exported to `output_dir` match those on partition 1, as its `SHA256SUMS` lists them; fails naming each one that differs or is missing, and skips while nothing was exported. Copy the export only when you have not yet: copied again after the stick changed, it would undo that change |
-| `kali-cfg` | `multibootusb/grub/kali.cfg`, which phase 6 writes, passes `lint` with the stick's own command and module lists; fails on errors, warns on warnings, and skips while the file does not exist |
+| `kali-cfg` | `multibootusb/grub/kali.cfg`, which phase 6 writes, passes `lint` with the stick's own command and module lists; fails on errors and when it or a directory on its way is a symlink, warns on warnings, and skips while the file does not exist |
 
 Results go to stdout as aligned `STATUS ITEM DETAIL` lines, or with `--porcelain` as
 `ITEM<TAB>STATUS<TAB>DETAIL`, and a summary goes to stderr. Details name kinds and counts,
@@ -243,7 +243,10 @@ MultiBootUSB, so that phase 6 can write its menu there safely. Nothing in phase 
   point of a share that is not mounted, as on a native boot, nor another stick's share passes
   for it. Otherwise it takes a mount of partition 1 that is there, and else mounts it
   read-only on a private directory in `/run` with `nosuid,nodev,noexec`, trying `ntfs3`, then
-  `ntfs-3g`, which gets `norecover`. A read-only mount writes nothing with either.
+  `ntfs-3g`, which gets `norecover`. A read-only mount writes nothing with either. Readers
+  follow no symlink on partition 1, which Windows or a user who owns a mount of it could have
+  made: a file that is or passes one counts as missing to the tripwire and to the `deployed`
+  item, its GRUB version as unknown, and `kali-cfg` fails.
 - **Writing it.** A writer goes the same way, but takes `p1_path` only with `deploy = path`,
   and a mount that is there only while it is read-write; both only while no user but root can
   change their files, which rules out the mount a desktop makes for its user, since such a
