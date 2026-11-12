@@ -15,7 +15,9 @@ V2=9.0.2+kali-amd64
 BY_ID=/dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0
 ITEMS=(boot-mounted boot-identity boot-shadowed kernel-img boot-links stale-root-links kernels
     reboot-pending initrd boot-luks boot-ext fstab-crypttab grub-pc)
-P1_ITEMS=(p1-identity grub-version tripwire deployed kali-cfg)
+P1_ITEMS=(p1-identity grub-version tripwire deployed kali-cfg kali-menu)
+# The line migrate's block in grub.cfg opens with.
+MARKER="# Kali GNU/Linux: kernel-updater keeps the entries in kali.cfg. Not a MultiBootUSB block."
 
 setup() {
     stub_init
@@ -40,8 +42,8 @@ write_config() {
 
 # A healthy partition 1 in P1, which KU_P1_DIR names, on the disk image KU_P1_DISK names:
 # GRUB 2.14's normal.mod, so that no grub_floor a test sets is newer, with the stick's command
-# and module lists, MultiBootUSB's grub.cfg, a kali.cfg that passes lint, an export of both in
-# output_dir, and a baseline of it all.
+# and module lists, MultiBootUSB's grub.cfg with migrate's block that sources kali.cfg, a
+# kali.cfg that passes lint, an export of both in output_dir, and a baseline of it all.
 healthy_partition() {
     export KU_P1_DIR="$BATS_TEST_TMPDIR/p1" KU_P1_DISK="$BATS_TEST_TMPDIR/disk.img"
     GRUB="$KU_P1_DIR/multibootusb/grub" OUT="$ROOT/root/kernel-updater/out"
@@ -51,8 +53,7 @@ healthy_partition() {
         'configfile: configfile' > "$GRUB/i386-pc/command.lst"
     printf '%s\n' 'normal: crypto' 'linux: relocator mmap' 'ext2: fshelp' 'gzio:' \
         'part_msdos:' 'configfile:' > "$GRUB/i386-pc/moddep.lst"
-    printf 'menuentry "Kali" {\r\n\tconfigfile /multibootusb/grub/kali.cfg\r\n}\r\n' \
-        > "$GRUB/grub.cfg"
+    write_grub_cfg
     write_kali_cfg
     make_disk_image "$KU_P1_DISK"
     printf '%s  %s\n' "$(sha256sum < "$GRUB/kali.cfg" | cut -c 1-64)" kali.cfg \
@@ -67,6 +68,15 @@ normal_mod() {
         printf '%s\0' "$@"
         printf 'normal\0'
     } > "$GRUB/i386-pc/normal.mod"
+}
+
+# Write MultiBootUSB's grub.cfg, CRLF, with migrate's block that sources kali.cfg, followed by
+# any further LINES.
+write_grub_cfg() {
+    printf '%s\r\n' 'insmod part_msdos' "$MARKER" 'if [ -f /multibootusb/grub/kali.cfg ]; then' \
+        $'\tsource /multibootusb/grub/kali.cfg' 'else' \
+        $'\tmenuentry "Kali GNU/Linux: kali.cfg is missing on BOOT" {' $'\t\tsleep 10' $'\t}' \
+        'fi' "$@" > "$GRUB/grub.cfg"
 }
 
 # Write a kali.cfg that passes lint, with any further LINES in its menu entry.
@@ -215,7 +225,7 @@ others_ok() {
     local i all=("${ITEMS[@]}" "${P1_ITEMS[@]}")
     run_ku check
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 18 ]
+    [ "${#lines[@]}" -eq 19 ]
     for i in "${!all[@]}"; do
         if [[ "${lines[i]}" != "ok    ${all[i]} "* ]]; then
             printf 'line %d: %s\n' "$i" "${lines[i]}" >&2
@@ -223,7 +233,7 @@ others_ok() {
         fi
     done
     [ "${lines[0]}" = "ok    boot-mounted      /boot is a separate ext4 mount" ]
-    [[ "$stderr" == *"info: check: 18 item(s): 18 ok, 0 warn, 0 fail, 0 skip"* ]]
+    [[ "$stderr" == *"info: check: 19 item(s): 19 ok, 0 warn, 0 fail, 0 skip"* ]]
     grep -q "^mount --bind --make-private -o ro $ROOT/ $ROOT/run/kernel-updater\.[^/]*/root\$" \
         "$STUB_LOG"
     grep -q "^umount $ROOT/run/kernel-updater\.[^/]*/root\$" "$STUB_LOG"
@@ -637,12 +647,12 @@ others_ok() {
     others_ok
 }
 
-@test "--no-partition skips the five partition-1 items and leaves partition 1 alone" {
+@test "--no-partition skips the six partition-1 items and leaves partition 1 alone" {
     local name
     stick_from_boot
     run_check --no-partition
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 18 ]
+    [ "${#lines[@]}" -eq 19 ]
     for name in "${P1_ITEMS[@]}"; do
         expect_item "$name" skip "--no-partition leaves partition 1 alone"
     done
@@ -685,7 +695,7 @@ others_ok() {
     run_check
     [ "$status" -eq 2 ]
     expect_item p1-identity fail "the disk that holds /boot is not the one disk_ptuuid names"
-    for name in grub-version tripwire deployed kali-cfg; do
+    for name in grub-version tripwire deployed kali-cfg kali-menu; do
         expect_item "$name" skip "partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
     done
     refute_line_match '^mount -t ' "$STUB_LOG"
@@ -713,7 +723,7 @@ others_ok() {
     run_check
     [ "$status" -eq 2 ]
     expect_item p1-identity fail "the disk that holds /boot is not the one disk_ptuuid names"
-    for name in grub-version tripwire deployed kali-cfg; do
+    for name in grub-version tripwire deployed kali-cfg kali-menu; do
         expect_item "$name" skip "partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
     done
     refute_line_match '^mount -t ' "$STUB_LOG"
@@ -815,6 +825,30 @@ others_ok() {
     rm "$GRUB/kali.cfg"
     run_check
     expect_item kali-cfg skip "multibootusb/grub/kali.cfg does not exist yet"
+}
+
+@test "kali-menu skips before the migration, warns about legacy entries and fails half-done" {
+    # Each change of grub.cfg or kali.cfg trips the tripwire too, so only the item is looked at.
+    run_check
+    expect_item kali-menu ok "grub.cfg sources multibootusb/grub/kali.cfg, and no legacy Kali"
+    write_grub_cfg 'submenu "Kali GNU/Linux (legacy entries)" {' $'\tmenuentry "x" {' $'\t}' '}'
+    run_check
+    expect_item kali-menu warn "its legacy Kali entries remain: run 'kernel-updater migrate"
+    expect_item kali-menu warn "--stage finalize' after the boot tests"
+    mv "$GRUB/kali.cfg" "$BATS_TEST_TMPDIR/kali.cfg"
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item kali-menu fail "grub.cfg sources multibootusb/grub/kali.cfg, which is missing"
+    printf 'menuentry "Kali" {\r\n\tconfigfile /multibootusb/grub/kali.cfg\r\n}\r\n' \
+        > "$GRUB/grub.cfg"
+    run_check
+    expect_item kali-menu skip "not migrated yet: grub.cfg does not source kali.cfg"
+    mv "$BATS_TEST_TMPDIR/kali.cfg" "$GRUB/kali.cfg"
+    run_check
+    expect_item kali-menu fail "multibootusb/grub/kali.cfg exists, but grub.cfg does not source"
+    write_grub_cfg 'submenu "Kali (legacy entries)" {'
+    run_check
+    expect_item kali-menu fail "the braces or quotes of grub.cfg do not balance"
 }
 
 @test "kali-cfg follows no symlink, which it reports as a failure" {

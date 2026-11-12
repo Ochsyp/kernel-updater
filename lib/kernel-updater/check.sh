@@ -42,11 +42,11 @@ Usage: kernel-updater check [--strict] [--no-partition] [--porcelain]
 
 Reports whether the system keeps the stick's Kali entries bootable: /boot, its links and LUKS
 container, the kernel packages, the initrds, fstab, crypttab and grub-pc, then the stick's
-partition 1: its identity, its GRUB, the tripwire over its boot code, the exported files and
-kali.cfg. Runs as root and changes nothing; a read-only bind mount of / looks under the /boot
-mount point, and partition 1 is read through p1_path or a mount that is there, or else through
-a read-only mount of its own; the mounts it makes are removed before the command exits.
-Results name kinds and counts, never identifiers.
+partition 1: its identity, its GRUB, the tripwire over its boot code, the exported files,
+kali.cfg and whether grub.cfg sources it. Runs as root and changes nothing; a read-only bind
+mount of / looks under the /boot mount point, and partition 1 is read through p1_path or a
+mount that is there, or else through a read-only mount of its own; the mounts it makes are
+removed before the command exits. Results name kinds and counts, never identifiers.
 
   --strict        exit 2 on warnings too
   --no-partition  skip the partition-1 items and leave partition 1 alone
@@ -102,6 +102,19 @@ ku_cmd_check() {
     fi
 }
 
+# Run the probes the items share, then each ITEM named, such as boot-luks, as check runs it,
+# printing nothing: the results land in KU_CHECK_STATUS, KU_CHECK_ITEM and KU_CHECK_DETAIL,
+# which it empties first, and the KU_CK_* settings hold what the probes found. Shared with
+# migrate, whose system stage refuses what these items fail.
+ku_check_items() {
+    local name
+    KU_CHECK_STATUS=() KU_CHECK_ITEM=() KU_CHECK_DETAIL=()
+    _ku_check_collect
+    for name in "$@"; do
+        "_ku_check_${name//-/_}"
+    done
+}
+
 # Record the result of ITEM: STATUS and a DETAIL, whose words are joined by spaces. The detail
 # names kinds and counts, never an identifier.
 _ku_check_add() {
@@ -131,9 +144,14 @@ _ku_check_print() {
     done
 }
 
-# Run the probes several items share and keep what they find in the KU_CK_* settings.
+# Run the probes several items share and keep what they find in the KU_CK_* settings, which
+# it sets anew first, so that a second run in the same process, as migrate's, starts clean.
 _ku_check_collect() {
     local out name value relative resolves status=0
+    KU_CK_MOUNTED=0 KU_CK_SOURCE="" KU_CK_FSTYPE="" KU_CK_FS_UUID="" KU_CK_DO_SYMLINKS=1
+    KU_CK_LINK_DIR=/ KU_CK_KERNELS=0 KU_CK_RUNNING="" KU_CK_LUKS=2 KU_CK_LUKS_VERSION=""
+    KU_CK_LUKS_UUID="" KU_CK_LINKS="" KU_CK_VERSIONS=() KU_CK_LUKS_KDFS=()
+    KU_CK_STATE=() KU_CK_TARGET=() KU_CK_RESOLVES=()
     out=$(ku_probe_boot_mount)
     if [[ -n $out ]]; then
         KU_CK_MOUNTED=1
@@ -691,16 +709,16 @@ _ku_check_grub_pc() {
     fi
 }
 
-# The partition-1 items, after the system's: p1-identity, grub-version, tripwire, deployed and
-# kali-cfg. They read partition 1 read-only, through KU_P1_DIR, p1_path, a mount that is there
-# or a read-only mount of their own on a private directory in /run, which goes before the
-# results are printed, or through the exit trap should the command be cut short. Each skips
-# with --no-partition (SKIP 1), and all but p1-identity skip, saying why, when partition 1
-# cannot be found, is another, or cannot be read.
+# The partition-1 items, after the system's: p1-identity, grub-version, tripwire, deployed,
+# kali-cfg and kali-menu. They read partition 1 read-only, through KU_P1_DIR, p1_path, a mount
+# that is there or a read-only mount of their own on a private directory in /run, which goes
+# before the results are printed, or through the exit trap should the command be cut short.
+# Each skips with --no-partition (SKIP 1), and all but p1-identity skip, saying why, when
+# partition 1 cannot be found, is another, or cannot be read.
 _ku_check_partition() {
     local name
     if (( $1 )); then
-        for name in p1-identity grub-version tripwire deployed kali-cfg; do
+        for name in p1-identity grub-version tripwire deployed kali-cfg kali-menu; do
             _ku_check_add skip "$name" "--no-partition leaves partition 1 alone"
         done
         return 0
@@ -710,7 +728,7 @@ _ku_check_partition() {
         KU_CK_P1_WHY="partition 1 cannot be read: $KU_DK_PROBLEM"
     fi
     if [[ -n $KU_CK_P1_WHY ]]; then
-        for name in grub-version tripwire deployed kali-cfg; do
+        for name in grub-version tripwire deployed kali-cfg kali-menu; do
             _ku_check_add skip "$name" "$KU_CK_P1_WHY"
         done
         return 0
@@ -719,6 +737,7 @@ _ku_check_partition() {
     _ku_check_tripwire
     _ku_check_deployed
     _ku_check_kali_cfg
+    _ku_check_kali_menu
     if ! ku_p1_close; then
         ku_log warning "the read-only mount of partition 1 stays on $KU_DK_MOUNT_DIR/p1:" \
             "unmount it and remove $KU_DK_MOUNT_DIR by hand"
@@ -762,7 +781,7 @@ _ku_check_p1_identity() {
 # features it lacks. Warns while its version is unknown, and names the higher floor a newer
 # GRUB allows.
 _ku_check_grub_version() {
-    local floor=${KU_CONF[grub_floor]} version level candidate fit=""
+    local floor=${KU_CONF[grub_floor]} version level fit
     version=$(ku_grub_version "$KU_DK_ROOT")
     if [[ $version == unknown ]]; then
         _ku_check_add warn grub-version "the stick's GRUB version is unknown:" \
@@ -771,11 +790,7 @@ _ku_check_grub_version() {
     fi
     level=$(ku_grub_level "$version")
     # The highest floor grub_floor takes that the stick's GRUB reaches.
-    for candidate in 2.02 2.06 2.12 2.14; do
-        if (( 10#${candidate/./} <= level )); then
-            fit=$candidate
-        fi
-    done
+    fit=$(ku_grub_floor_for "$version")
     if (( level < 10#${floor/./} )); then
         _ku_check_add fail grub-version "the stick's GRUB $version is older than grub_floor" \
             "$floor, so lint and check trust features it lacks:" \
@@ -900,5 +915,51 @@ _ku_check_kali_cfg() {
             "(${rules//,/, }) with $lists: lint --grub-dir shows them"
     else
         _ku_check_add ok kali-cfg "multibootusb/grub/kali.cfg passes lint with $lists"
+    fi
+}
+
+# kali-menu: once migrate's menu stage ran, grub.cfg holds the block that sources
+# multibootusb/grub/kali.cfg, which migrate marks with its comment line, and kali.cfg exists.
+# Skips while neither is there, as before the migration; warns while the legacy Kali entries
+# the menu stage kept remain, until the finalize stage removes them; fails when only one of the
+# block and kali.cfg is there, and when grub.cfg or a directory on its way is a symlink, which
+# it does not follow, or grub.cfg cannot be read.
+_ku_check_kali_menu() {
+    local rel=multibootusb/grub/grub.cfg cfg=$KU_DK_ROOT/multibootusb/grub/grub.cfg
+    local kali=$KU_DK_ROOT/multibootusb/grub/kali.cfg sources=0 exists=0 legacy
+    if [[ -e $cfg || -L $cfg ]] && ! ku_p1_no_symlink "$KU_DK_ROOT" "$rel"; then
+        _ku_check_add fail kali-menu "multibootusb/grub/grub.cfg or a directory on its way is a" \
+            "symlink, which check does not follow"
+        return 0
+    fi
+    if [[ -e $cfg && ( ! -f $cfg || ! -r $cfg ) ]]; then
+        _ku_check_add fail kali-menu "multibootusb/grub/grub.cfg cannot be read"
+        return 0
+    fi
+    if [[ -f $cfg ]] && ku_menu_sources_kali "$cfg"; then
+        sources=1
+    fi
+    if [[ -e $kali || -L $kali ]]; then
+        exists=1
+    fi
+    if (( ! sources && ! exists )); then
+        _ku_check_add skip kali-menu "not migrated yet: grub.cfg does not source kali.cfg"
+    elif (( ! exists )); then
+        _ku_check_add fail kali-menu "grub.cfg sources multibootusb/grub/kali.cfg, which is" \
+            "missing, so the Kali entries are gone from the menu: 'kernel-updater migrate" \
+            "--stage menu' writes it anew, once a rollback of the finalize stage, when it ran," \
+            "brought the legacy entries back"
+    elif (( ! sources )); then
+        _ku_check_add fail kali-menu "multibootusb/grub/kali.cfg exists, but grub.cfg does not" \
+            "source it through the block kernel-updater migrate writes: after a rollback of the" \
+            "menu stage, delete kali.cfg from Windows or run that stage again"
+    elif ! legacy=$(ku_menu_legacy_count "$cfg"); then
+        _ku_check_add fail kali-menu "the braces or quotes of grub.cfg do not balance"
+    elif (( legacy )); then
+        _ku_check_add warn kali-menu "grub.cfg sources kali.cfg, and its legacy Kali entries" \
+            "remain: run 'kernel-updater migrate --stage finalize' after the boot tests"
+    else
+        _ku_check_add ok kali-menu "grub.cfg sources multibootusb/grub/kali.cfg, and no legacy" \
+            "Kali entries remain"
     fi
 }

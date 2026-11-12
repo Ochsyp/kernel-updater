@@ -25,10 +25,10 @@ setup() {
 @test "The usage lists every command, and each command's --help prints its own usage" {
     local cmd
     run_ku --help
-    for cmd in check baseline lint hook help version; do
+    for cmd in check baseline migrate lint hook help version; do
         [[ "$output" == *$'\n'"  $cmd "* ]] || { printf 'missing: %s\n' "$cmd" >&2; return 1; }
     done
-    for cmd in check baseline lint hook; do
+    for cmd in check baseline migrate lint hook; do
         run_ku "$cmd" --help
         [ "$status" -eq 0 ]
         [[ "$output" == "Usage: kernel-updater $cmd "* ]]

@@ -28,6 +28,9 @@ fi
 # Functions ku_on_exit runs when the process ends, in reverse order of registration.
 KU_CLEANUP=()
 
+# The descriptor ku_ask reads the answers from, once it opened KU_TTY.
+KU_TTY_FD=""
+
 # A kernel release as uname -r prints it. Anything else is refused before it reaches a path
 # or a command line.
 KU_RELEASE_RE='^[0-9]+\.[0-9]+[0-9A-Za-z.+~_-]*$'
@@ -81,23 +84,31 @@ ku_run() {
     "$@"
 }
 
-# Ask PROMPT on the terminal and return 0 on "y" or "yes"; --yes answers for the user. Exits
-# 10 on any other answer or when no terminal can be read, so nothing runs unconfirmed.
-ku_confirm() {
-    local answer="" fd
+# Ask PROMPT on the terminal and return 0 on "y" or "yes" and 1 on any other answer; --yes
+# answers yes for the user. Exits 10 when no terminal can be read, so nothing runs unconfirmed.
+# The terminal stays open for the questions that follow, so that each reads the next line, of
+# the terminal or of a file of answers, as the tests use.
+ku_ask() {
+    local answer=""
     if (( KU_ASSUME_YES )); then
         return 0
     fi
-    if ! { exec {fd}< "$KU_TTY"; } 2> /dev/null; then
+    if [[ -z $KU_TTY_FD ]] && ! { exec {KU_TTY_FD}< "$KU_TTY"; } 2> /dev/null; then
+        KU_TTY_FD=""
         ku_die "$KU_EX_DECLINED" "no terminal to confirm on; pass --yes to go ahead unattended"
     fi
     printf '%s [y/N] ' "$1" >&2
-    IFS= read -r answer <&"$fd" || true
-    exec {fd}<&-
+    IFS= read -r answer <&"$KU_TTY_FD" || true
     case ${answer,,} in
         y | yes) return 0 ;;
     esac
-    ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
+    return 1
+}
+
+# Ask PROMPT as ku_ask does and return 0 on "y" or "yes". Exits 10 on any other answer or when
+# no terminal can be read, so nothing runs unconfirmed.
+ku_confirm() {
+    ku_ask "$1" || ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
 }
 
 # Exit 77 unless the effective user is root.

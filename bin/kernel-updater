@@ -33,6 +33,8 @@ KU_SHAREDIR=${KU_SELF%/*}/../share/kernel-updater
 . "$KU_LIBDIR/deploy.sh"
 # shellcheck source=lib/kernel-updater/baseline.sh
 . "$KU_LIBDIR/baseline.sh"
+# shellcheck source=lib/kernel-updater/migrate.sh
+. "$KU_LIBDIR/migrate.sh"
 
 # Print the usage on stdout.
 ku_usage() {
@@ -49,6 +51,9 @@ Commands:
   baseline           record, as root, the SHA-256 of the stick's boot code for check's
                      tripwire; --show compares without recording
                      (kernel-updater baseline --help lists its options)
+  migrate            move, once and as root, the Kali entries onto the links linux-base
+                     keeps in /boot, in stages that back up what they change
+                     (kernel-updater migrate --help lists the stages)
   lint FILE...       check GRUB configs for errors GRUB reports only at boot
                      (kernel-updater lint --help lists its options)
   hook NAME ARGS...  run by the kernel and apt hooks install.sh installs, not by hand
@@ -111,7 +116,7 @@ ku_main() {
     case $cmd in
         help) ku_usage; exit 0 ;;
         version) ku_print_version; exit 0 ;;
-        baseline | check | hook | lint) ;;
+        baseline | check | hook | lint | migrate) ;;
         *) ku_usage_error "unknown command '$cmd'" ;;
     esac
     ku_install_traps

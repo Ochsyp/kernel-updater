@@ -28,6 +28,38 @@ setup() {
     [ -z "${KU_CONF[p1_path]}" ]
     [ "${KU_CONF[output_dir]}" = /root/kernel-updater/out ]
     [ "${KU_CONF[backups_keep]}" = 5 ]
+    [ -z "${KU_CONF[root_device]}" ]
+    [ "${KU_CONF[menu_variants]}" = default,failsafe ]
+    [ "${KU_CONF[previous_variants]}" = default,failsafe ]
+    [ "${#KU_CONF_SET[@]}" -eq 0 ]
+}
+
+@test "root_device takes an absolute device path or UUID=, and the variant lists their names" {
+    printf '%s\n' 'root_device = UUID=5ca1ab1e-0000-4000-8000-000000000a01' \
+        'menu_variants = default , live,forensic' 'previous_variants = forensic' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[root_device]}" = UUID=5ca1ab1e-0000-4000-8000-000000000a01 ]
+    [ "${KU_CONF[menu_variants]}" = default,live,forensic ]
+    [ "${KU_CONF[previous_variants]}" = forensic ]
+    # The keys the file sets, by line, tell them from the defaults.
+    [ "${KU_CONF_SET[menu_variants]}" = 2 ]
+    [ -z "${KU_CONF_SET[grub_floor]+set}" ]
+    printf 'root_device = /dev/mapper/kali--vg-root\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[root_device]}" = /dev/mapper/kali--vg-root ]
+    local entry key value
+    for entry in "root_device dev/sda2" "root_device /dev/../sda2" "root_device /" \
+        "root_device LABEL=root" "root_device UUID=5ca1ab1e" "root_device /dev/sda2;reboot" \
+        "root_device /dev/sd\$x" "menu_variants failsafe,default" "menu_variants default,default" \
+        "menu_variants default," "menu_variants ,default" "menu_variants default,bogus" \
+        "menu_variants Default" "menu_variants de fault" "previous_variants bogus" \
+        "previous_variants live,live" "previous_variants live,,forensic"; do
+        read -r key value <<< "$entry"
+        printf '%s = %s\n' "$key" "$value" > "$CONF"
+        run ku_config_load "$CONF"
+        [ "$status" -eq 78 ] || { printf 'accepted: %s\n' "$entry" >&2; return 1; }
+        [[ "$output" == *"$CONF:1: invalid value for '$key'"* ]]
+    done
 }
 
 @test "disk_ptuuid takes an MBR disk signature or a GPT UUID and keeps it lower case" {

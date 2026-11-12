@@ -77,11 +77,12 @@ ku_probe_boot_mount() {
 }
 
 # Print do_symlinks, link_in_boot and image_dest as linux-update-symlinks reads them from
-# /etc/kernel-img.conf, NAME<TAB>VALUE: booleans as 1 or 0, and image_dest, the links'
-# directory, without a trailing slash. Follows read_kernelimg_conf in linux-base's DebianLinux.pm.
+# /etc/kernel-img.conf, or from FILE, such as a copy of it, NAME<TAB>VALUE: booleans as 1 or 0,
+# and image_dest, the links' directory, without a trailing slash. Follows read_kernelimg_conf in
+# linux-base's DebianLinux.pm.
 ku_probe_kernel_img() {
     local file line name value bool do_symlinks=1 link_in_boot=0 image_dest=/
-    file=$(ku_path /etc/kernel-img.conf)
+    file=${1:-$(ku_path /etc/kernel-img.conf)}
     if [[ -f $file && -r $file ]]; then
         while IFS= read -r line || [[ -n $line ]]; do
             line=${line%%#*}

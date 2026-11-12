@@ -50,11 +50,11 @@ setup() {
     # The tmpfs on /boot lies on no disk, so there is no partition 1 to look at.
     expect_item p1-identity skip "disk_ptuuid and p1_fs_uuid are not both set"
     local name
-    for name in grub-version tripwire deployed kali-cfg; do
+    for name in grub-version tripwire deployed kali-cfg kali-menu; do
         expect_item "$name" skip \
             "partition 1 cannot be found from /boot: the filesystem at /boot is on no block device"
     done
-    [ "${#lines[@]}" -eq 18 ]
+    [ "${#lines[@]}" -eq 19 ]
     # fstab names /boot by a synthetic UUID, which no detail or message repeats.
     [[ "${output,,}${stderr,,}" != *5ca1ab1e* ]]
 }

@@ -10,10 +10,17 @@
 # and the defaults; an empty default leaves an optional key unset. Later phases add keys here.
 declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid
     [verify_action]=verify_action [disk_ptuuid]=ptuuid [p1_fs_uuid]=ntfs_serial [deploy]=deploy
-    [p1_path]=abs_path [output_dir]=abs_path [backups_keep]=count)
+    [p1_path]=abs_path [output_dir]=abs_path [backups_keep]=count [root_device]=root_device
+    [menu_variants]=menu_variants [previous_variants]=variants)
 declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="" [verify_action]=fail
     [disk_ptuuid]="" [p1_fs_uuid]="" [deploy]=auto [p1_path]=""
-    [output_dir]=/root/kernel-updater/out [backups_keep]=5)
+    [output_dir]=/root/kernel-updater/out [backups_keep]=5 [root_device]=""
+    [menu_variants]="default,failsafe" [previous_variants]="default,failsafe")
+
+# The keys the config file read last sets, each with its line number, so that migrate can tell
+# a key the file sets from a default.
+# shellcheck disable=SC2034 # read by migrate
+declare -gA KU_CONF_SET=()
 
 # The config file named by --config, or empty for the default path. Set by the option parser.
 KU_CONFIG_FILE=""
@@ -38,6 +45,7 @@ ku_config_load() {
     # A key is lower case letters, digits, as in p1_path, and underscores, but no leading digit.
     local re='^[[:space:]]*([a-z_][a-z0-9_]*)[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$'
     local -A seen=()
+    KU_CONF_SET=()
     if [[ ! -e $file ]]; then
         ku_log debug "no config file at $file; using the defaults"
         return 0
@@ -74,9 +82,13 @@ ku_config_load() {
                     value=${value%/}
                 done
                 ;;
+            # A list of variants loses the blanks around its commas.
+            menu_variants | variants) value=${value//[[:space:]]/} ;;
         esac
         # shellcheck disable=SC2034 # read by the commands
         KU_CONF[$key]=$value
+        # shellcheck disable=SC2034 # read by migrate
+        KU_CONF_SET[$key]=$n
     done
     exec {fd}<&-
 }
@@ -134,4 +146,38 @@ _ku_valid_abs_path() {
 # How many backups of a file on partition 1 to keep: 1 to 99.
 _ku_valid_count() {
     [[ $1 =~ ^[1-9][0-9]?$ ]]
+}
+
+# What the Kali kernel line gets as root=: an absolute device path without . or ..
+# components, made of letters, digits and ._+:@- between its slashes, such as
+# /dev/mapper/kali--vg-root, or UUID= and a UUID in the 8-4-4-4-12 form.
+_ku_valid_root_device() {
+    if [[ $1 == UUID=* ]]; then
+        _ku_valid_uuid "${1#UUID=}"
+    else
+        [[ $1 =~ ^(/[A-Za-z0-9._+:@-]+)+$ && /$1/ != */./* && /$1/ != */../* ]]
+    fi
+}
+
+# The variants of the Kali entries migrate writes: a list as _ku_valid_variants takes it that
+# starts with default.
+_ku_valid_menu_variants() {
+    _ku_valid_variants "$1" && [[ ${1//[[:space:]]/} =~ ^default(,|$) ]]
+}
+
+# A comma-separated list of the variants default, failsafe, live and forensic, each named once,
+# with blanks allowed around the commas.
+_ku_valid_variants() {
+    local item commas=${1//[^,]/}
+    local -a items=()
+    local -A seen=()
+    IFS=, read -r -a items <<< "$1"
+    # read drops an empty last field, so a trailing comma shows only in the count.
+    (( ${#items[@]} && ${#commas} == ${#items[@]} - 1 )) || return 1
+    for item in "${items[@]}"; do
+        item=${item#"${item%%[![:space:]]*}"}
+        item=${item%"${item##*[![:space:]]}"}
+        [[ $item =~ ^(default|failsafe|live|forensic)$ && -z ${seen[$item]+set} ]] || return 1
+        seen[$item]=1
+    done
 }

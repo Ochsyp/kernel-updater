@@ -2,7 +2,7 @@
 # -------------------------------------------------------
 # kernel-updater static checks
 #
-# Syntax-checks every shell file and the awk linter, and requires ShellCheck to report
+# Syntax-checks every shell file and the awk scripts, and requires ShellCheck to report
 # nothing for any shell file: the scripts, the libraries, the git hooks, apt-guard, the kernel
 # hooks and the tests, the container and NTFS suites included.
 # -------------------------------------------------------
@@ -12,7 +12,7 @@ load helpers
 SCRIPTS=(update_kernel.sh install.sh bin/kernel-updater lib/kernel-updater/common.sh
     lib/kernel-updater/config.sh lib/kernel-updater/lint.sh lib/kernel-updater/probe.sh
     lib/kernel-updater/check.sh lib/kernel-updater/hook.sh lib/kernel-updater/disk.sh
-    lib/kernel-updater/deploy.sh lib/kernel-updater/baseline.sh)
+    lib/kernel-updater/deploy.sh lib/kernel-updater/baseline.sh lib/kernel-updater/migrate.sh)
 # POSIX sh scripts: the git hooks, apt-guard and the kernel hooks install.sh installs.
 HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan lib/kernel-updater/apt-guard
     hooks/kernel/preinst.d/00-kernel-updater hooks/kernel/prerm.d/00-kernel-updater
@@ -61,6 +61,12 @@ HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan lib/kernel
 @test "lint.awk parses and runs under the system awk" {
     run env KU_LINT_CFG=/dev/null KU_LINT_CMDS=/dev/null KU_LINT_MODS=/dev/null KU_LINT_FLOOR=2.02 \
         awk -f "$REPO_DIR/lib/kernel-updater/lint.awk"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "menu.awk parses and runs under the system awk" {
+    run env LC_ALL=C KU_MENU_CFG=/dev/null awk -f "$REPO_DIR/lib/kernel-updater/menu.awk"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }

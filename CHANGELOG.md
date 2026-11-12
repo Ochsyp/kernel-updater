@@ -190,6 +190,73 @@ with the owner's original script.
   restores through the safe writer,
   turns down a mount a user owns, and has the tripwire catch a changed byte, failing when a
   test is skipped.
+- `kernel-updater migrate [--stage detect|system|menu|finalize|all]`, the one-time switch of
+  the Kali entries to the links linux-base keeps in `/boot`, after which a kernel install or
+  removal changes nothing on partition 1. Each stage runs as root under the lock, prints its
+  plan, asks once, changes nothing with `--dry-run`, does nothing when its result is in place,
+  and exits 3 naming the stage to run first. `detect` appends the identity of `/boot`, its
+  LUKS container, the stick and the root device, and `grub_floor` from the stick's GRUB, to
+  `/etc/kernel-updater.conf`, exiting 78 on a key set to another value. `system` refuses while
+  check's `boot-luks`, `boot-ext` or `kernels` item fails, no kernel would boot, or only one
+  would while `/boot` holds another kernel's image, which `linux-update-symlinks` would take
+  for the `.old` links; it sets `do_symlinks` and `link_in_boot` in `/etc/kernel-img.conf`,
+  has `linux-update-symlinks` point the links at the newest and the previous kernel, moves the
+  old links out of `/`, offers on its own to empty grub-pc's install devices, and checks the
+  result, down to the kernel each link points at; links already on the newest kernel and on
+  another one that would boot stay, and it refuses before changing anything when the kernels
+  or links change while its question waits, as when apt installs a kernel meanwhile. `menu`
+  writes `multibootusb/grub/kali.cfg`
+  from the new template `share/kernel-updater/kali.cfg.in`, with entries that boot `/vmlinuz`
+  and `/initrd.img` and, for the previous kernel, the `.old` links, and the kernel parameters
+  of the legacy entries, mended; and replaces the Kali submenu of `grub.cfg` with a block that
+  sources `kali.cfg`, keeping the submenu behind it as legacy entries. A byte guard,
+  `grub-script-check` and `lint` with the stick's own GRUB lists check both files before
+  `kali.cfg` is written, then `grub.cfg`, or both are exported; its plan shows a kernel
+  parameter that may name a device, a UUID or a key file as `NAME=<value>`. Run again while
+  the legacy entries remain, `menu` writes `kali.cfg` alone anew from them when it is missing
+  or differs, as after `menu_variants` changed. `live` and `forensic` need overlayroot in each
+  initrd their entries boot. `finalize`
+  removes the legacy entries, sets `grub.cfg`'s entry in the stored baseline and names the
+  other files that differ from it, which `kernel-updater baseline` records once checked, or
+  records the whole baseline when none is stored. A write of `menu`, `finalize` or a rollback
+  removes an export in `output_dir` that it makes stale. `--deploy` and `--output-dir` hold for
+  one run, and an export `--output-dir` takes elsewhere gets a warning, since `check` reads only
+  the configured `output_dir`.
+- Backups of every `system`, `menu` and `finalize` run in `/var/backups/kernel-updater`, with a
+  `MANIFEST` of SHA-256 sums, named by the UTC time of the run, or one second after the newest
+  backup when the clock reads no later, so that the names keep the order of the runs, synced to
+  disk before the stage changes anything, and removed again when they cannot be written whole;
+  and `kernel-updater migrate --rollback [STAMP]`, which undoes the newest run first, passes
+  over a backup that a kill left without a `MANIFEST`, renaming it to `STAMP.failed`, refuses a
+  backup that does not match its `MANIFEST`, and restores `kernel-img.conf` and the links in
+  `/`, `grub.cfg`, or the `kali.cfg` a second `menu` run replaced, byte for byte. In export mode
+  it exports the file even when the stick holds it already. When `grub.cfg` changed after the
+  run wrote it, its plan and question say that the rollback drops those changes. It refuses to
+  write back the `grub.cfg` of a `menu` run once `/boot` holds none of the kernels its Kali
+  entries boot, and to undo a `system` run whose `kernel-img.conf` put back would stop
+  linux-base from keeping the links in `/boot` while partition 1's `grub.cfg` still sources
+  `kali.cfg`.
+- `lib/kernel-updater/menu.awk`, which finds the Kali submenu of a GRUB config, braces counted
+  outside quotes and comments only, with its entries and their kernel parameters, passing over
+  options such as `--class` before a title as GRUB does.
+- A `kali-menu` item for `check`, after `kali-cfg`: skips before the migration, warns while the
+  legacy entries remain, and fails when `grub.cfg` sources a missing `kali.cfg` or a `kali.cfg`
+  exists that `grub.cfg` does not source, as after a rollback of the menu stage, which it then
+  says how to settle.
+- `root_device`, `menu_variants` and `previous_variants` in `/etc/kernel-updater.conf`, each
+  with its check, and in `examples/kernel-updater.conf`.
+- `docs/migration.md`, the walkthrough of the migration: the backups from Windows, the stages
+  in order, the tests at the GRUB prompt and of the new entries, natively and in the VM,
+  routine use afterwards, the rollback of each stage, and what to do when a new kernel fails.
+- Tests: `tests/menu.bats` for the scan, the parameters and those a plan hides, the rendering,
+  which must equal `tests/fixtures/grub/kali.expected.cfg`, the new `grub.cfg`, which must
+  equal `migrate-after.cfg`, also after far more than a pipe holds, and the byte guard;
+  `tests/migrate.bats` for every stage and rollback, their refusals and exports, the stale
+  export, the baseline and the order of the backups, with stub tools whose
+  `linux-update-symlinks` picks the links as linux-base does; `tests/container/migrate.bats`
+  with the real `linux-update-symlinks`, `debconf` and `grub-script-check`; and
+  `tests/ntfs/migrate.bats`, which lints with the stick's own GRUB lists, writes the new menu to
+  real NTFS and rolls it back. The `ntfs` job installs `dmsetup` for it.
 
 ### Changed
 
@@ -226,5 +293,20 @@ with the owner's original script.
   and `tests/helpers.bash` runs library code under the tool's strict mode with `run_ku_lib`.
 - `KU_AWK`, the awk that runs `lint.awk`, is taken from the environment only with
   `KU_TEST=1`, as the other seams are, since `check` now lints `kali.cfg` as root.
+- `check` reports 19 items: `kali-menu` follows `kali-cfg`, and `--no-partition` skips the six
+  partition-1 items. Its probes start anew when they run twice in one process, and
+  `ku_check_items` lets `migrate` run the `boot-luks`, `boot-ext` and `kernels` items without
+  printing them; their results do not change.
+- `ku_confirm` builds on the new `ku_ask`, which returns 1 on a no, and keeps the terminal open
+  for the questions that follow, so that each reads the next answer.
+- `ku_config_load` records in `KU_CONF_SET` which keys the file sets, and lists of variants
+  lose the blanks around their commas.
+- `ku_probe_kernel_img` reads a given copy of `kernel-img.conf` too, so that a rollback of
+  `migrate`'s `system` stage can tell what the copy it puts back sets.
+- `ku_grub_floor_for` gives the highest `grub_floor` a GRUB version reaches, which check's
+  `grub-version` item and `migrate`'s `detect` share, and `ku_baseline_record` records the
+  whole baseline for `migrate`'s `finalize` while none is stored.
+- `tests/static.bats` also covers `migrate.sh` and runs `menu.awk`, and `tests/helpers.bash`
+  loads `migrate.sh`.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
