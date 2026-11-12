@@ -9,8 +9,11 @@
 # Known keys and the check their values must pass (the _ku_valid_* function of that name),
 # and the defaults; an empty default leaves an optional key unset. Later phases add keys here.
 declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid
-    [verify_action]=verify_action)
-declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="" [verify_action]=fail)
+    [verify_action]=verify_action [disk_ptuuid]=ptuuid [p1_fs_uuid]=ntfs_serial [deploy]=deploy
+    [p1_path]=abs_path [output_dir]=abs_path [backups_keep]=count)
+declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="" [verify_action]=fail
+    [disk_ptuuid]="" [p1_fs_uuid]="" [deploy]=auto [p1_path]=""
+    [output_dir]=/root/kernel-updater/out [backups_keep]=5)
 
 # The config file named by --config, or empty for the default path. Set by the option parser.
 KU_CONFIG_FILE=""
@@ -32,6 +35,8 @@ ku_load_config() {
 # others. The checks and the reads use one open file, so a swap in between cannot slip by.
 ku_config_load() {
     local file=$1 fd line key value n=0
+    # A key is lower case letters, digits, as in p1_path, and underscores, but no leading digit.
+    local re='^[[:space:]]*([a-z_][a-z0-9_]*)[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$'
     local -A seen=()
     if [[ ! -e $file ]]; then
         ku_log debug "no config file at $file; using the defaults"
@@ -44,7 +49,7 @@ ku_config_load() {
         n=$((n + 1))
         line=${line%$'\r'}
         [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
-        if [[ ! $line =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$ ]]; then
+        if [[ ! $line =~ $re ]]; then
             ku_die "$KU_EX_CONFIG" "$file:$n: expected a 'key = value' line"
         fi
         key=${BASH_REMATCH[1]}
@@ -57,8 +62,19 @@ ku_config_load() {
         seen[$key]=$n
         "_ku_valid_${KU_CONF_SCHEMA[$key]}" "$value" ||
             ku_die "$KU_EX_CONFIG" "$file:$n: invalid value for '$key'"
-        # UUIDs are kept lower case, as blkid and cryptsetup print them.
-        [[ ${KU_CONF_SCHEMA[$key]} != uuid ]] || value=${value,,}
+        # UUIDs and disk signatures are kept lower case, as blkid, cryptsetup and lsblk print
+        # them, and NTFS serials upper case, as blkid prints those.
+        case ${KU_CONF_SCHEMA[$key]} in
+            uuid | ptuuid) value=${value,,} ;;
+            ntfs_serial) value=${value^^} ;;
+            # A path loses its trailing slashes, so that output_dir/ names its directory and
+            # not, to mkdir, its own parent.
+            abs_path)
+                while [[ $value == ?*/ ]]; do
+                    value=${value%/}
+                done
+                ;;
+        esac
         # shellcheck disable=SC2034 # read by the commands
         KU_CONF[$key]=$value
     done
@@ -92,4 +108,30 @@ _ku_valid_uuid() {
 # package's configuration, or warn.
 _ku_valid_verify_action() {
     [[ $1 =~ ^(fail|warn)$ ]]
+}
+
+# A disk's PTUUID as lsblk prints it: an MBR disk's 32-bit disk signature, 8 hex digits, or a
+# GPT disk's UUID in the 8-4-4-4-12 form, in either case.
+_ku_valid_ptuuid() {
+    [[ $1 =~ ^[0-9A-Fa-f]{8}$ ]] || _ku_valid_uuid "$1"
+}
+
+# An NTFS volume serial as blkid prints it: 16 hex digits, in either case.
+_ku_valid_ntfs_serial() {
+    [[ $1 =~ ^[0-9A-Fa-f]{16}$ ]]
+}
+
+# How a writer deploys to partition 1: auto, direct, export or path.
+_ku_valid_deploy() {
+    [[ $1 =~ ^(auto|direct|export|path)$ ]]
+}
+
+# An absolute path without control characters and without . or .. components.
+_ku_valid_abs_path() {
+    [[ $1 == /* && $1 != *[[:cntrl:]]* && /$1/ != */./* && /$1/ != */../* ]]
+}
+
+# How many backups of a file on partition 1 to keep: 1 to 99.
+_ku_valid_count() {
+    [[ $1 =~ ^[1-9][0-9]?$ ]]
 }

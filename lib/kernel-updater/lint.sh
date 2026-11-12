@@ -6,9 +6,14 @@
 # lint.awk for errors GRUB reports only at boot. Defines functions only.
 # -------------------------------------------------------
 
-# The awk that runs lint.awk. A seam for the tests, which run it under mawk and gawk;
-# production never sets it.
-KU_AWK=${KU_AWK:-awk}
+# The awk that runs lint.awk. A seam for the tests, which run it under mawk and gawk, and so,
+# like the seams of common.sh, taken from the environment only with KU_TEST=1: check runs lint
+# as root, and a KU_AWK left in root's environment, as with sudo -E, must not choose what runs.
+if [[ ${KU_TEST:-} == 1 ]]; then
+    KU_AWK=${KU_AWK:-awk}
+else
+    KU_AWK="awk"
+fi
 
 # Print the lint command's usage on stdout.
 ku_lint_usage() {
@@ -96,6 +101,20 @@ ku_cmd_lint() {
     ku_log info "lint: ${#files[@]} file(s), $errors error(s), $warnings warning(s)"
     if (( errors || (strict && warnings) )); then
         exit "$KU_EX_FINDINGS"
+    fi
+}
+
+# Print the findings for FILE as lint does, as LINE<TAB>SEVERITY<TAB>RULE<TAB>MESSAGE lines
+# sorted by line: for GRUB FLOOR, with grub-script-check when SYNTAX is 1, and with the command
+# and module names of GRUB_DIR's command.lst and moddep.lst, as --grub-dir takes them, or with
+# GRUB 2.02's when GRUB_DIR is empty. Shared with check's kali-cfg item.
+ku_lint_findings() {
+    local file=$1 floor=$2 syntax=$3 dir=${4-}
+    if [[ -n $dir ]]; then
+        _ku_lint_file "$file" "$floor" "$syntax" 1 "$dir/command.lst" "$dir/moddep.lst"
+    else
+        _ku_lint_file "$file" "$floor" "$syntax" 0 "$KU_SHAREDIR/grub-2.02/commands.txt" \
+            "$KU_SHAREDIR/grub-2.02/modules.txt"
     fi
 }
 

@@ -3,7 +3,8 @@
 # kernel-updater check
 #
 # The check command: reports, item by item, whether /boot, its links and LUKS container, the
-# kernels, their initrds, fstab, crypttab and grub-pc keep the Kali entries bootable.
+# kernels, their initrds, fstab, crypttab, grub-pc and the stick's partition 1 keep the Kali
+# entries bootable.
 # -------------------------------------------------------
 
 # The results in the order the items ran: status (ok, warn, fail or skip), item and detail.
@@ -23,6 +24,9 @@ declare -gA KU_CK_STATE=() KU_CK_TARGET=() KU_CK_RESOLVES=()
 # root/.
 KU_CK_SCAN_DIR="" KU_CK_SCAN_MOUNTED=0
 
+# Why the partition-1 items after p1-identity skip, or empty while they may read partition 1.
+KU_CK_P1_WHY=""
+
 # The incompatible ext features dumpe2fs names, each with the oldest GRUB that reads or safely
 # ignores it, as 204 for 2.04, or 0 when none does. Some e2fsprogs releases spell large_dir
 # largedir. GRUB never looks at compatible or read-only compatible features.
@@ -34,15 +38,19 @@ declare -gA KU_CK_EXT_INCOMPAT=([filetype]=202 [extent]=202 [flex_bg]=202 [meta_
 # Print the check command's usage on stdout.
 ku_check_usage() {
     cat << 'EOF'
-Usage: kernel-updater check [--strict] [--porcelain]
+Usage: kernel-updater check [--strict] [--no-partition] [--porcelain]
 
 Reports whether the system keeps the stick's Kali entries bootable: /boot, its links and LUKS
-container, the kernel packages, the initrds, fstab, crypttab and grub-pc. Runs as root and
-changes nothing; a read-only bind mount of / looks under the /boot mount point and is removed
-before the command exits. Results name kinds and counts, never identifiers.
+container, the kernel packages, the initrds, fstab, crypttab and grub-pc, then the stick's
+partition 1: its identity, its GRUB, the tripwire over its boot code, the exported files and
+kali.cfg. Runs as root and changes nothing; a read-only bind mount of / looks under the /boot
+mount point, and partition 1 is read through p1_path or a mount that is there, or else through
+a read-only mount of its own; the mounts it makes are removed before the command exits.
+Results name kinds and counts, never identifiers.
 
-  --strict     exit 2 on warnings too
-  --porcelain  print ITEM, STATUS and DETAIL, tab-separated
+  --strict        exit 2 on warnings too
+  --no-partition  skip the partition-1 items and leave partition 1 alone
+  --porcelain     print ITEM, STATUS and DETAIL, tab-separated
 
 Each item is ok, warn, fail or skip. Exits 0 when no item fails, 2 when one does (or, with
 --strict, warns), 64 on a usage error and 77 when not run as root.
@@ -51,13 +59,15 @@ EOF
 
 # Run every item and print one result per item on stdout, then a summary on stderr. Exits 0
 # when no item fails (or, with --strict, warns), 2 when one does, 64 on a usage error and 77
-# when not run as root. Changes nothing but the shadow scan's bind mount, which it removes.
+# when not run as root. Changes nothing but the shadow scan's bind mount and the read-only
+# mount of partition 1, which it removes.
 ku_cmd_check() {
-    local strict=0 status
+    local strict=0 no_partition=0 status
     local -A totals=([ok]=0 [warn]=0 [fail]=0 [skip]=0)
     while (( $# )); do
         case $1 in
             --strict) strict=1; shift ;;
+            --no-partition) no_partition=1; shift ;;
             --porcelain) KU_PORCELAIN=1; shift ;;
             -h | --help) ku_check_usage; exit 0 ;;
             -*) ku_usage_error "check: unknown option $1" ;;
@@ -80,6 +90,7 @@ ku_cmd_check() {
     _ku_check_boot_ext
     _ku_check_fstab_crypttab
     _ku_check_grub_pc
+    _ku_check_partition "$no_partition"
     _ku_check_print
     for status in "${KU_CHECK_STATUS[@]}"; do
         totals[$status]=$((totals[$status] + 1))
@@ -212,7 +223,7 @@ _ku_check_boot_shadowed() {
     # mount and umount follow symlinks, so a user who can rename entries in the parent could
     # swap the mount point for one. Hence /run and not TMPDIR, which root may inherit from them.
     parent=$(ku_path /run)
-    if ! _ku_check_root_only "$parent"; then
+    if ! ku_root_only_dir "$parent"; then
         _ku_check_add warn boot-shadowed "cannot look under the /boot mount point: /run is not" \
             "a directory whose entries only root can rename"
         return 0
@@ -245,17 +256,6 @@ _ku_check_boot_shadowed() {
     else
         _ku_check_add ok boot-shadowed "nothing hides under the /boot mount point"
     fi
-}
-
-# Return 0 when the directory DIR belongs to root and group and others cannot write it, or
-# only with the sticky bit set, so that no other user can rename the entries root makes in it.
-_ku_check_root_only() {
-    local info owner mode
-    [[ -d $1 ]] || return 1
-    info=$(stat -L -c '%u %a' -- "$1" 2> /dev/null) || return 1
-    read -r owner mode <<< "$info"
-    [[ $owner == 0 && $mode =~ ^[0-7]+$ ]] || return 1
-    (( (8#$mode & 8#022) == 0 || (8#$mode & 8#1000) != 0 ))
 }
 
 # Unmount the shadow scan's bind mount, lazily when a plain unmount fails, and remove its two
@@ -688,5 +688,208 @@ _ku_check_grub_pc() {
             "grub-pc upgrade reinstalls GRUB there and can overwrite the stick's boot loader"
     else
         _ku_check_add ok grub-pc "grub-pc/install_devices is empty"
+    fi
+}
+
+# The partition-1 items, after the system's: p1-identity, grub-version, tripwire, deployed and
+# kali-cfg. They read partition 1 read-only, through KU_P1_DIR, p1_path, a mount that is there
+# or a read-only mount of their own on a private directory in /run, which goes before the
+# results are printed, or through the exit trap should the command be cut short. Each skips
+# with --no-partition (SKIP 1), and all but p1-identity skip, saying why, when partition 1
+# cannot be found, is another, or cannot be read.
+_ku_check_partition() {
+    local name
+    if (( $1 )); then
+        for name in p1-identity grub-version tripwire deployed kali-cfg; do
+            _ku_check_add skip "$name" "--no-partition leaves partition 1 alone"
+        done
+        return 0
+    fi
+    _ku_check_p1_identity
+    if [[ -z $KU_CK_P1_WHY ]] && ! ku_p1_open ro; then
+        KU_CK_P1_WHY="partition 1 cannot be read: $KU_DK_PROBLEM"
+    fi
+    if [[ -n $KU_CK_P1_WHY ]]; then
+        for name in grub-version tripwire deployed kali-cfg; do
+            _ku_check_add skip "$name" "$KU_CK_P1_WHY"
+        done
+        return 0
+    fi
+    _ku_check_grub_version
+    _ku_check_tripwire
+    _ku_check_deployed
+    _ku_check_kali_cfg
+    if ! ku_p1_close; then
+        ku_log warning "the read-only mount of partition 1 stays on $KU_DK_MOUNT_DIR/p1:" \
+            "unmount it and remove $KU_DK_MOUNT_DIR by hand"
+    fi
+}
+
+# p1-identity: partition 1, found through the disk that holds /boot, must be the NTFS
+# filesystem p1_fs_uuid names, on the disk disk_ptuuid names. Fails as soon as either key that
+# is set names another, and otherwise skips while either is not set; with KU_P1_DIR the test
+# directory stands in for partition 1. Sets KU_CK_P1_WHY when the other partition-1 items
+# cannot go on, so that they never read a partition 1 the configuration rejects.
+_ku_check_p1_identity() {
+    local found=1 status=2
+    KU_CK_P1_WHY=""
+    if [[ -z $KU_P1_DIR ]] && ! ku_disk_find; then
+        found=0
+        KU_CK_P1_WHY="partition 1 cannot be found from /boot: $KU_DK_PROBLEM"
+    fi
+    if [[ -z $KU_P1_DIR ]] && (( found )) &&
+        [[ -n ${KU_CONF[disk_ptuuid]} || -n ${KU_CONF[p1_fs_uuid]} ]]; then
+        status=0
+        ku_disk_identity || status=$?
+    fi
+    if (( status == 1 )); then
+        KU_CK_P1_WHY="partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
+        _ku_check_add fail p1-identity "$(ku_disk_identity_problem)"
+    elif [[ -z ${KU_CONF[disk_ptuuid]} || -z ${KU_CONF[p1_fs_uuid]} ]]; then
+        _ku_check_add skip p1-identity "disk_ptuuid and p1_fs_uuid are not both set: set them" \
+            "to have the stick's disk and partition 1 checked"
+    elif [[ -n $KU_P1_DIR ]]; then
+        _ku_check_add ok p1-identity "partition 1 is the test directory KU_P1_DIR names"
+    elif (( ! found )); then
+        _ku_check_add fail p1-identity "$KU_CK_P1_WHY"
+    else
+        _ku_check_add ok p1-identity "the disk that holds /boot and its NTFS partition 1 are" \
+            "the ones disk_ptuuid and p1_fs_uuid name"
+    fi
+}
+
+# grub-version: the stick's GRUB must be at least as new as grub_floor, or lint and check trust
+# features it lacks. Warns while its version is unknown, and names the higher floor a newer
+# GRUB allows.
+_ku_check_grub_version() {
+    local floor=${KU_CONF[grub_floor]} version level candidate fit=""
+    version=$(ku_grub_version "$KU_DK_ROOT")
+    if [[ $version == unknown ]]; then
+        _ku_check_add warn grub-version "the stick's GRUB version is unknown:" \
+            "multibootusb/grub/i386-pc/normal.mod is missing or names no single version"
+        return 0
+    fi
+    level=$(ku_grub_level "$version")
+    # The highest floor grub_floor takes that the stick's GRUB reaches.
+    for candidate in 2.02 2.06 2.12 2.14; do
+        if (( 10#${candidate/./} <= level )); then
+            fit=$candidate
+        fi
+    done
+    if (( level < 10#${floor/./} )); then
+        _ku_check_add fail grub-version "the stick's GRUB $version is older than grub_floor" \
+            "$floor, so lint and check trust features it lacks:" \
+            "${fit:+set grub_floor = $fit or }update the stick's GRUB"
+    elif [[ -n $fit && $fit != "$floor" ]]; then
+        _ku_check_add ok grub-version "the stick's GRUB is $version and grub_floor is $floor;" \
+            "grub_floor = $fit would let lint and check accept what GRUB $fit adds"
+    else
+        _ku_check_add ok grub-version "the stick's GRUB is $version and grub_floor is $floor"
+    fi
+}
+
+# tripwire: the stick's boot code must match the stored baseline: the files baseline.list
+# names, the MBR boot code and partition 1's boot sector. Warns while no baseline is stored.
+_ku_check_tripwire() {
+    local file stored current detail
+    file=$(ku_path "$KU_BASELINE")
+    if [[ ! -e $file ]]; then
+        _ku_check_add warn tripwire "no baseline is stored: run 'kernel-updater baseline' to" \
+            "record one"
+    elif ! stored=$(ku_baseline_read "$file"); then
+        _ku_check_add fail tripwire "the stored baseline is damaged: run 'kernel-updater" \
+            "baseline' to record it anew"
+    elif ! current=$(ku_baseline_hash "$KU_DK_ROOT"); then
+        _ku_check_add fail tripwire "cannot hash the stick's boot code"
+    else
+        ku_baseline_compare "$stored" "$current"
+        if (( ${#KU_BL_CHANGED[@]} + ${#KU_BL_NEW[@]} + ${#KU_BL_MISSING[@]} )); then
+            _ku_check_add fail tripwire "$(ku_baseline_summary) since the baseline was" \
+                "recorded: if you made those changes, run 'kernel-updater baseline' to" \
+                "record them"
+        else
+            detail="the $KU_BL_SAME entries of the baseline match"
+            if [[ $current == *"  mbr:boot-code"* ]]; then
+                detail+=", the MBR boot code and partition 1's boot sector included"
+            fi
+            _ku_check_add ok tripwire "$detail"
+        fi
+    fi
+}
+
+# deployed: once files were exported to output_dir, the files on partition 1 must match its
+# SHA256SUMS, so that a copy from Windows that went wrong shows. Skips without an export. A file
+# that differs may also be one that changed on the stick after the copy, which copying the
+# export again would undo, so the advice says to copy only an export not copied yet.
+_ku_check_deployed() {
+    local out status=0 name verdict count=0 bad=""
+    out=$(ku_export_verify "$KU_DK_ROOT") || status=$?
+    case $status in
+        66)
+            _ku_check_add skip deployed "output_dir holds no export (no SHA256SUMS)"
+            return 0
+            ;;
+        1)
+            _ku_check_add fail deployed "output_dir's SHA256SUMS is damaged"
+            return 0
+            ;;
+    esac
+    while IFS=$'\t' read -r name verdict; do
+        count=$((count + 1))
+        case $verdict in
+            differs) bad+="${bad:+, }$name differs" ;;
+            missing) bad+="${bad:+, }$name is missing" ;;
+        esac
+    done <<< "$out"
+    if [[ -n $bad ]]; then
+        _ku_check_add fail deployed "on partition 1, $bad compared with the export in" \
+            "output_dir: if you have not copied the export yet, copy it as its DEPLOY.txt" \
+            "says; if the stick changed after you copied it, do not copy it again, which would" \
+            "undo that change"
+    else
+        _ku_check_add ok deployed "the $count file(s) exported to output_dir match partition 1"
+    fi
+}
+
+# kali-cfg: once phase 6 wrote multibootusb/grub/kali.cfg, it must pass lint with the stick's
+# own command and module lists, as lint --grub-dir takes them: fails on errors and warns on
+# warnings. Skips while the file does not exist.
+_ku_check_kali_cfg() {
+    local cfg=$KU_DK_ROOT/multibootusb/grub/kali.cfg dir=$KU_DK_ROOT/multibootusb/grub/i386-pc
+    local lists="the stick's command and module lists" syntax=1 findings severity rule
+    local errors=0 warnings=0 rules=""
+    if [[ ! -e $cfg && ! -L $cfg ]]; then
+        _ku_check_add skip kali-cfg "multibootusb/grub/kali.cfg does not exist yet"
+        return 0
+    fi
+    if [[ ! -f $dir/command.lst || ! -r $dir/command.lst || ! -f $dir/moddep.lst ||
+        ! -r $dir/moddep.lst ]]; then
+        dir="" lists="GRUB 2.02's lists, since the stick's cannot be read"
+    fi
+    if ! command -v grub-script-check > /dev/null; then
+        syntax=0
+        lists+=", without a syntax check (grub-script-check is not installed)"
+    fi
+    if [[ ! -f $cfg || ! -r $cfg ]] ||
+        ! findings=$(ku_lint_findings "$cfg" "${KU_CONF[grub_floor]}" "$syntax" "$dir"); then
+        _ku_check_add fail kali-cfg "multibootusb/grub/kali.cfg cannot be read"
+        return 0
+    fi
+    while IFS=$'\t' read -r _ severity rule _; do
+        case $severity in
+            error) errors=$((errors + 1)) ;;
+            warning) warnings=$((warnings + 1)) ;;
+            *) continue ;;
+        esac
+        [[ ,$rules, == *",$rule,"* ]] || rules+="${rules:+,}$rule"
+    done <<< "$findings"
+    if (( errors )); then
+        _ku_check_add fail kali-cfg "multibootusb/grub/kali.cfg has $errors error(s) and" \
+            "$warnings warning(s) (${rules//,/, }) with $lists: lint --grub-dir shows them"
+    elif (( warnings )); then
+        _ku_check_add warn kali-cfg "multibootusb/grub/kali.cfg has $warnings warning(s)" \
+            "(${rules//,/, }) with $lists: lint --grub-dir shows them"
+    else
+        _ku_check_add ok kali-cfg "multibootusb/grub/kali.cfg passes lint with $lists"
     fi
 }

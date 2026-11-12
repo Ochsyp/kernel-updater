@@ -3,7 +3,7 @@
 # kernel-updater common library
 #
 # Exit codes, logging, the dry-run and confirmation rails, the root check, the single-instance
-# lock, exit traps and path helpers. Defines functions and settings only.
+# lock, exit traps, and path and SHA-256 helpers. Defines functions and settings only.
 # -------------------------------------------------------
 
 # Exit codes, the same for every command and listed in the README; the global options set
@@ -174,6 +174,31 @@ ku_install_traps() {
 # Print the absolute PATH resolved under KU_ROOT.
 ku_path() {
     printf '%s\n' "${KU_ROOT%/}$1"
+}
+
+# Return 0 when the directory DIR belongs to root and group and others cannot write it, or
+# only with the sticky bit set, so that no other user can rename the entries root makes in it.
+# mount and umount follow symlinks, so the commands mount only in such a directory.
+ku_root_only_dir() {
+    local info owner mode
+    [[ -d $1 ]] || return 1
+    info=$(stat -L -c '%u %a' -- "$1" 2> /dev/null) || return 1
+    read -r owner mode <<< "$info"
+    [[ $owner == 0 && $mode =~ ^[0-7]+$ ]] || return 1
+    (( (8#$mode & 8#022) == 0 || (8#$mode & 8#1000) != 0 ))
+}
+
+# Print the SHA-256 of FILE, or of stdin without one, as 64 hex digits. Returns 1 when it
+# cannot be read.
+ku_sha256() {
+    local out
+    if (( $# )); then
+        out=$(sha256sum 2> /dev/null < "$1") || return 1
+    else
+        out=$(sha256sum) || return 1
+    fi
+    [[ ${out:0:64} =~ ^[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "${out:0:64}"
 }
 
 # Return 0 when RELEASE has the shape of a kernel release.

@@ -22,6 +22,71 @@ setup() {
     [ -z "${KU_CONF[boot_fs_uuid]}" ]
     [ -z "${KU_CONF[boot_luks_uuid]}" ]
     [ "${KU_CONF[verify_action]}" = fail ]
+    [ -z "${KU_CONF[disk_ptuuid]}" ]
+    [ -z "${KU_CONF[p1_fs_uuid]}" ]
+    [ "${KU_CONF[deploy]}" = auto ]
+    [ -z "${KU_CONF[p1_path]}" ]
+    [ "${KU_CONF[output_dir]}" = /root/kernel-updater/out ]
+    [ "${KU_CONF[backups_keep]}" = 5 ]
+}
+
+@test "disk_ptuuid takes an MBR disk signature or a GPT UUID and keeps it lower case" {
+    printf 'disk_ptuuid = 5CA1AB1E\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[disk_ptuuid]}" = 5ca1ab1e ]
+    printf 'disk_ptuuid = 5CA1AB1E-0000-4000-8000-000000000D01\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[disk_ptuuid]}" = 5ca1ab1e-0000-4000-8000-000000000d01 ]
+}
+
+@test "p1_fs_uuid takes an NTFS serial of 16 hex digits and keeps it upper case" {
+    printf 'p1_fs_uuid = 5ca1ab1e00000001\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[p1_fs_uuid]}" = 5CA1AB1E00000001 ]
+}
+
+@test "deploy, p1_path, output_dir and backups_keep take their values" {
+    printf '%s\n' 'deploy = path' 'p1_path = /media/sf_BOOT' \
+        'output_dir = /srv/kernel updater/out' 'backups_keep = 99' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[deploy]}" = path ]
+    [ "${KU_CONF[p1_path]}" = /media/sf_BOOT ]
+    [ "${KU_CONF[output_dir]}" = "/srv/kernel updater/out" ]
+    [ "${KU_CONF[backups_keep]}" = 99 ]
+    local value
+    for value in auto direct export; do
+        printf 'deploy = %s\n' "$value" > "$CONF"
+        ku_config_load "$CONF"
+        [ "${KU_CONF[deploy]}" = "$value" ]
+    done
+}
+
+@test "A path loses its trailing slashes, so that output_dir/ names the directory itself" {
+    printf '%s\n' 'output_dir = /root/kernel-updater/out/' 'p1_path = /media/sf_BOOT//' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[output_dir]}" = /root/kernel-updater/out ]
+    [ "${KU_CONF[p1_path]}" = /media/sf_BOOT ]
+    printf 'output_dir = /\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[output_dir]}" = / ]
+}
+
+@test "Each new key refuses a value that does not fit, with exit 78 and without echoing it" {
+    local entry key value
+    for entry in "disk_ptuuid 5ca1ab1" "disk_ptuuid 5ca1ab1e0" "disk_ptuuid 0x5ca1ab1e" \
+        "disk_ptuuid 5ca1ab1g" "disk_ptuuid 5ca1ab1e-0000-4000-8000-000000000d0" \
+        "p1_fs_uuid 5CA1AB1E0000001" "p1_fs_uuid 5CA1AB1E000000001" \
+        "p1_fs_uuid 5CA1-AB1E-0000-0001" "deploy Auto" "deploy copy" "p1_path media/sf_BOOT" \
+        "p1_path /media/../BOOT" "p1_path /media/./BOOT" "output_dir ~/out" \
+        "backups_keep 0" "backups_keep 100" "backups_keep 05" "backups_keep -1"; do
+        read -r key value <<< "$entry"
+        printf '%s = %s\n' "$key" "$value" > "$CONF"
+        run ku_config_load "$CONF"
+        [ "$status" -eq 78 ] || { printf 'accepted: %s\n' "$entry" >&2; return 1; }
+        [[ "$output" == *"$CONF:1: invalid value for '$key'"* ]]
+        # The identifiers are long enough that the temp path cannot hold them by chance.
+        [[ "$key" != *uuid || "${output,,}" != *5ca1ab1* ]]
+    done
 }
 
 @test "verify_action takes fail or warn, and nothing else" {

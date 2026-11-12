@@ -47,7 +47,14 @@ setup() {
     expect_item boot-ext skip "/boot is tmpfs, not ext2, ext3 or ext4"
     expect_item fstab-crypttab ok "1 device(s) named by UUID= or another stable name"
     expect_item grub-pc ok "grub-pc/install_devices is empty"
-    [ "${#lines[@]}" -eq 13 ]
+    # The tmpfs on /boot lies on no disk, so there is no partition 1 to look at.
+    expect_item p1-identity skip "disk_ptuuid and p1_fs_uuid are not both set"
+    local name
+    for name in grub-version tripwire deployed kali-cfg; do
+        expect_item "$name" skip \
+            "partition 1 cannot be found from /boot: the filesystem at /boot is on no block device"
+    done
+    [ "${#lines[@]}" -eq 18 ]
     # fstab names /boot by a synthetic UUID, which no detail or message repeats.
     [[ "${output,,}${stderr,,}" != *5ca1ab1e* ]]
 }

@@ -27,6 +27,12 @@ KU_SHAREDIR=${KU_SELF%/*}/../share/kernel-updater
 . "$KU_LIBDIR/check.sh"
 # shellcheck source=lib/kernel-updater/hook.sh
 . "$KU_LIBDIR/hook.sh"
+# shellcheck source=lib/kernel-updater/disk.sh
+. "$KU_LIBDIR/disk.sh"
+# shellcheck source=lib/kernel-updater/deploy.sh
+. "$KU_LIBDIR/deploy.sh"
+# shellcheck source=lib/kernel-updater/baseline.sh
+. "$KU_LIBDIR/baseline.sh"
 
 # Print the usage on stdout.
 ku_usage() {
@@ -37,8 +43,12 @@ Keeps the Kali entries of a MultiBootUSB stick bootable across kernel updates.
 
 Commands:
   check              report, as root and changing nothing, whether /boot, its links, the
-                     kernels, their initrds and grub-pc keep the Kali entries bootable
+                     kernels, their initrds, grub-pc and the stick's partition 1 keep the
+                     Kali entries bootable
                      (kernel-updater check --help lists its options)
+  baseline           record, as root, the SHA-256 of the stick's boot code for check's
+                     tripwire; --show compares without recording
+                     (kernel-updater baseline --help lists its options)
   lint FILE...       check GRUB configs for errors GRUB reports only at boot
                      (kernel-updater lint --help lists its options)
   hook NAME ARGS...  run by the kernel and apt hooks install.sh installs, not by hand
@@ -101,7 +111,7 @@ ku_main() {
     case $cmd in
         help) ku_usage; exit 0 ;;
         version) ku_print_version; exit 0 ;;
-        check | hook | lint) ;;
+        baseline | check | hook | lint) ;;
         *) ku_usage_error "unknown command '$cmd'" ;;
     esac
     ku_install_traps

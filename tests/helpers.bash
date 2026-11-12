@@ -3,7 +3,8 @@
 # kernel-updater test helpers
 #
 # Sourced by the .bats files under tests/ through `load`: repository paths, PATH and system
-# stubs, runners for both scripts, a library loader, check result readers and ShellCheck runners.
+# stubs, runners for both scripts and for library code, a library loader, disk images, check
+# result readers and ShellCheck runners.
 # -------------------------------------------------------
 
 bats_require_minimum_version 1.5.0
@@ -82,6 +83,33 @@ load_ku_libs() {
     . "$KU_LIBDIR/check.sh"
     # shellcheck source=lib/kernel-updater/hook.sh
     . "$KU_LIBDIR/hook.sh"
+    # shellcheck source=lib/kernel-updater/disk.sh
+    . "$KU_LIBDIR/disk.sh"
+    # shellcheck source=lib/kernel-updater/deploy.sh
+    . "$KU_LIBDIR/deploy.sh"
+    # shellcheck source=lib/kernel-updater/baseline.sh
+    . "$KU_LIBDIR/baseline.sh"
+}
+
+# Run the shell CODE as a command of bin/kernel-updater runs: in a bash with its strict mode,
+# traps and libraries, the configuration loaded, the stubs first on PATH and the seams of
+# run_ku, through bats' run with separate stderr. ARGS follow CODE as its "$@".
+run_ku_lib() {
+    # shellcheck disable=SC2016 # the inner script expands its own variables
+    run --separate-stderr env PATH="$STUB_BIN:$PATH" KU_TEST=1 \
+        KU_ROOT="$BATS_TEST_TMPDIR/root" KU_TTY="$BATS_TEST_TMPDIR/tty" \
+        KU_LOCKFILE="$BATS_TEST_TMPDIR/lock" bash -c '
+            set -Eeuo pipefail
+            shopt -s inherit_errexit
+            KU_LIBDIR=$0/lib/kernel-updater KU_SHAREDIR=$0/share/kernel-updater
+            for lib in common config lint probe check hook disk deploy baseline; do
+                . "$KU_LIBDIR/$lib.sh"
+            done
+            ku_install_traps
+            ku_load_config
+            code=$1
+            shift
+            eval "$code"' "$REPO_DIR" "$@"
 }
 
 # Make ln -s create symlinks. Git Bash copies files instead unless MSYS asks for Cygwin-style
@@ -165,6 +193,27 @@ printf 'Filesystem UUID:          %s\nFilesystem magic number:  0xEF53\n' "$BOOT
 printf 'Filesystem features:      %s\n' "$EXT_FEATURES"
 printf 'Filesystem flags:         signed_directory_hash\n'
 EOF
+}
+
+# Write the disk image FILE, which KU_P1_DISK stands for: 440 bytes of MBR boot code, the
+# synthetic disk signature, a partition table whose first entry, NTFS, starts at sector 2, a
+# gap, and in sector 2 partition 1's boot sector.
+make_disk_image() {
+    {
+        head -c 440 /dev/zero | tr '\0' M
+        printf '\x1e\xab\xa1\x5c\0\0'
+        printf '\0\0\0\0\x07\0\0\0\x02\0\0\0\x08\0\0\0'
+        head -c 48 /dev/zero
+        printf '\x55\xaa'
+        head -c 512 /dev/zero | tr '\0' G
+        printf 'NTFS    '
+        head -c 504 /dev/zero | tr '\0' S
+    } > "$1"
+}
+
+# Overwrite the byte at OFFSET of FILE with an X.
+poke_byte() {
+    printf 'X' | dd of="$1" bs=1 seek="$2" conv=notrunc status=none
 }
 
 # Print STATUS<TAB>DETAIL of ITEM from the porcelain output of the last check run.

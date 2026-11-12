@@ -2,8 +2,9 @@
 # -------------------------------------------------------
 # kernel-updater check command checks
 #
-# Runs kernel-updater check on a healthy KU_ROOT tree with stub tools, then breaks one item at
-# a time, and checks the formats, the exit codes and that no identifier reaches the output.
+# Runs kernel-updater check on a healthy KU_ROOT tree and partition 1 with stub tools, then
+# breaks one item at a time, and checks the formats, the exit codes and that no identifier
+# reaches the output.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -14,6 +15,7 @@ V2=9.0.2+kali-amd64
 BY_ID=/dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0
 ITEMS=(boot-mounted boot-identity boot-shadowed kernel-img boot-links stale-root-links kernels
     reboot-pending initrd boot-luks boot-ext fstab-crypttab grub-pc)
+P1_ITEMS=(p1-identity grub-version tripwire deployed kali-cfg)
 
 setup() {
     stub_init
@@ -23,13 +25,85 @@ setup() {
     export TMPDIR="$BATS_TEST_TMPDIR/tmp"
     mkdir -p "$TMPDIR"
     healthy_system
+    healthy_partition
 }
 
-# Write the config file with grub_floor FLOOR, 2.02 by default, and the UUIDs of /boot.
+# Write the config file with grub_floor FLOOR, 2.02 by default, the UUIDs of /boot and the
+# identity of the stick: disk_ptuuid PTUUID, 5ca1ab1e by default, and its partition 1.
 write_config() {
     printf 'grub_floor = %s\nboot_fs_uuid = %s\nboot_luks_uuid = %s\n' "${1:-2.02}" \
         5ca1ab1e-0000-4000-8000-000000000b01 5ca1ab1e-0000-4000-8000-000000000c01 \
         > "$ROOT/etc/kernel-updater.conf"
+    printf 'disk_ptuuid = %s\np1_fs_uuid = 5CA1AB1E00000001\n' "${2:-5ca1ab1e}" \
+        >> "$ROOT/etc/kernel-updater.conf"
+}
+
+# A healthy partition 1 in P1, which KU_P1_DIR names, on the disk image KU_P1_DISK names:
+# GRUB 2.14's normal.mod, so that no grub_floor a test sets is newer, with the stick's command
+# and module lists, MultiBootUSB's grub.cfg, a kali.cfg that passes lint, an export of both in
+# output_dir, and a baseline of it all.
+healthy_partition() {
+    export KU_P1_DIR="$BATS_TEST_TMPDIR/p1" KU_P1_DISK="$BATS_TEST_TMPDIR/disk.img"
+    GRUB="$KU_P1_DIR/multibootusb/grub" OUT="$ROOT/root/kernel-updater/out"
+    mkdir -p "$GRUB/i386-pc" "$OUT"
+    normal_mod 2.14
+    printf '%s\n' '*menuentry: normal' 'linux: linux' 'initrd: linux' \
+        'configfile: configfile' > "$GRUB/i386-pc/command.lst"
+    printf '%s\n' 'normal: crypto' 'linux: relocator mmap' 'ext2: fshelp' 'gzio:' \
+        'part_msdos:' 'configfile:' > "$GRUB/i386-pc/moddep.lst"
+    printf 'menuentry "Kali" {\r\n\tconfigfile /multibootusb/grub/kali.cfg\r\n}\r\n' \
+        > "$GRUB/grub.cfg"
+    write_kali_cfg
+    make_disk_image "$KU_P1_DISK"
+    printf '%s  %s\n' "$(sha256sum < "$GRUB/kali.cfg" | cut -c 1-64)" kali.cfg \
+        "$(sha256sum < "$GRUB/grub.cfg" | cut -c 1-64)" grub.cfg > "$OUT/SHA256SUMS"
+    record_baseline
+}
+
+# Write the stick's i386-pc normal.mod, which names each GRUB VERSION given among its strings.
+normal_mod() {
+    {
+        printf 'ELF\0GNU GRUB  version %%s\0'
+        printf '%s\0' "$@"
+        printf 'normal\0'
+    } > "$GRUB/i386-pc/normal.mod"
+}
+
+# Write a kali.cfg that passes lint, with any further LINES in its menu entry.
+write_kali_cfg() {
+    {
+        printf 'menuentry "Kali GNU/Linux" {\n\tinsmod gzio\n\tinsmod part_msdos\n'
+        printf '\tinsmod ext2\n'
+        if (( $# )); then
+            printf '\t%s\n' "$@"
+        fi
+        printf '\tlinux /vmlinuz root=/dev/mapper/kali--vg-root ro quiet\n'
+        printf '\tinitrd /initrd.img\n}\n'
+    } > "$GRUB/kali.cfg"
+}
+
+# Store the baseline of partition 1 as it is now, as kernel-updater baseline records it.
+record_baseline() {
+    mkdir -p "$ROOT/var/lib/kernel-updater"
+    (
+        load_ku_libs
+        ku_baseline_hash "$KU_P1_DIR"
+    ) > "$ROOT/var/lib/kernel-updater/baseline"
+}
+
+# Describe the stick to the stub lsblk and blkid as sdb under /boot's crypt mapping, and stop
+# KU_P1_DIR standing in for partition 1. KU_P1_DISK stays, so that no test reads a real disk.
+stick_from_boot() {
+    unset KU_P1_DIR
+    mkstub lsblk <<'EOF'
+[[ -z ${LSBLK_FAIL:-} ]] || exit 32
+case " $* " in
+    *" -s "*) printf '%s\n' '/dev/mapper/boot_crypt crypt' '/dev/sdb3 part' '/dev/sdb disk' ;;
+    *" -d "*) printf '5ca1ab1e\n' ;;
+    *) printf '%s\n' '/dev/sdb   ' '/dev/sdb1 1 ntfs 5CA1AB1E00000001' ;;
+esac
+EOF
+    mkstub blkid <<< 'exit 2'
 }
 
 # Build a healthy system under ROOT and the stubs that report it: kernels V1 and V2 with their
@@ -63,11 +137,18 @@ healthy_system() {
     mkstub id <<'EOF'
 printf '%s\n' "${ID_U:-0}"
 EOF
-    # FINDMNT_OUT is /boot's mount line; empty means /boot is not mounted.
+    # FINDMNT_OUT is /boot's mount line; empty means /boot is not mounted. Partition 1 is
+    # mounted nowhere, and a path is on a read-write mount.
     export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 $BOOT_FS_UUID"
     mkstub findmnt <<'EOF'
-[[ -n $FINDMNT_OUT ]] || exit 1
-printf '%s\n' "$FINDMNT_OUT"
+case " $* " in
+    *" --source "*) exit 1 ;;
+    *" --target "*) printf 'rw,nosuid,nodev,noexec\n' ;;
+    *)
+        [[ -n $FINDMNT_OUT ]] || exit 1
+        printf '%s\n' "$FINDMNT_OUT"
+        ;;
+esac
 EOF
     mkstub dpkg-query <<'EOF'
 cat "$DPKG_QUERY_OUT"
@@ -131,18 +212,18 @@ others_ok() {
 }
 
 @test "A healthy system passes every item and leaves no bind mount or directory behind" {
-    local i
+    local i all=("${ITEMS[@]}" "${P1_ITEMS[@]}")
     run_ku check
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 13 ]
-    for i in "${!ITEMS[@]}"; do
-        if [[ "${lines[i]}" != "ok    ${ITEMS[i]} "* ]]; then
+    [ "${#lines[@]}" -eq 18 ]
+    for i in "${!all[@]}"; do
+        if [[ "${lines[i]}" != "ok    ${all[i]} "* ]]; then
             printf 'line %d: %s\n' "$i" "${lines[i]}" >&2
             return 1
         fi
     done
     [ "${lines[0]}" = "ok    boot-mounted      /boot is a separate ext4 mount" ]
-    [[ "$stderr" == *"info: check: 13 item(s): 13 ok, 0 warn, 0 fail, 0 skip"* ]]
+    [[ "$stderr" == *"info: check: 18 item(s): 18 ok, 0 warn, 0 fail, 0 skip"* ]]
     grep -q "^mount --bind --make-private -o ro $ROOT/ $ROOT/run/kernel-updater\.[^/]*/root\$" \
         "$STUB_LOG"
     grep -q "^umount $ROOT/run/kernel-updater\.[^/]*/root\$" "$STUB_LOG"
@@ -540,4 +621,198 @@ others_ok() {
         [[ "$all" != *5ca1ab1e* && "$all" != *synthetic_stick* && "$all" != */dev/sdb* ]]
         [[ "$all" != */etc/keys* && "$all" != *root.key* ]]
     done
+}
+
+@test "The partition-1 items report a healthy stick through KU_P1_DIR and KU_P1_DISK" {
+    run_check
+    [ "$status" -eq 0 ]
+    expect_item p1-identity ok "partition 1 is the test directory KU_P1_DIR names"
+    expect_item grub-version ok "the stick's GRUB is 2.14 and grub_floor is 2.02; grub_floor ="
+    expect_item grub-version ok "2.14 would let lint and check accept what GRUB 2.14 adds"
+    expect_item tripwire ok \
+        "the 7 entries of the baseline match, the MBR boot code and partition 1's boot sector"
+    expect_item deployed ok "the 2 file(s) exported to output_dir match partition 1"
+    expect_item kali-cfg ok \
+        "multibootusb/grub/kali.cfg passes lint with the stick's command and module lists"
+    others_ok
+}
+
+@test "--no-partition skips the five partition-1 items and leaves partition 1 alone" {
+    local name
+    stick_from_boot
+    run_check --no-partition
+    [ "$status" -eq 0 ]
+    [ "${#lines[@]}" -eq 18 ]
+    for name in "${P1_ITEMS[@]}"; do
+        expect_item "$name" skip "--no-partition leaves partition 1 alone"
+    done
+    others_ok
+    refute_line_match '^(lsblk|blkid)|^mount -t ' "$STUB_LOG"
+    run_ku check --help
+    [[ "$output" == *"--no-partition  skip the partition-1 items"* ]]
+}
+
+@test "p1-identity skips while disk_ptuuid or p1_fs_uuid is not set, and the others still run" {
+    printf 'grub_floor = 2.02\nboot_fs_uuid = %s\nboot_luks_uuid = %s\np1_fs_uuid = %s\n' \
+        5ca1ab1e-0000-4000-8000-000000000b01 5ca1ab1e-0000-4000-8000-000000000c01 \
+        5CA1AB1E00000001 > "$ROOT/etc/kernel-updater.conf"
+    run_check
+    [ "$status" -eq 0 ]
+    expect_item p1-identity skip "disk_ptuuid and p1_fs_uuid are not both set: set them to"
+    expect_item tripwire ok "the 7 entries of the baseline match"
+}
+
+@test "p1-identity finds partition 1 from /boot, and check reads it on a read-only mount" {
+    local dir="$ROOT/run/kernel-updater\\.[^/]*/p1"
+    stick_from_boot
+    run_check
+    expect_item p1-identity ok \
+        "the disk that holds /boot and its NTFS partition 1 are the ones disk_ptuuid and"
+    # The stub mount leaves the mount point empty, so the items see an empty partition 1.
+    expect_item grub-version warn "the stick's GRUB version is unknown"
+    expect_item kali-cfg skip "multibootusb/grub/kali.cfg does not exist yet"
+    grep -q "^mount -t ntfs3 -o nosuid\\\\,nodev\\\\,noexec\\\\,ro /dev/sdb1 $dir\$" "$STUB_LOG"
+    grep -q "^umount $dir\$" "$STUB_LOG"
+    refute_line_match '\\,rw|force|remove_hiberfile' "$STUB_LOG"
+    [ -z "$(ls -A "$ROOT/run")" ]
+    [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "$output$stderr" != */dev/sd* ]]
+}
+
+@test "p1-identity fails on another stick or none, and the other partition-1 items skip" {
+    local name
+    stick_from_boot
+    write_config 2.02 5ca1ab1e-0000-4000-8000-000000000d01
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item p1-identity fail "the disk that holds /boot is not the one disk_ptuuid names"
+    for name in grub-version tripwire deployed kali-cfg; do
+        expect_item "$name" skip "partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
+    done
+    refute_line_match '^mount -t ' "$STUB_LOG"
+    [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "$output$stderr" != */dev/sd* ]]
+    export LSBLK_FAIL=1
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item p1-identity fail "partition 1 cannot be found from /boot: lsblk cannot list"
+    expect_item kali-cfg skip "partition 1 cannot be found from /boot: lsblk cannot list"
+    export LSBLK_FAIL="" MOUNT_FAIL=1
+    write_config
+    run_check
+    expect_item p1-identity ok "the disk that holds /boot and its NTFS partition 1"
+    expect_item tripwire skip "partition 1 cannot be read: partition 1 does not mount read-only"
+    [ -z "$(ls -A "$ROOT/run")" ]
+}
+
+@test "p1-identity fails when the one key that is set names another stick, which stays unread" {
+    local name conf
+    stick_from_boot
+    printf -v conf 'grub_floor = 2.02\nboot_fs_uuid = %s\nboot_luks_uuid = %s\n' \
+        5ca1ab1e-0000-4000-8000-000000000b01 5ca1ab1e-0000-4000-8000-000000000c01
+    printf '%sdisk_ptuuid = %s\n' "$conf" 5ca1ab1e-0000-4000-8000-000000000d01 \
+        > "$ROOT/etc/kernel-updater.conf"
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item p1-identity fail "the disk that holds /boot is not the one disk_ptuuid names"
+    for name in grub-version tripwire deployed kali-cfg; do
+        expect_item "$name" skip "partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
+    done
+    refute_line_match '^mount -t ' "$STUB_LOG"
+    [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "$output$stderr" != */dev/sd* ]]
+    # The one key that is set matches: the item skips, and the others read partition 1.
+    printf '%sdisk_ptuuid = 5ca1ab1e\n' "$conf" > "$ROOT/etc/kernel-updater.conf"
+    run_check
+    expect_item p1-identity skip "disk_ptuuid and p1_fs_uuid are not both set"
+    expect_item kali-cfg skip "multibootusb/grub/kali.cfg does not exist yet"
+    grep -q '^mount -t ntfs3 ' "$STUB_LOG"
+}
+
+@test "grub-version fails below grub_floor, warns when unknown, and names a higher floor" {
+    normal_mod 2.02
+    record_baseline
+    write_config 2.06
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item grub-version fail "the stick's GRUB 2.02 is older than grub_floor 2.06, so lint"
+    expect_item grub-version fail "set grub_floor = 2.02 or update the stick's GRUB"
+    write_config
+    run_check
+    [ "$status" -eq 0 ]
+    expect_item grub-version ok "the stick's GRUB is 2.02 and grub_floor is 2.02"
+    normal_mod 2.12~rc1
+    run_check
+    expect_item grub-version ok "the stick's GRUB is 2.12~rc1 and grub_floor is 2.02;"
+    expect_item grub-version ok "grub_floor = 2.12 would let lint and check accept what GRUB"
+    # A version string must stand alone, and only one may.
+    normal_mod 2.06-13+deb12u1 "GRUB 2.14" 2.1 2.14x
+    run_check
+    expect_item grub-version ok "the stick's GRUB is 2.06-13+deb12u1 and grub_floor is 2.02;"
+    normal_mod 2.06 2.12
+    run_check
+    expect_item grub-version warn "the stick's GRUB version is unknown: multibootusb/grub"
+    rm "$GRUB/i386-pc/normal.mod"
+    run_check
+    expect_item grub-version warn "normal.mod is missing or names no single version"
+}
+
+@test "tripwire warns without a baseline, and fails on changed, new and missing entries" {
+    rm "$ROOT/var/lib/kernel-updater/baseline"
+    run_check
+    [ "$status" -eq 0 ]
+    expect_item tripwire warn "no baseline is stored: run 'kernel-updater baseline' to record"
+    record_baseline
+    printf 'changed\r\n' >> "$GRUB/grub.cfg"
+    printf 'menuentry "Windows" {\n}\n' > "$GRUB/win.cfg"
+    rm "$GRUB/i386-pc/moddep.lst"
+    poke_byte "$KU_P1_DISK" 7
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item tripwire fail "changed: mbr:boot-code, multibootusb/grub/grub.cfg; new:"
+    expect_item tripwire fail "new: multibootusb/grub/win.cfg; missing:"
+    expect_item tripwire fail "missing: multibootusb/grub/i386-pc/moddep.lst since the"
+    expect_item tripwire fail "run 'kernel-updater baseline' to record them"
+    printf 'not a baseline\n' > "$ROOT/var/lib/kernel-updater/baseline"
+    run_check
+    expect_item tripwire fail "the stored baseline is damaged"
+}
+
+@test "deployed skips without an export and fails when a file differs or is missing" {
+    rm "$OUT/SHA256SUMS"
+    run_check
+    [ "$status" -eq 0 ]
+    expect_item deployed skip "output_dir holds no export (no SHA256SUMS)"
+    printf '%s  kali.cfg\n%s  grub.cfg\n' "$(sha256sum < "$GRUB/kali.cfg" | cut -c 1-64)" \
+        "$(sha256sum < "$GRUB/grub.cfg" | cut -c 1-64)" > "$OUT/SHA256SUMS"
+    printf 'changed\r\n' >> "$GRUB/grub.cfg"
+    rm "$GRUB/kali.cfg"
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item deployed fail "on partition 1, kali.cfg is missing, grub.cfg differs compared"
+    # The stick may have changed after a copy, so the advice is not to copy the export blindly.
+    expect_item deployed fail \
+        "output_dir: if you have not copied the export yet, copy it as its DEPLOY.txt says; if"
+    expect_item deployed fail "do not copy it again, which would undo that change"
+    printf 'not a sum\n' > "$OUT/SHA256SUMS"
+    run_check
+    expect_item deployed fail "output_dir's SHA256SUMS is damaged"
+}
+
+@test "kali-cfg skips without kali.cfg, fails on lint errors and warns on lint warnings" {
+    # Each change of kali.cfg trips the tripwire too, so only the item is looked at.
+    write_kali_cfg "insmod nosuchmod"
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item kali-cfg fail \
+        "multibootusb/grub/kali.cfg has 1 error(s) and 0 warning(s) (unknown-module) with the"
+    write_kali_cfg "linux /vmlinuz noswap"
+    run_check
+    expect_item kali-cfg warn "multibootusb/grub/kali.cfg has 1 warning(s) (live-boot-param)"
+    # Without the stick's lists, GRUB 2.02's stand in.
+    write_kali_cfg
+    rm "$GRUB/i386-pc/command.lst"
+    run_check
+    expect_item kali-cfg ok \
+        "passes lint with GRUB 2.02's lists, since the stick's cannot be read"
+    rm "$GRUB/kali.cfg"
+    run_check
+    expect_item kali-cfg skip "multibootusb/grub/kali.cfg does not exist yet"
 }
