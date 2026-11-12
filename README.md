@@ -474,7 +474,8 @@ bats tests/
   results that fail its check, links kept on another kernel that boots and a kernel install
   while it asks; menu and finalize written and exported, their refusals, the stick's own GRUB
   lists, the parameters a plan hides, the initrds `live` needs, `kali.cfg` written anew, the
-  export a write makes stale and the baseline finalize leaves to `baseline`; byte-exact
+  export a write makes stale, the baseline finalize leaves to `baseline`, and the baseline
+  entries every write keeps for files changed outside the tool; byte-exact
   rollbacks, written and exported, and their refusals: a backup that does not match its
   `MANIFEST`, a menu whose kernels are gone, and a stick that still sources `kali.cfg`, and the
   changes to `grub.cfg` a rollback drops; backups named in the order of the runs, removed while

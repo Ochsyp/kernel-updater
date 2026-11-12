@@ -9,10 +9,11 @@
 # fails its check, links kept on another kernel that boots, and a kernel install while it runs;
 # menu and finalize on a partition-1 tree that KU_P1_DIR names, written and exported, with
 # their refusals, the parameters a plan hides, the initrds live needs, kali.cfg written anew,
-# the export a write makes stale and the baseline; --rollback of each stage, byte for byte,
-# written and exported, with its refusals and the changes to grub.cfg it drops; backups named
-# in the order of the runs, removed while unfinished and passed over without a MANIFEST; and
-# root, the lock, declining and usage errors. No value is printed.
+# the export a write makes stale and the baseline, whose entries a write keeps for files changed
+# outside the tool; --rollback of each stage, byte for byte, written and exported, with its
+# refusals and the changes to grub.cfg it drops; backups named in the order of the runs,
+# removed while unfinished and passed over without a MANIFEST; and root, the lock, declining
+# and usage errors. No value is printed.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -1058,6 +1059,41 @@ EOF
     # grub.cfg keeps its old entry; kali.cfg, new and without one, gets its own.
     grep -q -x -F "$stored" "$base"
     grep -q -x "$(sha256sum < "$GRUB/kali.cfg" | cut -c 1-64)  multibootusb/grub/kali.cfg" "$base"
+    private_output
+}
+
+@test "A second menu run and the rollbacks keep the entries of files changed outside the tool" {
+    local base="$ROOT/var/lib/kernel-updater/baseline" kali grub
+    system_done
+    legacy_kernel
+    run_ku baseline --yes
+    [ "$status" -eq 0 ]
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 0 ]
+    kali=$(grep ' multibootusb/grub/kali\.cfg$' "$base")
+    grub=$(grep ' multibootusb/grub/grub\.cfg$' "$base")
+    # kali.cfg changes from Windows, then is written anew for other variants: its entry stays.
+    printf '# changed\n' >> "$GRUB/kali.cfg"
+    detected 'menu_variants = default'
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"plan: multibootusb/grub/kali.cfg differs from the tripwire's baseline"* ]]
+    [[ "$stderr" == *"warning: multibootusb/grub/kali.cfg differed from the tripwire's"* ]]
+    grep -q -x -F "$kali" "$base"
+    [ "$(sha256sum < "$GRUB/kali.cfg" | cut -c 1-64)" != "${kali:0:64}" ]
+    # Its rollback writes over a kali.cfg the baseline never took, so the entry stays too.
+    run_ku migrate --rollback --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"plan: multibootusb/grub/kali.cfg differs from the tripwire's baseline"* ]]
+    grep -q -x -F "$kali" "$base"
+    # grub.cfg changes from Windows, and the rollback of the menu run writes over it.
+    printf 'menuentry "Other" {\r\n\ttrue\r\n}\r\n' >> "$GRUB/grub.cfg"
+    run_ku migrate --rollback --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"plan: multibootusb/grub/grub.cfg differs from the tripwire's baseline"* ]]
+    [[ "$stderr" == *"warning: multibootusb/grub/grub.cfg differed from the tripwire's"* ]]
+    cmp "$BATS_TEST_TMPDIR/grub.before" "$GRUB/grub.cfg"
+    grep -q -x -F "$grub" "$base"
     private_output
 }
 
