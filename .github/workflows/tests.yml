@@ -109,9 +109,10 @@ jobs:
           # through GITHUB_PATH.
           npm install --no-save --ignore-scripts --prefix "$RUNNER_TEMP/bats" "bats@${BATS_VERSION}"
           echo "$RUNNER_TEMP/bats/node_modules/.bin" >> "$GITHUB_PATH"
-          # ntfs-3g provides mkntfs, ntfslabel and mount.ntfs-3g, and fdisk provides sfdisk.
+          # ntfs-3g provides mkntfs, ntfslabel and mount.ntfs-3g, fdisk provides sfdisk, and
+          # dmsetup the device-mapper device the migrate test mounts as /boot.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends ntfs-3g fdisk
+          sudo apt-get install -y -qq --no-install-recommends ntfs-3g fdisk dmsetup
           # A kernel flavour that keeps ntfs3 among its extra modules gets those first.
           if ! sudo modprobe ntfs3; then
             sudo apt-get install -y -qq --no-install-recommends "linux-modules-extra-$(uname -r)"

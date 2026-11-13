@@ -89,6 +89,8 @@ load_ku_libs() {
     . "$KU_LIBDIR/deploy.sh"
     # shellcheck source=lib/kernel-updater/baseline.sh
     . "$KU_LIBDIR/baseline.sh"
+    # shellcheck source=lib/kernel-updater/migrate.sh
+    . "$KU_LIBDIR/migrate.sh"
 }
 
 # Run the shell CODE as a command of bin/kernel-updater runs: in a bash with its strict mode,
@@ -102,7 +104,7 @@ run_ku_lib() {
             set -Eeuo pipefail
             shopt -s inherit_errexit
             KU_LIBDIR=$0/lib/kernel-updater KU_SHAREDIR=$0/share/kernel-updater
-            for lib in common config lint probe check hook disk deploy baseline; do
+            for lib in common config lint probe check hook disk deploy baseline migrate; do
                 . "$KU_LIBDIR/$lib.sh"
             done
             ku_install_traps

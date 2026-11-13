@@ -66,9 +66,10 @@ to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk`
 (util-linux), `mount` and `umount` (Debian package `mount`), `dpkg-query`, `linux-version`
 (linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which a Kali install
 has. `check` and `baseline` mount the stick's NTFS partition read-only with the kernel's `ntfs3`
-driver, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it, which phase 6 adds, needs
+driver, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it, which `migrate` does, needs
 `ntfs3` and `ntfs-3g.probe`, from the same package, and `systemd-detect-virt` tells the
-writer whether it runs in a VM.
+writer whether it runs in a VM. `migrate` also runs `linux-update-symlinks` (linux-base),
+`debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs.
 
 ```text
 kernel-updater [OPTIONS] COMMAND [ARGS]
@@ -78,6 +79,7 @@ kernel-updater [OPTIONS] COMMAND [ARGS]
 |---|---|
 | `check` | Reports, as root and without changing anything, whether the system keeps the Kali entries bootable: `/boot`, its links and LUKS container, the kernel packages and their initrds, fstab, crypttab and grub-pc, then the stick's partition 1. See [check](#check) |
 | `baseline` | Records, as root, the SHA-256 of the stick's boot code, which check's tripwire compares with; `--show` compares without recording. See [baseline](#baseline) |
+| `migrate` | Moves, once and as root, the Kali entries onto the links linux-base keeps in `/boot`, in stages that each back up what they change; `--rollback` undoes them. See [migrate](#migrate) and [docs/migration.md](docs/migration.md) |
 | `lint FILE...` | Checks GRUB configs for errors GRUB reports only at boot: syntax errors, unknown commands and modules, malformed or misused LUKS and filesystem UUIDs, kernel parameters that do nothing, drives named as `(hdN,...)`, and encrypted entries between MultiBootUSB's `#start` and `#end` markers. Findings name the kind of identifier, never its value |
 | `hook NAME ARGS...` | Runs a hook for the files `install.sh` puts in `/etc/kernel` and `/etc/apt`, not by hand. See [Hooks](#hooks) |
 | `help`, `version` | Print the usage or the version |
@@ -97,14 +99,14 @@ messages to stderr.
 | 0 | Success |
 | 1 | Unexpected error |
 | 2 | Findings: `lint` found an error or a `check` item failed, or either warned with `--strict`; the postinst hook found a kernel that may not boot |
-| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), or the writer found a file on partition 1 changed since it was read, reached through a symlink, or on a path other users can change |
+| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 changed since it was read, reached through a symlink, or on a path other users can change, or a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST` |
 | 4 | A write failed. The message says what that left: nothing changed, the previous state put back, a backup to copy back or a file to remove by hand, the files written before it, or an `output_dir` that holds no complete export, so that the export must run again |
 | 10 | Declined, or no terminal to confirm on without `--yes` |
 | 64 | Usage error |
-| 66 | An input file cannot be read, or the stick's partition 1 cannot be found or read |
+| 66 | An input file cannot be read, `/boot` is not mounted for `migrate`, the stick's partition 1 cannot be found or read, or `migrate --rollback` finds no backup |
 | 75 | Busy: another run holds the lock |
 | 77 | Not run as root |
-| 78 | Bad configuration, or a stick other than the one `disk_ptuuid` and `p1_fs_uuid` name |
+| 78 | Bad configuration, a stick other than the one `disk_ptuuid` and `p1_fs_uuid` name, or for `migrate` a `/boot` or LUKS container other than the configuration names |
 | 128+N | Interrupted by signal N |
 
 ### Installing
@@ -160,12 +162,12 @@ as the `/boot` items while `/boot` is not mounted. `boot-links`, `stale-root-lin
 `reboot-pending` apply only while `/etc/kernel-img.conf` keeps the links in `/boot`.
 `boot-luks` and `boot-ext` judge `/boot` by the GRUB that `grub_floor` names, 2.02 by default.
 
-The last five items look at the stick's partition 1 (see [Partition 1](#partition-1)). `check`
+The last six items look at the stick's partition 1 (see [Partition 1](#partition-1)). `check`
 reads it through `p1_path` while that serves, through a mount that is there, or else through a
 read-only mount of its own on a private directory in `/run`, which it removes before it exits,
-also when interrupted. The four after `p1-identity` skip, saying why, when partition 1 cannot
+also when interrupted. The five after `p1-identity` skip, saying why, when partition 1 cannot
 be found from `/boot`, is another than the configuration names, or cannot be read; another
-partition 1 is never read. `--no-partition` skips all five and leaves partition 1 alone.
+partition 1 is never read. `--no-partition` skips all six and leaves partition 1 alone.
 
 | Item | Checks |
 |---|---|
@@ -186,7 +188,8 @@ partition 1 is never read. `--no-partition` skips all five and leaves partition 
 | `grub-version` | The stick's GRUB, whose version `multibootusb/grub/i386-pc/normal.mod` holds, is at least as new as `grub_floor`, or lint and check would trust features it lacks; fails when it is older, warns when its version is unknown, and names the higher floor a newer GRUB allows |
 | `tripwire` | The stick's boot code matches the baseline `kernel-updater baseline` recorded: the files `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector; fails naming what changed, is new or is missing, a file that is or passes a symlink counting as missing, and warns while no baseline is stored |
 | `deployed` | The files exported to `output_dir` match those on partition 1, as its `SHA256SUMS` lists them; fails naming each one that differs or is missing, and skips while nothing was exported. Copy the export only when you have not yet: copied again after the stick changed, it would undo that change |
-| `kali-cfg` | `multibootusb/grub/kali.cfg`, which phase 6 writes, passes `lint` with the stick's own command and module lists; fails on errors and when it or a directory on its way is a symlink, warns on warnings, and skips while the file does not exist |
+| `kali-cfg` | `multibootusb/grub/kali.cfg`, which the menu stage of `migrate` writes, passes `lint` with the stick's own command and module lists; fails on errors and when it or a directory on its way is a symlink, warns on warnings, and skips while the file does not exist |
+| `kali-menu` | `grub.cfg` holds the block `migrate` writes, which sources `kali.cfg`, and `kali.cfg` exists; skips while neither is there, before the migration, warns while the legacy Kali entries remain (until `migrate --stage finalize`), and fails when only one of the block and `kali.cfg` is there, as after a rollback of the menu stage until `kali.cfg` is deleted or the stage runs again, or when `grub.cfg` or a directory on its way is a symlink |
 
 Results go to stdout as aligned `STATUS ITEM DETAIL` lines, or with `--porcelain` as
 `ITEM<TAB>STATUS<TAB>DETAIL`, and a summary goes to stderr. Details name kinds and counts,
@@ -224,10 +227,63 @@ and the comparison with the stored baseline, or `baseline` with `none`, `damaged
 `not compared` when there is nothing to compare. A partition 1 that mismatches is not read at
 all. `--porcelain` prints the lines as `KEY<TAB>VALUE`.
 
+### migrate
+
+```text
+kernel-updater migrate [--stage STAGE] [--deploy MODE] [--output-dir DIR] [-n] [-y]
+kernel-updater migrate --rollback [STAMP] [-n] [-y]
+```
+
+`migrate` makes the one-time switch the redesign is about: afterwards a kernel install or
+removal changes nothing on partition 1, since the Kali entries boot `/vmlinuz` and
+`/initrd.img`, which linux-base points at the newest kernel, and `/vmlinuz.old` and
+`/initrd.img.old`, at the previous one. [docs/migration.md](docs/migration.md) walks through
+it, with the tests to make between the stages. It runs as root (77) under the tool's lock
+(75), a dry run too. Each stage prints its plan on stderr and asks once (10 when declined;
+`--yes` answers), changes nothing with `-n`, and says so and exits 0 when its result is in
+place already; a stage whose predecessor is not done exits 3, naming the stage to run first.
+Messages name kinds and counts, never an identifier; the root device shows as
+`root=<root_device>`, and a kernel parameter that may name a device, a UUID, a label or a key
+file as `NAME=<value>`.
+
+| Stage | Does |
+|---|---|
+| `detect` | Appends to `/etc/kernel-updater.conf`, under a comment line, what it lacks of `boot_fs_uuid`, `boot_luks_uuid`, `disk_ptuuid`, `p1_fs_uuid` and `root_device`, read from the mount of `/boot`, its LUKS container, the stick found from `/boot` and the running kernel's command line, and `grub_floor` from the stick's GRUB when the file sets none. A key the file sets to another value exits 78, naming the key. The file is written through a temporary file renamed over it and keeps every other line. Setting `boot_fs_uuid` arms the hooks |
+| `system` | Needs the identity in place (78 otherwise) and refuses (3) while check's `boot-luks`, `boot-ext` or `kernels` item fails, no installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check), only one would while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links, or one of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`, sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line, has `linux-update-symlinks` point the links in `/boot` at the newest kernel and the `.old` ones at the previous one (the running kernel when it is an older one), moves the old links out of `/` into the backup, asks on its own whether to empty grub-pc's install devices, and exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. When the kernels or the links change while its question waits, as when apt installs a kernel meanwhile, it refuses (3) before changing anything, since its plan no longer holds |
+| `menu` | Needs `system` done, `grub-script-check` and a partition 1 it may reach (66). It finds the one top-level submenu of `grub.cfg` whose quoted title holds Kali (3 for none, several, one between MultiBootUSB's `#start` and `#end` markers, or one that shares a line with other commands), takes each variant's kernel parameters from its entries (dropping `root=`, `cryptdevice=`, `BOOT_IMAGE=` and `initrd=`, turning `noswap` into `systemd.swap=0` and overlayroot's `resurce=` into `recurse=`), renders `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`, and replaces the submenu in `grub.cfg` with a block that sources `kali.cfg`, the submenu following as "... (legacy entries)". Every byte outside the submenu must come through (3 otherwise), both files must pass `grub-script-check` and `kali.cfg` `lint` with the stick's own command and module lists, or GRUB 2.02's when those cannot be read; then it backs up both, writes `kali.cfg` before `grub.cfg` with the safe writer and updates their baseline entries, or exports both. A file that differed from a stored baseline before the write keeps its old entry, so that check's tripwire keeps reporting a change made outside the tool, as from Windows, until `kernel-updater baseline` records it; the plan and a warning name it. Run again while the legacy entries remain, it leaves `grub.cfg` as it is and writes `kali.cfg` alone anew from them when it is missing or differs, as after `menu_variants` changed, with a backup of its own |
+| `finalize` | Needs `menu` done. Removes the legacy submenu from `grub.cfg` and nothing else, after a question that asks for the boot tests first, and writes it or exports it. After a write it sets `grub.cfg`'s entry in the stored baseline, unless `grub.cfg` differed from it before, and names, in a warning, the files that still differ from it, which `kernel-updater baseline` then shows and records once checked; it records the whole baseline only when none is stored. A rollback that writes `grub.cfg` or `kali.cfg` treats their entries as `menu` does |
+| `all` | The default: `detect`, `system` and `menu` in turn. A dry run stops after the first stage that would change something, as the later plans build on it. `finalize` never runs with them |
+
+`--deploy` and `--output-dir` stand in for `deploy` and `output_dir` for one run; an export
+that `--output-dir` takes elsewhere than the configured `output_dir` gets a warning, since
+check's `deployed` item and later runs read only that one. A write of `menu`, `finalize` or a
+rollback to partition 1 removes an export in `output_dir` that lists other contents for the
+files it wrote, since that export, copied afterwards, would undo the write. Each run of
+`system`, `menu` and `finalize` keeps what it changes in `/var/backups/kernel-updater/STAMP`
+(mode 0700), with a `MANIFEST` of SHA-256 sums, and syncs it to disk before it changes
+anything. `STAMP` is the UTC time of the run, or one second after the newest backup there
+when the clock reads no later, as for two runs in one second or a native boot that takes
+Windows' local time for UTC, so that the names keep the order the runs happened in. A backup
+that cannot be written whole is removed again, or renamed to `STAMP.failed`, and so is one a
+kill or crash left without a `MANIFEST` once `--rollback` comes across it.
+`--rollback [STAMP]` undoes the newest run not rolled back yet, which `STAMP` must name when
+given, since stages undo in the reverse order they ran: it refuses (3) a backup that does not
+match its `MANIFEST` or holds anything else, puts back `/etc/kernel-img.conf` and the links
+moved out of `/` for `system`, `grub.cfg` for `menu` and `finalize`, and `kali.cfg` for a run
+of `menu` that wrote it alone, then renames the directory to `STAMP.rolled-back`. The links in
+`/boot`, grub-pc's answer as `system` left it, and `kali.cfg` after a `menu` run stay. When
+`grub.cfg` changed after the run wrote it, as when MultiBootUSB added an ISO, the plan and the
+question say that the rollback drops those changes. In export mode a rollback exports the file
+even when the stick holds it already, so that `output_dir` no longer holds the stage's own
+export. The rollback of `menu` refuses (3) once `/boot` holds none of the kernels the old Kali
+entries boot, and that of a `system` run whose `kernel-img.conf` put back would stop linux-base
+from keeping the links in `/boot` refuses while partition 1's `grub.cfg` still sources
+`kali.cfg`, as before Windows copied the `grub.cfg` a rollback of `menu` exported.
+
 ### Partition 1
 
 Phase 5 finds and reaches the stick's partition 1, the NTFS partition labelled BOOT that holds
-MultiBootUSB, so that phase 6 can write its menu there safely. Nothing in phase 5 writes it.
+MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` writes it.
 
 - **Finding it.** The tool never trusts a `/dev/sdX` or `/dev/disk/by-id` name, which change
   with the port and in a VM. It starts from the filesystem mounted at `/boot`, walks up with
@@ -295,7 +351,7 @@ MultiBootUSB, so that phase 6 can write its menu there safely. Nothing in phase 
   file before it writes the first, so that a file that changed, a symlink or a path other
   users can change refuses before anything is written; a backup name taken within the same
   second shows only when its file's turn comes, and a later failure names the files it wrote.
-  Phase 6 reads what it builds on with `ku_deploy_read`, which follows no symlink either,
+  `migrate` reads what it builds on with `ku_deploy_read`, which follows no symlink either,
   since one on partition 1 could lead root to a file such as the LUKS key, and records in the
   tripwire's baseline just the files it wrote, with `ku_baseline_update`.
 - **The export** writes the files to `output_dir` (mode 0700, owned by root; refused with 78
@@ -355,14 +411,19 @@ file must be owned by root and not writable by group or others. `examples/kernel
 | `verify_action` | What the postinst hook does with a new kernel that may not boot: `fail` (the default) stops its configure, `warn` only warns |
 | `disk_ptuuid` | The stick's disk, as the PTUUID `lsblk -o NAME,LABEL,PTUUID,UUID` prints for it: 8 hex digits, the disk signature of an MBR disk, or a UUID for a GPT disk; kept lower case. With `p1_fs_uuid` it tells the stick apart: `check` fails and `baseline` refuses on another disk |
 | `p1_fs_uuid` | The serial of the stick's NTFS partition 1, labelled BOOT, as the same command prints its UUID: 16 hex digits, kept upper case |
-| `deploy` | How the files phase 6 writes reach partition 1: `auto` (the default) writes through a mount of partition 1 natively and exports in a VM; `direct` writes through a mount of partition 1 too, and in a VM exports all the same, since the guest never writes partition 1; `export` leaves them in `output_dir` for Windows to copy; `path` writes through `p1_path`, in a VM too, where the host then writes. See [Partition 1](#partition-1) |
+| `deploy` | How the files `migrate` writes reach partition 1: `auto` (the default) writes through a mount of partition 1 natively and exports in a VM; `direct` writes through a mount of partition 1 too, and in a VM exports all the same, since the guest never writes partition 1; `export` leaves them in `output_dir` for Windows to copy; `path` writes through `p1_path`, in a VM too, where the host then writes. See [Partition 1](#partition-1) |
 | `p1_path` | An absolute path where partition 1's root is mounted already, such as a VirtualBox shared folder. It serves only while it is a mount point that holds `multibootusb/grub/grub.cfg`, the same as partition 1's when that can be read; then `check` and `baseline` read there, and otherwise partition 1 itself. `deploy = path` writes there, and a plan reads there what it builds on, only while no user but root can change its files, as with a share mounted with `uid=0,gid=0,dmode=0700,fmode=0600`, and while the share is mounted nowhere else, as VirtualBox's automount of it would be; otherwise a plan reads partition 1 itself |
 | `output_dir` | Where an export goes, an absolute path: `/root/kernel-updater/out` by default. It must be a directory of root's closed to group and others (mode 0700), and holds the latest export only |
 | `backups_keep` | How many dated backups of each file the safe writer keeps beside it: 1 to 99, 5 by default |
+| `root_device` | What the entries of `kali.cfg` pass the kernel as `root=`: an absolute device path, such as `/dev/mapper/kali--vg-root`, or `UUID=` and a UUID. `migrate --stage detect` sets it from the running kernel's command line |
+| `menu_variants` | The entries `kali.cfg` gets, comma-separated, in order: `default`, which comes first and must be there, then any of `failsafe`, `live` and `forensic`; `default,failsafe` by default. `live` and `forensic` boot through overlayroot, so the menu stage refuses them while the initrd `/boot/initrd.img` points at lacks it, or the one `/boot/initrd.img.old` points at when `previous_variants` holds them |
+| `previous_variants` | The variants that also get an entry for the previous kernel, which boots `/vmlinuz.old` and `/initrd.img.old`: a comma-separated part of `menu_variants`; `default,failsafe` by default, of which a variant `menu_variants` lacks is left out unless this key is set |
 
 The UUIDs of `/boot` are optional, are written in the 8-4-4-4-12 hex form in either case, and
-are kept lower case. Paths lose their trailing slashes. Every key is optional; `disk_ptuuid`
-and `p1_fs_uuid` must both be set before `baseline` records anything.
+are kept lower case. Paths lose their trailing slashes, and lists of variants the blanks
+around their commas. Every key is optional; `disk_ptuuid` and `p1_fs_uuid` must both be set
+before `baseline` records anything, and the five keys `migrate --stage detect` fills before the
+later stages run.
 
 ## Examples
 
@@ -397,6 +458,28 @@ bats tests/
   plan's reads, the safe writer's refusals, backups (a clock that went back included),
   failures and restores, several files checked before the first is written, the reader, the
   export, and the baseline with a disk image.
+- `menu.bats` runs migrate's reading and writing of GRUB menus: `menu.awk`'s scan of the Kali
+  submenu, with braces in quotes and comments, options before titles, nested entries, CRLF and
+  LF, none, two and a marked one; the kernel parameters taken from the legacy entries and each
+  rewrite, and those a plan hides; `kali.cfg` rendered for
+  `tests/fixtures/grub/migrate-before.cfg`, which must equal `kali.expected.cfg`; the new
+  `grub.cfg`, which must equal `migrate-after.cfg`, CRLF kept, also with far more after the
+  submenu than a pipe holds; the byte guard; and finalize's removal of the legacy entries. The
+  fixtures are stored LF, and the tests make the CRLF copies MultiBootUSB writes.
+  `migrate.bats` runs every stage and `--rollback` on a `KU_ROOT` tree and
+  a partition-1 tree with stub tools, its `linux-update-symlinks` choosing the links as
+  linux-base 4.17 does: detect's appends and refusals, the system stage's preconditions, a lone
+  bootable kernel beside another image, the order of its `linux-update-symlinks` calls, its edit
+  of `kernel-img.conf` and a write of it that fails, the links left in `/`, grub-pc's question,
+  results that fail its check, links kept on another kernel that boots and a kernel install
+  while it asks; menu and finalize written and exported, their refusals, the stick's own GRUB
+  lists, the parameters a plan hides, the initrds `live` needs, `kali.cfg` written anew, the
+  export a write makes stale, the baseline finalize leaves to `baseline`, and the baseline
+  entries every write keeps for files changed outside the tool; byte-exact
+  rollbacks, written and exported, and their refusals: a backup that does not match its
+  `MANIFEST`, a menu whose kernels are gone, and a stick that still sources `kali.cfg`, and the
+  changes to `grub.cfg` a rollback drops; backups named in the order of the runs, removed while
+  unfinished and passed over without a `MANIFEST`; and the exit codes.
 - `KU_AWK`, the awk the lint tests run `lint.awk` under, is also taken only with `KU_TEST=1`,
   since `check` lints `kali.cfg` as root.
 - ShellCheck must report nothing for any shell file. That test is skipped when `shellcheck`
@@ -413,7 +496,10 @@ bats tests/
   for `uname` and `lsinitramfs`. `hooks.bats` installs kernel-updater with `install.sh` and
   drives its hooks through real `dpkg`, `apt-get` and `linux-run-hooks` runs, with dummy
   kernels whose maintainer scripts run the hooks as real ones do and an ext4 image with a
-  synthetic UUID loop-mounted on `/boot`. They run only with `KU_CONTAINER=1` inside a
+  synthetic UUID loop-mounted on `/boot`. `migrate.bats` runs migrate's system stage with the
+  real `linux-update-symlinks`, then has kernel installs and removals move the links without
+  the tool, rolls the stage back, and has the real `grub-script-check` take the files the menu
+  stage writes. They run only with `KU_CONTAINER=1` inside a
   container, fail with it set anywhere else, and skip without it; `bats tests/` leaves the
   subdirectory out.
   The `kali` job of the tests workflow builds the Kali rolling image of `ci/kali/Dockerfile`,
@@ -433,11 +519,15 @@ bats tests/
   CRLF `grub.cfg` with the safe writer, see a failed rename put it back as it was and a failed
   read-back restore it, see a read-only mount send `direct` to export and a mount a
   user owns serve no writer, and
-  record a baseline that catches one changed byte of a file and of the MBR boot code. They
-  run only with `KU_NTFS=1`, fail with it when not run as root, and skip without
-  it. The `ntfs` job of the tests workflow installs `ntfs-3g`, loads `ntfs3` and runs them with
-  `sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs`, failing when any is skipped. Run
-  them only on a machine you can spare, as root.
+  record a baseline that catches one changed byte of a file and of the MBR boot code. Their
+  `migrate.bats` runs the menu stage end to end, `/boot` on a device-mapper device over
+  partition 2 as the stick's unlocked `/boot` is, lints `kali.cfg` with the stick's own GRUB
+  lists, and writes `kali.cfg` and the new `grub.cfg` to NTFS, CRLF kept, then has
+  `--rollback` put `grub.cfg` back byte for byte. They
+  run only with `KU_NTFS=1`, fail with it when not run as root, and skip without it. The
+  `ntfs` job of the tests workflow installs `ntfs-3g` and `dmsetup`, loads `ntfs3` and runs
+  them with `sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs`, failing when any is
+  skipped. Run them only on a machine you can spare, as root.
 - `.githooks/privacy-scan` runs in the tests and before every commit on a clone with the hooks
   turned on (see CONTRIBUTING.md). It refuses CRLF line endings; disk and partition
   identifiers (UUIDs, volume serials, LVM UUIDs, PARTUUIDs) outside the synthetic range;

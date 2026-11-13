@@ -274,6 +274,25 @@ ku_baseline_update() {
     done <<< "$names")"
 }
 
+# Record the whole baseline of the stick under partition 1's ROOT, as 'kernel-updater baseline
+# --yes' records it, without its lock, which the caller holds, and without asking: migrate's
+# finalize stage calls it once it wrote grub.cfg while no baseline is stored. With --dry-run it
+# only says what it would record. Returns 1, recording nothing, when the boot code cannot be
+# hashed or partition 1 holds none of the files baseline.list names; exits 4 when the write
+# fails.
+ku_baseline_record() {
+    local current count
+    current=$(ku_baseline_hash "$1") || return 1
+    [[ -n $current ]] || return 1
+    count=$(grep -c '' <<< "$current")
+    if (( KU_DRY_RUN )); then
+        ku_log info "dry run: would record $count entries in $KU_BASELINE; nothing was written"
+        return 0
+    fi
+    _ku_baseline_write "$current"
+    ku_log info "recorded $count entries of the stick's boot code in $KU_BASELINE"
+}
+
 # =======================================================
 #                  HASHING AND COMPARING
 # =======================================================
@@ -485,4 +504,18 @@ ku_grub_version() {
 ku_grub_level() {
     [[ $1 =~ ^([0-9]+)\.([0-9]+) ]] || return 1
     printf '%s\n' $(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
+}
+
+# Print the highest grub_floor that GRUB VERSION reaches, 2.12 for 2.12~rc1 and 2.06 for
+# 2.06-13+deb12u1, or nothing for a GRUB older than 2.02 or no version at all. Shared by
+# check's grub-version item and migrate's detect stage.
+ku_grub_floor_for() {
+    local level candidate fit=""
+    level=$(ku_grub_level "$1") || return 0
+    for candidate in 2.02 2.06 2.12 2.14; do
+        if (( 10#${candidate/./} <= level )); then
+            fit=$candidate
+        fi
+    done
+    [[ -z $fit ]] || printf '%s\n' "$fit"
 }

@@ -88,6 +88,25 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
+@test "ku_ask returns 1 on a no, and each question reads the next answer of the terminal" {
+    KU_TTY="$BATS_TEST_TMPDIR/tty"
+    printf 'y\nn\nyes\n' > "$KU_TTY"
+    # In one shell, as a command asks: the terminal stays open between the questions.
+    ask_three() {
+        if ku_ask "One?"; then echo one; fi
+        if ! ku_ask "Two?"; then echo two-no; fi
+        if ku_ask "Three?"; then echo three; fi
+    }
+    run --separate-stderr ask_three
+    [ "$status" -eq 0 ]
+    [ "$output" = $'one\ntwo-no\nthree' ]
+    [[ "$stderr" == "One? [y/N] Two? [y/N] Three? [y/N]"* ]]
+    # ku_confirm still exits 10 on a no.
+    printf 'n\n' > "$KU_TTY"
+    run ku_confirm "Go on?"
+    [ "$status" -eq 10 ]
+}
+
 @test "ku_run only prints the command under --dry-run and runs it otherwise" {
     local target="$BATS_TEST_TMPDIR/made by ku_run"
     KU_DRY_RUN=1
