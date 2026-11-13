@@ -5,27 +5,36 @@
 # Runs kernel-updater cleanup on the container itself with the real apt-get, dpkg and
 # linux-update-symlinks, and dummy kernels whose maintainer scripts move the links as real ones
 # do: a kernel removed with its config files left is purged, and the other kernels, the links and
-# check stay as they were; a pending reboot purges nothing; and a real fcntl lock on dpkg's
-# frontend lock, as apt takes it, shows in /proc/locks on the container's overlay filesystem.
-# Stubs stand in only for what a container cannot answer: /boot's LUKS mapping, uname,
-# lsinitramfs and dumpe2fs.
+# check stay as they were; a pending reboot purges nothing; once the dummies are marked auto, the
+# old kernel apt's autoremove names is purged in the same run, the kernel vmlinuz.old points at
+# stays when apt keeps another one, and a purge that would take along a package that depends on
+# an old kernel's headers refuses; and a real fcntl lock on dpkg's frontend lock, as apt takes
+# it, shows in /proc/locks on the container's overlay filesystem. Stubs stand in only for what a
+# container cannot answer: /boot's LUKS mapping, uname, lsinitramfs and dumpe2fs.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
 load ../helpers
 load container
 
+# Build the dummy kernels, and the headers of V2 with a dummy that depends on them, as a
+# package of DKMS modules built for one kernel does.
 setup_file() {
     container_setup_file
+    in_test_container || return 0
+    build_package "linux-headers-$V2" "Version: ${V2%%+*}-1"
+    build_package ku-test-dkms "Version: 1.0-1" "Depends: linux-headers-$V2"
 }
 
-# Three dummy kernels installed with link_in_boot = yes, the newest running, so that the links
-# point at V3 and V2, and the oldest, V1, removed with its config files left; a configuration
-# that names /boot and its container; and stubs that show /boot as that unlocked container.
+# Three dummy kernels installed with link_in_boot = yes and marked manual, as dpkg -i leaves
+# them, the newest running, so that the links point at V3 and V2, and the oldest, V1, removed
+# with its config files left; a configuration that names /boot and its container; and stubs
+# that show /boot as that unlocked container.
 setup() {
     container_only
     reset_system yes
     install_kernels "$V1" "$V2" "$V3"
+    manual_marks
     dpkg -r "linux-image-$V1"
     stub_init
     stub_system_tools
@@ -41,11 +50,27 @@ esac
 EOF
 }
 
-# Stop the process a test left holding dpkg's frontend lock.
+# Stop the process a test left holding dpkg's frontend lock, and mark the dummies manual again.
 teardown() {
+    in_test_container || return 0
     if [[ -n ${LOCK_PID:-} ]]; then
         kill "$LOCK_PID" 2> /dev/null || true
         wait "$LOCK_PID" 2> /dev/null || true
+    fi
+    manual_marks
+}
+
+# Mark every dummy package that is installed manual, as dpkg -i leaves it, so that no auto mark
+# a test sets outlives the test: apt keeps an auto mark after dpkg purged the package, and an
+# apt run in a later file must find no dummy it could remove.
+manual_marks() {
+    local -a packages=()
+    # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
+    mapfile -t packages < <(dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' \
+        'linux-image-9.*' 'linux-headers-9.*' ku-test-dkms 2> /dev/null |
+        awk '$1 ~ /^.i/ { print $2 }')
+    if (( ${#packages[@]} )); then
+        apt-mark manual "${packages[@]}" > /dev/null
     fi
 }
 
@@ -88,6 +113,66 @@ dummies() {
     [[ "$stderr" == *"cleanup: nothing to do"* ]]
     [ "$(package_state "linux-image-$V1")" = rc ]
     assert_links "$V3" "$V2"
+}
+
+@test "The old kernel apt's autoremove names once marked auto is purged with the rc one" {
+    install_kernels "$V4"
+    export UNAME_R=$V4
+    assert_links "$V4" "$V3"
+    # Marked auto, the dummies are apt's to prune: it keeps the two newest, V4 and V3.
+    apt-mark auto "linux-image-$V2" "linux-image-$V3" "linux-image-$V4"
+    run_container_cleanup --yes --porcelain
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$output" == *$'rc\tpurge\tlinux-image-'"$V1"$'\t'"$V1"* ]]
+    [[ "$output" == *$'autoremove\tpurge\tlinux-image-'"$V2"$'\t'"$V2"* ]]
+    [[ "$stderr" == *"cleanup: purged 2 packages"* ]]
+    [ "$(dummies)" = "$(printf 'linux-image-%s ii\n' "$V3" "$V4")" ]
+    assert_links "$V4" "$V3"
+    run_container_check
+    expect_item kernels ok "2 installed, running $V4"
+    expect_item boot-links ok "the 4 links are relative and reach non-empty files in /boot"
+    # A second run finds nothing left to purge.
+    run_container_cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    [[ "${output,,}${stderr,,}" != *5ca1ab1e* ]]
+}
+
+@test "The kernel vmlinuz.old points at stays when apt's autoremove keeps another one" {
+    install_kernels "$V4"
+    # The links go to V4 and V2, which is older than V3, the second kernel apt keeps.
+    linux-update-symlinks install "$V2" "/boot/vmlinuz-$V2"
+    linux-update-symlinks install "$V4" "/boot/vmlinuz-$V4"
+    assert_links "$V4" "$V2"
+    export UNAME_R=$V4
+    apt-mark auto "linux-image-$V2" "linux-image-$V3" "linux-image-$V4"
+    run_container_cleanup --yes --porcelain
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$output" == *$'protect\tkeep\t'"$V2"$'\tvmlinuz.old'* ]]
+    [[ "$output" == *$'autoremove\tskip\tlinux-image-'"$V2"$'\tits kernel is kept'* ]]
+    [[ "$output" != *$'autoremove\tpurge'* ]]
+    [[ "$stderr" == *"cleanup: purged 1 package"* ]]
+    # dpkg lists the names as text: 9.0.10 (V3), 9.0.11 (V4), then 9.0.2 (V2).
+    [ "$(dummies)" = "$(printf 'linux-image-%s ii\n' "$V3" "$V4" "$V2")" ]
+    assert_links "$V4" "$V2"
+}
+
+@test "A purge that would take along a package depending on an old kernel's headers refuses" {
+    install_kernels "$V4"
+    dpkg -i "$(package_deb "linux-headers-$V2")" "$(package_deb ku-test-dkms)"
+    export UNAME_R=$V4
+    # All of V2's packages and the one that depends on its headers are garbage to apt now.
+    apt-mark auto "linux-image-$V2" "linux-headers-$V2" ku-test-dkms "linux-image-$V3" \
+        "linux-image-$V4"
+    run_container_cleanup --yes --porcelain
+    [ "$status" -eq 3 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$stderr" == *"the purge cannot run as planned: apt would also remove ku-test-dkms;"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    [ -z "$output" ]
+    [ "$(package_state "linux-image-$V1")" = rc ]
+    [ "$(package_state "linux-image-$V2")" = ii ]
+    [ "$(package_state "linux-headers-$V2")" = ii ]
+    [ "$(package_state ku-test-dkms)" = ii ]
 }
 
 @test "A real fcntl lock on dpkg's frontend lock, as apt takes it, exits 75 and names its holder" {
