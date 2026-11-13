@@ -229,6 +229,39 @@ _ku_check_boot_identity() {
     fi
 }
 
+# Exit 66 when /boot is not mounted or its LUKS container cannot be read, and 78 unless /boot
+# is the filesystem boot_fs_uuid names, in the LUKS container boot_luks_uuid names. Shared by
+# migrate and cleanup, which change a system only while its /boot is the configured one.
+ku_boot_identity() {
+    local out source uuid name value luks="" status=0
+    out=$(ku_probe_boot_mount)
+    if [[ -z $out ]]; then
+        ku_die "$KU_EX_NOINPUT" "/boot is not mounted: unlock and mount it first; nothing was" \
+            "changed"
+    fi
+    IFS=$'\t' read -r source _ uuid <<< "$out"
+    if [[ ${uuid,,} != "${KU_CONF[boot_fs_uuid]}" ]]; then
+        ku_die "$KU_EX_CONFIG" "the filesystem at /boot is not the one boot_fs_uuid names;" \
+            "nothing was changed"
+    fi
+    out=$(ku_probe_boot_luks "$source") || status=$?
+    if (( status == 1 || status == 3 )); then
+        ku_die "$KU_EX_NOINPUT" "the LUKS header of the container that holds /boot cannot be" \
+            "read, or cryptsetup is not installed; nothing was changed"
+    fi
+    if (( status == 0 )); then
+        while IFS=$'\t' read -r name value _; do
+            if [[ $name == uuid ]]; then
+                luks=$value
+            fi
+        done <<< "$out"
+    fi
+    if [[ $luks != "${KU_CONF[boot_luks_uuid]}" ]]; then
+        ku_die "$KU_EX_CONFIG" "/boot is not in the LUKS container boot_luks_uuid names;" \
+            "nothing was changed"
+    fi
+}
+
 # boot-shadowed: bind-mounts / read-only on a private directory in /run and counts the entries
 # the /boot mount hides, such as kernels installed while /boot was not mounted. The bind mount
 # goes at once, or through the exit trap should the command be cut short; fails if it stays.
