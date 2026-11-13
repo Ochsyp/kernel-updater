@@ -2,8 +2,9 @@
 # -------------------------------------------------------
 # kernel-updater common library
 #
-# Exit codes, logging, the dry-run and confirmation rails, the root check, the single-instance
-# lock, exit traps, and path and SHA-256 helpers. Defines functions and settings only.
+# Exit codes, logging and plan lines, the dry-run and confirmation rails, the root check, the
+# single-instance lock, exit traps, and path, list and SHA-256 helpers. Defines functions and
+# settings only.
 # -------------------------------------------------------
 
 # Exit codes, the same for every command and listed in the README; the global options set
@@ -65,6 +66,25 @@ ku_usage_error() {
     ku_log error "$*"
     printf "Try 'kernel-updater --help'.\n" >&2 || true
     exit "$KU_EX_USAGE"
+}
+
+# Print one line of a plan on stderr, whatever the verbosity, since a question follows it.
+ku_plan() {
+    printf 'kernel-updater: plan: %s\n' "$*" >&2 || true
+}
+
+# Print the WORDS as a list: "a", "a and b", "a, b and c".
+ku_join() {
+    local text=$1
+    shift
+    while (( $# > 1 )); do
+        text+=", $1"
+        shift
+    done
+    if (( $# )); then
+        text+=" and $1"
+    fi
+    printf '%s' "$text"
 }
 
 # =======================================================

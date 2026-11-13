@@ -261,6 +261,19 @@ with the owner's original script.
   with the real `linux-update-symlinks`, `debconf` and `grub-script-check`; and
   `tests/ntfs/migrate.bats`, which lints with the stick's own GRUB lists, writes the new menu to
   real NTFS and rolls it back. The `ntfs` job installs `dmsetup` for it.
+- `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules] [-n] [-y] [--porcelain]`
+  checks, as root, under the tool's lock and in a dry run too, that it may run, and then has
+  nothing to do yet. It refuses with 3 until `migrate --stage detect` set `boot_fs_uuid` and
+  `boot_luks_uuid`, exits 66 while `/boot` is not mounted and 78 on another `/boot` or LUKS
+  container, and refuses with 3 while `apt-get`, `apt-mark` or `dpkg-query` is missing, while
+  the links in `/boot` are not kept there or do not reach a kernel, naming
+  `migrate --stage system`, while `check`'s `kernels` item fails, and after an interrupted
+  dpkg run. It exits 75 while apt or dpkg holds its lock, which it finds in `/proc/locks` and
+  names by PID and command. Its plan lines go to stderr, and with `--porcelain` also to stdout
+  as `STEP`, `ACTION`, `OBJECT` and `DETAIL` fields. The tools it runs inherit no `DPKG_ROOT`,
+  `DPKG_ADMINDIR`, `DPKG_FORCE`, `APT_CONFIG`, `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`,
+  and run with `LC_ALL=C.UTF-8`.
+- `tests/cleanup.bats`, which runs `cleanup` on a migrated system with stub tools.
 
 ### Changed
 
@@ -312,5 +325,9 @@ with the owner's original script.
   whole baseline for `migrate`'s `finalize` while none is stored.
 - `tests/static.bats` also covers `migrate.sh` and runs `menu.awk`, and `tests/helpers.bash`
   loads `migrate.sh`.
+- `migrate` and `cleanup` share `ku_plan` and `ku_join`, now in `common.sh`, and
+  `ku_boot_identity`, now in `check.sh`; what `migrate` prints and refuses does not change.
+- `tests/static.bats` also covers `cleanup.sh`, `tests/helpers.bash` loads it, and
+  `tests/cli.bats` expects `cleanup` among the commands.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

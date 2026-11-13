@@ -254,7 +254,7 @@ _ku_mg_stage_detect() {
         fi
     done
     if (( ${#others[@]} )); then
-        ku_die "$KU_EX_CONFIG" "$(_ku_mg_join "${others[@]}") in /etc/kernel-updater.conf" \
+        ku_die "$KU_EX_CONFIG" "$(ku_join "${others[@]}") in /etc/kernel-updater.conf" \
             "differ from what this system shows: correct or remove each such line, then run the" \
             "detect stage again; nothing was changed"
     fi
@@ -281,16 +281,16 @@ _ku_mg_stage_detect() {
         return 0
     fi
     KU_MG_CHANGED=1
-    _ku_mg_plan "detect: append ${#add[@]} key(s) to /etc/kernel-updater.conf:"
+    ku_plan "detect: append ${#add[@]} key(s) to /etc/kernel-updater.conf:"
     for key in "${add[@]}"; do
-        _ku_mg_plan "  $key: ${KU_MG_ORIGIN[$key]}"
+        ku_plan "  $key: ${KU_MG_ORIGIN[$key]}"
         lines+=("$key = ${KU_MG_VALUE[$key]}")
     done
     if [[ " ${add[*]} " == *" boot_fs_uuid "* ]]; then
-        _ku_mg_plan "setting boot_fs_uuid arms the kernel-updater hooks: from then on they" \
+        ku_plan "setting boot_fs_uuid arms the kernel-updater hooks: from then on they" \
             "refuse kernel installs and removals while /boot is not that filesystem"
     fi
-    _ku_mg_plan "no value is printed here; read them in /etc/kernel-updater.conf afterwards"
+    ku_plan "no value is printed here; read them in /etc/kernel-updater.conf afterwards"
     if (( KU_DRY_RUN )); then
         ku_log info "dry run: /etc/kernel-updater.conf was not written"
         return 0
@@ -447,7 +447,7 @@ _ku_mg_stage_system() {
     local relink=1 devices="" img grub_read=1 others state old
     local -a problems=() bootable=() unbootable=() links=() targets=() files=()
     _ku_mg_need_detect
-    _ku_mg_boot_identity
+    ku_boot_identity
     state=$(_ku_mg_system_state)
     ku_check_items boot-luks boot-ext kernels
     for i in "${!KU_CHECK_STATUS[@]}"; do
@@ -534,32 +534,32 @@ _ku_mg_stage_system() {
             "only a regular file; nothing was changed"
     fi
     KU_MG_CHANGED=1
-    _ku_mg_plan "system: first a backup of /etc/kernel-img.conf and the links in / in a new" \
+    ku_plan "system: first a backup of /etc/kernel-img.conf and the links in / in a new" \
         "directory in $KU_MG_BACKUPS"
     if (( edit )); then
-        _ku_mg_plan "set do_symlinks = yes and link_in_boot = yes in /etc/kernel-img.conf, so" \
+        ku_plan "set do_symlinks = yes and link_in_boot = yes in /etc/kernel-img.conf, so" \
             "that every kernel install and removal moves the links in /boot"
     else
-        _ku_mg_plan "/etc/kernel-img.conf has linux-base keep the links in /boot already"
+        ku_plan "/etc/kernel-img.conf has linux-base keep the links in /boot already"
     fi
     if (( relink )) && [[ $previous != "$newest" ]]; then
-        _ku_mg_plan "linux-update-symlinks install $previous, then install $newest: vmlinuz and" \
+        ku_plan "linux-update-symlinks install $previous, then install $newest: vmlinuz and" \
             "initrd.img in /boot on $newest, vmlinuz.old and initrd.img.old on $previous"
     elif (( relink )); then
-        _ku_mg_plan "linux-update-symlinks install $newest: all four links in /boot on" \
+        ku_plan "linux-update-symlinks install $newest: all four links in /boot on" \
             "$newest, the one kernel that would boot"
     else
-        _ku_mg_plan "the links in /boot are on $newest and $previous already"
+        ku_plan "the links in /boot are on $newest and $previous already"
     fi
     if (( ${#links[@]} )); then
-        _ku_mg_plan "move the old links $(_ku_mg_join "${links[@]}") out of / into the backup"
+        ku_plan "move the old links $(ku_join "${links[@]}") out of / into the backup"
     fi
     if (( ${#files[@]} )); then
-        _ku_mg_plan "leave $(_ku_mg_join "${files[@]}") in /: no symlink, so check keeps" \
+        ku_plan "leave $(ku_join "${files[@]}") in /: no symlink, so check keeps" \
             "warning about it; remove it by hand"
     fi
     if [[ -n $devices ]] && (( devices > 0 )); then
-        _ku_mg_plan "grub-pc/install_devices names $devices device(s): a question of its own" \
+        ku_plan "grub-pc/install_devices names $devices device(s): a question of its own" \
             "offers to empty it"
     fi
     if (( KU_DRY_RUN )); then
@@ -744,7 +744,7 @@ _ku_mg_other_images() {
         versions+=("$count other file(s) named vmlinuz-*")
     fi
     (( ${#versions[@]} )) || return 1
-    printf 'the image(s) of %s' "$(_ku_mg_join "${versions[@]}")"
+    printf 'the image(s) of %s' "$(ku_join "${versions[@]}")"
 }
 
 # Have linux-base point the links at kernel VERSION, as a kernel's postinst does on a fresh
@@ -877,7 +877,7 @@ _ku_mg_stage_menu() {
     local tmp status=0 expk=- expg title sumk sumg n
     _ku_mg_need_detect
     _ku_mg_need_system
-    _ku_mg_boot_identity
+    ku_boot_identity
     _ku_mg_need_check_tool
     _ku_mg_variants
     if [[ " ${KU_MG_MENU[*]} " == *" live "* || " ${KU_MG_MENU[*]} " == *" forensic "* ]]; then
@@ -995,23 +995,23 @@ _ku_mg_menu_again() {
     _ku_mg_lint "$tmp/kali.cfg" "$tmp"
     KU_MG_CHANGED=1
     if [[ $KU_DK_DEPLOY == export ]]; then
-        _ku_mg_plan "menu: grub.cfg sources kali.cfg already; export kali.cfg alone to" \
+        ku_plan "menu: grub.cfg sources kali.cfg already; export kali.cfg alone to" \
             "output_dir for Windows to copy: $KU_DK_DEPLOY_WHY"
     else
-        _ku_mg_plan "menu: grub.cfg sources kali.cfg already; write kali.cfg alone to" \
+        ku_plan "menu: grub.cfg sources kali.cfg already; write kali.cfg alone to" \
             "partition 1 (deploy = $KU_DK_DEPLOY)"
     fi
     if [[ $expk == - ]]; then
-        _ku_mg_plan "kali.cfg is missing, so the stick's Kali entry only says so: it is written" \
+        ku_plan "kali.cfg is missing, so the stick's Kali entry only says so: it is written" \
             "anew from the legacy entries in grub.cfg, and a new backup directory in" \
             "$KU_MG_BACKUPS records that it was missing"
     else
-        _ku_mg_plan "kali.cfg differs from what the menu stage writes now from the legacy" \
+        ku_plan "kali.cfg differs from what the menu stage writes now from the legacy" \
             "entries in grub.cfg, as after menu_variants changed: it is replaced, and goes to a" \
             "new backup directory in $KU_MG_BACKUPS first"
     fi
     _ku_mg_entries_plan "$title"
-    _ku_mg_plan "grub.cfg stays as it is"
+    ku_plan "grub.cfg stays as it is"
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export kali.cfg "$sumk"; then
         _ku_mg_stale_plan
     fi
@@ -1093,20 +1093,20 @@ _ku_mg_export() {
 _ku_mg_menu_plan() {
     local title=$1 expk=$2 n=$3 sumk=$4 sumg=$5
     if [[ $KU_DK_DEPLOY == export ]]; then
-        _ku_mg_plan "menu: export kali.cfg and grub.cfg to output_dir for Windows to copy:" \
+        ku_plan "menu: export kali.cfg and grub.cfg to output_dir for Windows to copy:" \
             "$KU_DK_DEPLOY_WHY"
     else
-        _ku_mg_plan "menu: write kali.cfg and grub.cfg to partition 1 (deploy = $KU_DK_DEPLOY)"
+        ku_plan "menu: write kali.cfg and grub.cfg to partition 1 (deploy = $KU_DK_DEPLOY)"
     fi
     _ku_mg_entries_plan "$title"
-    _ku_mg_plan "grub.cfg: lines ${KU_MG_START[$n]} to ${KU_MG_END[$n]}, the Kali submenu, become" \
+    ku_plan "grub.cfg: lines ${KU_MG_START[$n]} to ${KU_MG_END[$n]}, the Kali submenu, become" \
         "a block that sources kali.cfg, and the submenu follows it as" \
         "$(_ku_mg_shown "$title$KU_MG_LEGACY"); every other byte stays"
     if [[ $expk == - ]]; then
-        _ku_mg_plan "files: $KU_MG_KALI, new, then $KU_MG_GRUB; both go to a new backup" \
+        ku_plan "files: $KU_MG_KALI, new, then $KU_MG_GRUB; both go to a new backup" \
             "directory in $KU_MG_BACKUPS first"
     else
-        _ku_mg_plan "files: $KU_MG_KALI, which exists and is replaced, then $KU_MG_GRUB; both" \
+        ku_plan "files: $KU_MG_KALI, which exists and is replaced, then $KU_MG_GRUB; both" \
             "go to a new backup directory in $KU_MG_BACKUPS first"
     fi
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export kali.cfg "$sumk" grub.cfg "$sumg"
@@ -1127,29 +1127,29 @@ _ku_mg_entries_plan() {
             count=$((count + 1))
         fi
     done
-    _ku_mg_plan "kali.cfg: the submenu $(_ku_mg_shown "$title") with $count entries:"
+    ku_plan "kali.cfg: the submenu $(_ku_mg_shown "$title") with $count entries:"
     for variant in "${KU_MG_MENU[@]}"; do
         for kind in "" .old; do
             if [[ $kind == .old && " ${KU_MG_PREV[*]} " != *" $variant "* ]]; then
                 continue
             fi
-            _ku_mg_plan "  \"${KU_MG_TITLES[$variant$kind]}\": $(_ku_mg_kernel "$kind")" \
+            ku_plan "  \"${KU_MG_TITLES[$variant$kind]}\": $(_ku_mg_kernel "$kind")" \
                 "root=<root_device>$(_ku_mg_shown_params "${KU_MG_PARAMS[$variant]}")"
         done
-        _ku_mg_plan "    the $variant parameters are ${KU_MG_FROM[$variant]}"
+        ku_plan "    the $variant parameters are ${KU_MG_FROM[$variant]}"
     done
     for note in "${KU_MG_NOTES[@]}"; do
-        _ku_mg_plan "  changed: $note"
+        ku_plan "  changed: $note"
     done
     for note in "${KU_MG_LEFT[@]}"; do
-        _ku_mg_plan "  not carried over: $note"
+        ku_plan "  not carried over: $note"
     done
 }
 
 # Print the plan line that says that an export in output_dir goes once the files are written,
 # since copied after the write it would undo it.
 _ku_mg_stale_plan() {
-    _ku_mg_plan "output_dir holds an export from an earlier run that lists other contents for" \
+    ku_plan "output_dir holds an export from an earlier run that lists other contents for" \
         "these files: it is removed once they are written, as copied then it would undo the write"
 }
 
@@ -1532,7 +1532,7 @@ _ku_mg_lint() {
     while IFS=$'\t' read -r ln severity rule message; do
         case $severity in
             error) errors+=("kali.cfg line $ln: $message [$rule]") ;;
-            warning) _ku_mg_plan "lint warns about kali.cfg line $ln: $message [$rule]" ;;
+            warning) ku_plan "lint warns about kali.cfg line $ln: $message [$rule]" ;;
         esac
     done <<< "$findings"
     if (( ${#errors[@]} )); then
@@ -1585,17 +1585,17 @@ _ku_mg_stage_finalize() {
     fi
     KU_MG_CHANGED=1
     if [[ $KU_DK_DEPLOY == export ]]; then
-        _ku_mg_plan "finalize: export grub.cfg to output_dir for Windows to copy:" \
+        ku_plan "finalize: export grub.cfg to output_dir for Windows to copy:" \
             "$KU_DK_DEPLOY_WHY"
     else
-        _ku_mg_plan "finalize: write grub.cfg to partition 1 (deploy = $KU_DK_DEPLOY), then" \
+        ku_plan "finalize: write grub.cfg to partition 1 (deploy = $KU_DK_DEPLOY), then" \
             "update its entry in the tripwire's baseline, or record the whole baseline of the" \
             "stick's boot code when none is stored"
     fi
-    _ku_mg_plan "grub.cfg: remove lines ${KU_MG_START[$n]} to ${KU_MG_END[$n]}, the submenu" \
+    ku_plan "grub.cfg: remove lines ${KU_MG_START[$n]} to ${KU_MG_END[$n]}, the submenu" \
         "$(_ku_mg_shown "${KU_MG_RAWTITLE[$n]:1:-1}"); every other byte stays, and so does" \
         "kali.cfg"
-    _ku_mg_plan "grub.cfg goes to a new backup directory in $KU_MG_BACKUPS first"
+    ku_plan "grub.cfg goes to a new backup directory in $KU_MG_BACKUPS first"
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export grub.cfg "$sum"; then
         _ku_mg_stale_plan
     fi
@@ -1730,7 +1730,7 @@ _ku_mg_drift_plan() {
         return 0
     fi
     (( ${#KU_MG_DRIFTED[@]} == 1 )) || verb=differ
-    _ku_mg_plan "$(_ku_mg_join "${KU_MG_DRIFTED[@]}") $verb from the tripwire's baseline, as" \
+    ku_plan "$(ku_join "${KU_MG_DRIFTED[@]}") $verb from the tripwire's baseline, as" \
         "after a change from Windows since it was recorded: look at the stick before you" \
         "answer. The write leaves the baseline entry as it was, so check's tripwire keeps" \
         "reporting the change until 'kernel-updater baseline' records it"
@@ -1744,7 +1744,7 @@ _ku_mg_drift_warn() {
     if (( KU_DRY_RUN || ! ${#KU_MG_DRIFTED[@]} )); then
         return 0
     fi
-    ku_log warning "$(_ku_mg_join "${KU_MG_DRIFTED[@]}") differed from the tripwire's baseline" \
+    ku_log warning "$(ku_join "${KU_MG_DRIFTED[@]}") differed from the tripwire's baseline" \
         "before this write, so the baseline keeps its old entry and check's tripwire keeps" \
         "reporting the change: look at the stick, then run 'sudo kernel-updater baseline'," \
         "which shows what differs and records it"
@@ -1939,39 +1939,39 @@ _ku_mg_rollback_system() {
         done < "$dir/root-links.list"
     fi
     if [[ -f $dir/kernel-img.conf ]]; then
-        _ku_mg_plan "rollback of the system stage run $stamp: put /etc/kernel-img.conf back as" \
+        ku_plan "rollback of the system stage run $stamp: put /etc/kernel-img.conf back as" \
             "it was before"
     else
-        _ku_mg_plan "rollback of the system stage run $stamp: remove /etc/kernel-img.conf, which" \
+        ku_plan "rollback of the system stage run $stamp: remove /etc/kernel-img.conf, which" \
             "the stage made"
     fi
     if (( keeps )); then
-        _ku_mg_plan "that kernel-img.conf has linux-base keep the links in /boot too, as the" \
+        ku_plan "that kernel-img.conf has linux-base keep the links in /boot too, as the" \
             "stage found it, so kernel installs keep moving the links kali.cfg's entries boot"
     fi
     if (( ${#back[@]} )); then
-        _ku_mg_plan "move $(_ku_mg_join "${back[@]}") back to /"
+        ku_plan "move $(ku_join "${back[@]}") back to /"
     fi
     if (( ${#taken[@]} )); then
-        _ku_mg_plan "leave $(_ku_mg_join "${taken[@]}") in the backup's root-links, as / has" \
+        ku_plan "leave $(ku_join "${taken[@]}") in the backup's root-links, as / has" \
             "entries of those names now"
     fi
     if (( status == 2 )); then
-        _ku_mg_plan "whether partition 1's grub.cfg still sources kali.cfg is unknown, as" \
+        ku_plan "whether partition 1's grub.cfg still sources kali.cfg is unknown, as" \
             "$KU_DK_PROBLEM: go on only when it no longer does, since kali.cfg's entries boot" \
             "the links in /boot, which kernel installs stop moving after this rollback"
     fi
-    _ku_mg_plan "the links in /boot stay: they harm nothing, and kernel installs keep them"
+    ku_plan "the links in /boot stay: they harm nothing, and kernel installs keep them"
     if ! devices=$(ku_probe_grub_pc); then
-        _ku_mg_plan "grub-pc's install_devices answer stays as the system stage left it, which" \
+        ku_plan "grub-pc's install_devices answer stays as the system stage left it, which" \
             "debconf-show cannot read now"
     elif [[ -n $devices ]] && (( devices > 0 )); then
-        _ku_mg_plan "grub-pc/install_devices still names $devices device(s), as the system" \
+        ku_plan "grub-pc/install_devices still names $devices device(s), as the system" \
             "stage left it: check's grub-pc item fails until 'dpkg-reconfigure grub-pc' selects" \
             "no device"
     else
         empty=1
-        _ku_mg_plan "grub-pc/install_devices stays empty, which is safe: no device it named" \
+        ku_plan "grub-pc/install_devices stays empty, which is safe: no device it named" \
             "before was kept"
     fi
     if (( KU_DRY_RUN )); then
@@ -2040,17 +2040,17 @@ _ku_mg_rollback_menu() {
         drops=1
     fi
     if [[ $KU_DK_DEPLOY == export && $sum == "$expected" ]]; then
-        _ku_mg_plan "rollback of the $stage stage run $stamp: partition 1 holds grub.cfg as the" \
+        ku_plan "rollback of the $stage stage run $stamp: partition 1 holds grub.cfg as the" \
             "backup does already, and it is exported all the same, so that output_dir no" \
             "longer holds the stage's own export: $KU_DK_DEPLOY_WHY"
     elif [[ $KU_DK_DEPLOY == export ]]; then
-        _ku_mg_plan "rollback of the $stage stage run $stamp: export grub.cfg as it was before" \
+        ku_plan "rollback of the $stage stage run $stamp: export grub.cfg as it was before" \
             "to output_dir for Windows to copy: $KU_DK_DEPLOY_WHY"
     elif (( ! write )); then
-        _ku_mg_plan "rollback of the $stage stage run $stamp: grub.cfg is as the backup holds" \
+        ku_plan "rollback of the $stage stage run $stamp: grub.cfg is as the backup holds" \
             "it already, so only the backup is marked as rolled back"
     else
-        _ku_mg_plan "rollback of the $stage stage run $stamp: write grub.cfg back to partition" \
+        ku_plan "rollback of the $stage stage run $stamp: write grub.cfg back to partition" \
             "1 as it was before (deploy = $KU_DK_DEPLOY)"
     fi
     if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export grub.cfg "$sum"; then
@@ -2060,21 +2060,21 @@ _ku_mg_rollback_menu() {
         _ku_mg_drift_plan "$KU_MG_GRUB" "$expected"
     fi
     if (( drops )) && [[ $KU_DK_DEPLOY == export ]]; then
-        _ku_mg_plan "grub.cfg on partition 1 changed after the $stage stage run $stamp wrote it," \
+        ku_plan "grub.cfg on partition 1 changed after the $stage stage run $stamp wrote it," \
             "as when MultiBootUSB adds an ISO: copied over it, the export drops those changes," \
             "so copy grub.cfg from the stick first to keep them"
     elif (( drops )); then
-        _ku_mg_plan "grub.cfg on partition 1 changed after the $stage stage run $stamp wrote it," \
+        ku_plan "grub.cfg on partition 1 changed after the $stage stage run $stamp wrote it," \
             "as when MultiBootUSB adds an ISO: the rollback drops those changes, which then only" \
             "the copy the write keeps beside it, $KU_MG_GRUB.ku-<UTC stamp>.bak, holds, until" \
             "backups_keep later writes of grub.cfg remove it"
     fi
     if [[ $stage == menu ]]; then
-        _ku_mg_plan "$KU_MG_KALI stays on partition 1, where the grub.cfg put back no longer" \
+        ku_plan "$KU_MG_KALI stays on partition 1, where the grub.cfg put back no longer" \
             "uses it: check's kali-menu item fails until you delete it from Windows or run the" \
             "menu stage again"
     else
-        _ku_mg_plan "$KU_MG_KALI stays on partition 1, where the grub.cfg put back sources it"
+        ku_plan "$KU_MG_KALI stays on partition 1, where the grub.cfg put back sources it"
     fi
     question="Roll the $stage stage run $stamp back as planned?"
     if (( drops )); then
@@ -2107,7 +2107,7 @@ _ku_mg_rollback_kali() {
         ku_die "$KU_EX_REFUSED" "the backup $stamp holds nothing to restore; nothing was changed"
     fi
     if [[ -f $dir/kali.cfg.absent ]]; then
-        _ku_mg_plan "$run kali.cfg was missing before, and stays as the run wrote it, since" \
+        ku_plan "$run kali.cfg was missing before, and stays as the run wrote it, since" \
             "grub.cfg sources it and without it the stick's Kali entry only says that it is" \
             "missing; only the backup is marked as rolled back"
     else
@@ -2127,13 +2127,13 @@ _ku_mg_rollback_kali() {
             write=1
         fi
         if [[ $KU_DK_DEPLOY == export ]]; then
-            _ku_mg_plan "$run export kali.cfg as it was before to output_dir for Windows to" \
+            ku_plan "$run export kali.cfg as it was before to output_dir for Windows to" \
                 "copy: $KU_DK_DEPLOY_WHY"
         elif (( ! write )); then
-            _ku_mg_plan "$run kali.cfg is as the backup holds it already, so only the backup" \
+            ku_plan "$run kali.cfg is as the backup holds it already, so only the backup" \
                 "is marked as rolled back"
         else
-            _ku_mg_plan "$run write kali.cfg back to partition 1 as it was before (deploy =" \
+            ku_plan "$run write kali.cfg back to partition 1 as it was before (deploy =" \
                 "$KU_DK_DEPLOY)"
         fi
         if [[ $KU_DK_DEPLOY != export ]] && _ku_mg_stale_export kali.cfg "$sum"; then
@@ -2211,7 +2211,7 @@ _ku_mg_legacy_kernels() {
     done
     list=""
     if (( ${#missing[@]} )); then
-        list=$(_ku_mg_join "${missing[@]}")
+        list=$(ku_join "${missing[@]}")
     fi
     if (( ! found )) && (( kali == 0 )); then
         ku_die "$KU_EX_REFUSED" "the Kali entries of the grub.cfg in the backup $stamp boot no" \
@@ -2226,11 +2226,11 @@ _ku_mg_legacy_kernels() {
             "--stage menu', which writes it anew from the legacy entries; nothing was changed"
     fi
     if [[ -n $list ]]; then
-        _ku_mg_plan "the Kali entries of the grub.cfg put back that boot $list will fail, as" \
+        ku_plan "the Kali entries of the grub.cfg put back that boot $list will fail, as" \
             "/boot no longer holds that kernel"
     fi
     if (( other )); then
-        _ku_mg_plan "$other Kali entr(ies) of the grub.cfg put back load a kernel that migrate" \
+        ku_plan "$other Kali entr(ies) of the grub.cfg put back load a kernel that migrate" \
             "cannot find in /boot"
     fi
 }
@@ -2270,7 +2270,7 @@ _ku_mg_need_detect() {
         [[ -n ${KU_CONF[$key]} ]] || missing+=("$key")
     done
     if (( ${#missing[@]} )); then
-        ku_die "$KU_EX_REFUSED" "the configuration lacks $(_ku_mg_join "${missing[@]}"): run" \
+        ku_die "$KU_EX_REFUSED" "the configuration lacks $(ku_join "${missing[@]}"): run" \
             "'kernel-updater migrate --stage detect' first; nothing was changed"
     fi
 }
@@ -2285,38 +2285,6 @@ _ku_mg_need_system() {
     fi
     if [[ -n $problem ]]; then
         ku_die "$KU_EX_REFUSED" "$problem: run 'kernel-updater migrate --stage system' first;" \
-            "nothing was changed"
-    fi
-}
-
-# Exit 66 when /boot is not mounted or its LUKS container cannot be read, and 78 unless /boot
-# is the filesystem boot_fs_uuid names, in the LUKS container boot_luks_uuid names.
-_ku_mg_boot_identity() {
-    local out source uuid name value luks="" status=0
-    out=$(ku_probe_boot_mount)
-    if [[ -z $out ]]; then
-        ku_die "$KU_EX_NOINPUT" "/boot is not mounted: unlock and mount it first; nothing was" \
-            "changed"
-    fi
-    IFS=$'\t' read -r source _ uuid <<< "$out"
-    if [[ ${uuid,,} != "${KU_CONF[boot_fs_uuid]}" ]]; then
-        ku_die "$KU_EX_CONFIG" "the filesystem at /boot is not the one boot_fs_uuid names;" \
-            "nothing was changed"
-    fi
-    out=$(ku_probe_boot_luks "$source") || status=$?
-    if (( status == 1 || status == 3 )); then
-        ku_die "$KU_EX_NOINPUT" "the LUKS header of the container that holds /boot cannot be" \
-            "read, or cryptsetup is not installed; nothing was changed"
-    fi
-    if (( status == 0 )); then
-        while IFS=$'\t' read -r name value _; do
-            if [[ $name == uuid ]]; then
-                luks=$value
-            fi
-        done <<< "$out"
-    fi
-    if [[ $luks != "${KU_CONF[boot_luks_uuid]}" ]]; then
-        ku_die "$KU_EX_CONFIG" "/boot is not in the LUKS container boot_luks_uuid names;" \
             "nothing was changed"
     fi
 }
@@ -2788,25 +2756,6 @@ _ku_mg_ask() {
     local stage=$1
     shift
     ku_ask "$*" || ku_die "$KU_EX_DECLINED" "declined; the $stage stage changed nothing"
-}
-
-# Print one line of a plan on stderr, whatever the verbosity, since a question follows it.
-_ku_mg_plan() {
-    printf 'kernel-updater: plan: %s\n' "$*" >&2 || true
-}
-
-# Print the WORDS as a list: "a", "a and b", "a, b and c".
-_ku_mg_join() {
-    local text=$1
-    shift
-    while (( $# > 1 )); do
-        text+=", $1"
-        shift
-    done
-    if (( $# )); then
-        text+=" and $1"
-    fi
-    printf '%s' "$text"
 }
 
 # Print TEXT, a title from grub.cfg, in double quotes, or a neutral phrase when it holds what
