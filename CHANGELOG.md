@@ -262,18 +262,31 @@ with the owner's original script.
   `tests/ntfs/migrate.bats`, which lints with the stick's own GRUB lists, writes the new menu to
   real NTFS and rolls it back. The `ntfs` job installs `dmsetup` for it.
 - `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules] [-n] [-y] [--porcelain]`
-  checks, as root, under the tool's lock and in a dry run too, that it may run, and then has
-  nothing to do yet. It refuses with 3 until `migrate --stage detect` set `boot_fs_uuid` and
-  `boot_luks_uuid`, exits 66 while `/boot` is not mounted and 78 on another `/boot` or LUKS
-  container, and refuses with 3 while `apt-get`, `apt-mark` or `dpkg-query` is missing, while
-  the links in `/boot` are not kept there or do not reach a kernel, naming
-  `migrate --stage system`, while `check`'s `kernels` item fails, and after an interrupted
-  dpkg run. It exits 75 while apt or dpkg holds its lock, which it finds in `/proc/locks` and
-  names by PID and command. Its plan lines go to stderr, and with `--porcelain` also to stdout
-  as `STEP`, `ACTION`, `OBJECT` and `DETAIL` fields. The tools it runs inherit no `DPKG_ROOT`,
-  `DPKG_ADMINDIR`, `DPKG_FORCE`, `APT_CONFIG`, `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`,
-  and run with `LC_ALL=C.UTF-8`.
-- `tests/cleanup.bats`, which runs `cleanup` on a migrated system with stub tools.
+  purges, after one question and in one `apt-get purge` run, the config files removed kernels
+  left, once a simulation shows that apt would remove exactly those packages and install or
+  configure none. It never purges a package of the running kernel's release or of one a link
+  in `/boot` points at, and purges nothing while a reboot into the kernel `/boot/vmlinuz`
+  points at is pending. Held packages, debug builds and the headers and build tools the
+  kernels of one ABI share are only listed, and metapackages are never touched. `--no-rc`
+  leaves the step out; `--no-autoremove` and `--no-modules` have nothing to leave out yet.
+  First it checks, as root, under the tool's lock and in a dry run too, that it may run: it
+  refuses with 3 until `migrate --stage detect` set `boot_fs_uuid` and `boot_luks_uuid`, exits
+  66 while `/boot` is not mounted and 78 on another `/boot` or LUKS container, and refuses with
+  3 while `apt-get`, `apt-mark` or `dpkg-query` is missing, while the links in `/boot` are not
+  kept there or do not reach a kernel, naming `migrate --stage system`, while `check`'s
+  `kernels` item fails, and after an interrupted dpkg run. It exits 75 while apt or dpkg holds
+  its lock, which it finds in `/proc/locks` and names by PID and command, and when dpkg's
+  database, apt's auto marks, the links or the planned set changed while the question waited.
+  A purge that fails exits 4 once dpkg began to change its database, naming
+  `dpkg --configure -a` and `check`, else 75 while apt or dpkg holds its lock, else 3; one that
+  a signal cuts short says the same and exits 128+N. After the purge, `check`'s `boot-links`
+  and `kernels` items must pass, or it exits 4, and `sync` runs. Its plan lines go to stderr,
+  and with `--porcelain` also to stdout as `STEP`, `ACTION`, `OBJECT` and `DETAIL` fields. The
+  tools it runs inherit no `DPKG_ROOT`, `DPKG_ADMINDIR`, `DPKG_FORCE`, `APT_CONFIG`,
+  `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`, and run with `LC_ALL=C.UTF-8`.
+- `tests/cleanup.bats`, which runs `cleanup` on a migrated system with stub tools, and
+  `tests/container/cleanup.bats`, which purges a dummy kernel with the real apt-get and dpkg
+  and finds a real fcntl lock on dpkg's frontend lock in `/proc/locks`.
 
 ### Changed
 
@@ -329,5 +342,12 @@ with the owner's original script.
   `ku_boot_identity`, now in `check.sh`; what `migrate` prints and refuses does not change.
 - `tests/static.bats` also covers `cleanup.sh`, `tests/helpers.bash` loads it, and
   `tests/cli.bats` expects `cleanup` among the commands.
+- `ku_probe_kernels` shares its reading of kernel package names with the new
+  `ku_probe_kernel_packages`, which lists every versioned kernel package, headers, `-common`,
+  kbuild and debug builds included, with its kind and release for `cleanup`; what `check`
+  reports does not change.
+- The container suite's `reset_system` also purges the split, modules, base and headers
+  dummies and empties `cleanup`'s quarantine, and `run_container_cleanup` runs `cleanup` there
+  with `KU_TEST=1`, which lets `SOURCE_DATE_EPOCH` through to apt.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

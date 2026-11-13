@@ -242,18 +242,23 @@ install_kernels() {
     done
 }
 
-# Purge every dummy kernel, whatever its state, empty /boot, remove the default links from /
-# and write /etc/kernel-img.conf with link_in_boot = VALUE, yes or no.
+# Purge every dummy kernel package, whatever its state, the split ones and any headers
+# included, empty /boot and cleanup's quarantine, remove the default links from / and write
+# /etc/kernel-img.conf with link_in_boot = VALUE, yes or no.
 reset_system() {
     local -a packages=()
     # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
     mapfile -t packages < <(dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' \
-        'linux-image-9.*' 2> /dev/null | awk '$1 !~ /^.n$/ { print $2 }')
+        'linux-image-9.*' 'linux-binary-9.*' 'linux-modules-9.*' 'linux-base-9.*' \
+        'linux-headers-9.*' 2> /dev/null | awk '$1 !~ /^.n$/ { print $2 }')
     if (( ${#packages[@]} )); then
         printf '%s install\n' "${packages[@]}" | dpkg --set-selections
         dpkg --force-hold --force-remove-reinstreq --purge "${packages[@]}"
     fi
     find /boot -mindepth 1 -delete
+    if [[ -d /var/lib/kernel-updater/quarantine ]]; then
+        find /var/lib/kernel-updater/quarantine -mindepth 1 -delete
+    fi
     rm -f /vmlinuz /vmlinuz.old /initrd.img /initrd.img.old
     printf 'link_in_boot = %s\n' "$1" > /etc/kernel-img.conf
 }
@@ -289,4 +294,13 @@ shadow_boot() {
 run_container_check() {
     run --separate-stderr env PATH="$STUB_BIN:$PATH" TMPDIR="$BATS_TEST_TMPDIR" \
         bash "$REPO_DIR/bin/kernel-updater" check --porcelain "$@"
+}
+
+# Run kernel-updater cleanup ARGS on the container itself, with the stubs first on PATH and TMPDIR
+# in the test's temp directory, through bats' run with separate stderr. KU_TEST=1 lets
+# SOURCE_DATE_EPOCH through to apt: as for a reproducible build, apt then leaves the running
+# kernel, the CI host's, out of the kernels it keeps from autoremoval.
+run_container_cleanup() {
+    run --separate-stderr env PATH="$STUB_BIN:$PATH" TMPDIR="$BATS_TEST_TMPDIR" KU_TEST=1 \
+        SOURCE_DATE_EPOCH=1700000000 bash "$REPO_DIR/bin/kernel-updater" cleanup "$@"
 }

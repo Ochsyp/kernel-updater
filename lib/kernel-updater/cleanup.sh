@@ -22,6 +22,29 @@ if [[ ${KU_TEST:-} != 1 ]]; then
     KU_CL_ENV_DROP+=(SOURCE_DATE_EPOCH)
 fi
 
+# What the plan rests on, as _ku_cl_snapshot printed it before the plan: taken anew and
+# compared after the question, and its dpkg part after a purge that failed or was cut short.
+KU_CL_SNAPSHOT=""
+
+# The releases cleanup keeps, each with why, as "running, vmlinuz" (KU_CL_KEEP), in the order
+# found (KU_CL_KEEP_ORDER), and the release /boot/vmlinuz points at while another kernel runs,
+# which puts the purges off until a reboot (KU_CL_PENDING), or empty.
+declare -gA KU_CL_KEEP=()
+KU_CL_KEEP_ORDER=() KU_CL_PENDING=""
+
+# The rc step: the packages it purges (KU_CL_RC) and their releases (KU_CL_RC_REL), and those
+# it leaves (KU_CL_RC_LEFT), each with the plan's action, skip or list (KU_CL_RC_ACTION), and
+# why (KU_CL_RC_WHY).
+KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
+
+# The packages the one apt-get purge removes (KU_CL_SET); those the last simulation would
+# remove (KU_CL_SIM) and install or configure (KU_CL_SIM_OTHER); and how the simulation of the
+# purge differs from the plan (KU_CL_WHY).
+KU_CL_SET=() KU_CL_SIM=() KU_CL_SIM_OTHER=() KU_CL_WHY=""
+
+# 1 while apt-get purges, for the exit handler, and 1 once the run synced after the purge.
+KU_CL_PURGING=0 KU_CL_SYNCED=0
+
 # Print the cleanup command's usage on stdout.
 ku_cleanup_usage() {
     cat << 'EOF'
@@ -54,21 +77,22 @@ EOF
 }
 
 # Parse the options, then, as root and under the tool's lock, check that cleanup may run, in a
-# dry run too, and report that it has nothing to do. Exits 0 then, 3 when a check refuses, 64
-# on a usage error, 66 when /boot is not mounted or its LUKS header cannot be read, 75 while
-# another run, apt or dpkg holds a lock, 77 when not root and 78 on a bad configuration or
-# another /boot.
+# dry run too, take the snapshot, plan the purge and print the plan. With something to purge
+# and no dry run, ask once, check the plan again, run the one apt-get purge, check the links and
+# kernels again and sync. Exits 0 when done, when nothing was left to do and after a dry run; 3
+# when a check or the purge's simulation refuses, or apt refused the purge; 4 when the purge
+# stopped after dpkg began to change its database, or the check after it fails; 10 when
+# declined; 64 on a usage error; 66 when /boot is not mounted or its LUKS header cannot be read;
+# 75 while another run, apt or dpkg holds a lock, or when the system changed while the question
+# waited; 77 when not root; 78 on a bad configuration or another /boot; and 128+N when signal N
+# cut it short.
 ku_cmd_cleanup() {
     while (( $# )); do
         case $1 in
             --no-rc) KU_CL_SKIP['rc']=1; shift ;;
             --no-autoremove) KU_CL_SKIP['autoremove']=1; shift ;;
             --no-modules) KU_CL_SKIP['modules']=1; shift ;;
-            -n | --dry-run)
-                # shellcheck disable=SC2034 # read by ku_run
-                KU_DRY_RUN=1
-                shift
-                ;;
+            -n | --dry-run) KU_DRY_RUN=1; shift ;;
             -y | --yes)
                 # shellcheck disable=SC2034 # read by ku_ask
                 KU_ASSUME_YES=1
@@ -85,7 +109,34 @@ ku_cmd_cleanup() {
     ku_load_config
     ku_lock
     _ku_cl_preconditions
-    ku_log info "cleanup: nothing to do"
+    if ! KU_CL_SNAPSHOT=$(_ku_cl_snapshot); then
+        ku_die "$KU_EX_REFUSED" "cannot read dpkg's status file or apt's extended_states;" \
+            "nothing was changed"
+    fi
+    if ! _ku_cl_plan; then
+        ku_die "$KU_EX_REFUSED" "dpkg-query cannot list the kernel packages; nothing was changed"
+    fi
+    if (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; then
+        ku_die "$KU_EX_REFUSED" "the purge cannot run as planned: $KU_CL_WHY; nothing was changed"
+    fi
+    _ku_cl_plan_print
+    if (( ! ${#KU_CL_SET[@]} )); then
+        ku_log info "cleanup: nothing to do"
+        return 0
+    fi
+    if (( KU_DRY_RUN )); then
+        ku_log info "dry run: nothing was changed"
+        return 0
+    fi
+    ku_ask "Run the cleanup as planned? Purged packages cannot be rolled back." ||
+        ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
+    _ku_cl_recheck
+    _ku_cl_purge
+    if ! sync; then
+        ku_log warning "sync failed: run it before the stick is unplugged"
+    fi
+    KU_CL_SYNCED=1
+    ku_log info "cleanup: purged $(_ku_cl_count "${#KU_CL_SET[@]}" package)"
 }
 
 # Return 0 unless --no-rc, --no-autoremove or --no-modules left STEP out: rc, autoremove or
@@ -101,13 +152,13 @@ _ku_cl_wanted() {
 # Check, in a dry run too, that cleanup may run, or exit: 3 until detect set boot_fs_uuid and
 # boot_luks_uuid; 66 when /boot is not mounted or its LUKS header cannot be read, and 78 when it
 # is not the /boot they name (ku_boot_identity); 3 when apt-get, apt-mark or dpkg-query is
-# missing; 75 while apt or dpkg holds its lock, and 3 when that cannot be told; 3 when
-# linux-base does not keep the links in /boot or one does not reach a non-empty file there,
-# when check's kernels item fails, as while a kernel package is stuck between states, and when
-# dpkg was interrupted. The locks come before the links, the packages and dpkg's updates
-# directory, which a running apt or dpkg changes for a moment.
+# missing; 75 while apt or dpkg holds its lock, and 3 when that cannot be told
+# (_ku_cl_not_busy); 3 when linux-base does not keep the links in /boot or one does not reach a
+# non-empty file there, when check's kernels item fails, as while a kernel package is stuck
+# between states, and when dpkg was interrupted. The locks come before the links, the packages
+# and dpkg's updates directory, which a running apt or dpkg changes for a moment.
 _ku_cl_preconditions() {
-    local key name holder i status=0 refused=0 kernels=""
+    local key name i refused=0 kernels=""
     local -a keys=() tools=()
     for key in boot_fs_uuid boot_luks_uuid; do
         [[ -n ${KU_CONF[$key]} ]] || keys+=("$key")
@@ -124,18 +175,7 @@ _ku_cl_preconditions() {
         ku_die "$KU_EX_REFUSED" "cleanup runs apt-get, apt-mark and dpkg-query, and" \
             "$(ku_join "${tools[@]}") cannot be found; nothing was changed"
     fi
-    holder=$(_ku_cl_dpkg_busy) || status=$?
-    case $status in
-        0)
-            ku_die "$KU_EX_BUSY" "apt or dpkg is running: $holder; run cleanup again once it" \
-                "is done; nothing was changed"
-            ;;
-        1) ;;
-        *)
-            ku_die "$KU_EX_REFUSED" "cannot read /proc/locks or the inode of a lock file of" \
-                "dpkg, so cleanup cannot tell whether apt or dpkg is running; nothing was changed"
-            ;;
-    esac
+    _ku_cl_not_busy
     ku_check_items kernel-img boot-links kernels
     for i in "${!KU_CHECK_ITEM[@]}"; do
         if [[ ${KU_CHECK_ITEM[i]} == kernels ]]; then
@@ -162,6 +202,24 @@ _ku_cl_preconditions() {
         ku_die "$KU_EX_REFUSED" "dpkg was interrupted: run 'dpkg --configure -a', then" \
             "'kernel-updater check'; nothing was changed"
     fi
+}
+
+# Exit 75 while apt or dpkg holds its frontend or database lock, naming the holder, and 3 when
+# _ku_cl_dpkg_busy cannot tell. Returns 0 while neither is held.
+_ku_cl_not_busy() {
+    local holder status=0
+    holder=$(_ku_cl_dpkg_busy) || status=$?
+    case $status in
+        0)
+            ku_die "$KU_EX_BUSY" "apt or dpkg is running: $holder; run cleanup again once it" \
+                "is done; nothing was changed"
+            ;;
+        1) ;;
+        *)
+            ku_die "$KU_EX_REFUSED" "cannot read /proc/locks or the inode of a lock file of" \
+                "dpkg, so cleanup cannot tell whether apt or dpkg is running; nothing was changed"
+            ;;
+    esac
 }
 
 # Print who holds dpkg's frontend lock or its database lock, as "PID 4242 (apt-get) holds
@@ -253,8 +311,255 @@ _ku_cl_child() {
 }
 
 # =======================================================
+#                       SNAPSHOT
+# =======================================================
+
+# Print what the plan rests on, one line each: dpkg's state as _ku_cl_dpkg_state prints it,
+# first; "extended_states SHA", the SHA-256 of apt's auto marks, or - while there are none; and
+# "link NAME TARGET" for vmlinuz, vmlinuz.old, initrd.img and initrd.img.old in /boot, TARGET -
+# for one that is no symlink. Returns 1 when a file it hashes cannot be read.
+_ku_cl_snapshot() {
+    local file sha=- name target
+    _ku_cl_dpkg_state || return 1
+    file=$(ku_path /var/lib/apt/extended_states)
+    if [[ -e $file || -L $file ]]; then
+        sha=$(ku_sha256 "$file") || return 1
+    fi
+    printf 'extended_states %s\n' "$sha"
+    while IFS=$'\t' read -r name target _; do
+        [[ -n $name ]] || continue
+        printf 'link %s %s\n' "$name" "${target//[[:cntrl:]]/?}"
+    done <<< "$(ku_probe_boot_links)"
+}
+
+# Print dpkg's state: "status SHA", the SHA-256 of its status file, or - while there is none,
+# and "updates NAME...", the names in its updates directory, where dpkg journals each change
+# before it folds them into the status file, so that a run cut short may have changed only
+# those. Returns 1 when the status file cannot be read.
+_ku_cl_dpkg_state() {
+    local file sha=- path
+    local -a names=()
+    file=$(ku_path /var/lib/dpkg/status)
+    if [[ -e $file || -L $file ]]; then
+        sha=$(ku_sha256 "$file") || return 1
+    fi
+    for path in "$(ku_path /var/lib/dpkg/updates)"/*; do
+        if [[ -e $path || -L $path ]]; then
+            path=${path##*/}
+            names+=("${path//[[:cntrl:]]/?}")
+        fi
+    done
+    printf 'status %s\nupdates' "$sha"
+    if (( ${#names[@]} )); then
+        printf ' %s' "${names[@]}"
+    fi
+    printf '\n'
+}
+
+# Return 0 when dpkg's state differs from the one in KU_CL_SNAPSHOT, or cannot be read, and 1
+# while it is the same.
+_ku_cl_dpkg_changed() {
+    local now
+    now=$(_ku_cl_dpkg_state) || return 0
+    [[ $KU_CL_SNAPSHOT != "$now"$'\n'* ]]
+}
+
+# =======================================================
 #                         PLAN
 # =======================================================
+
+# Work out the plan from KU_CL_SNAPSHOT and the packages dpkg lists: the releases cleanup keeps
+# and a pending reboot (_ku_cl_protected); the rc step, unless --no-rc or a pending reboot
+# leaves it out; and KU_CL_SET, the packages the one purge removes. Returns 1 when dpkg-query
+# cannot list the kernel packages.
+_ku_cl_plan() {
+    KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
+    _ku_cl_protected
+    if _ku_cl_wanted rc && [[ -z $KU_CL_PENDING ]]; then
+        _ku_cl_plan_rc || return 1
+    fi
+    KU_CL_SET=("${KU_CL_RC[@]}")
+}
+
+# Set KU_CL_KEEP and KU_CL_KEEP_ORDER to the releases nothing named for may be purged or moved:
+# the running kernel's (KU_CK_RUNNING, which the preconditions checked), then those the links in
+# KU_CL_SNAPSHOT point at, in the order vmlinuz, vmlinuz.old, initrd.img and initrd.img.old; an
+# initrd link is named as a reason only when its release differs from its vmlinuz link's. Sets
+# KU_CL_PENDING to the release /boot/vmlinuz points at while another kernel runs, or empty.
+# Exits 3 when a link points at no file named for a kernel release.
+_ku_cl_protected() {
+    local kind name target release pair
+    local -A linked=()
+    KU_CL_KEEP=() KU_CL_KEEP_ORDER=() KU_CL_PENDING=""
+    _ku_cl_keep "$KU_CK_RUNNING" running
+    while read -r kind name target; do
+        [[ $kind == link ]] || continue
+        release=${target##*/}
+        release=${release#"${name%.old}"-}
+        if [[ $release == "${target##*/}" ]] || ! ku_valid_release "$release"; then
+            ku_die "$KU_EX_REFUSED" "/boot/$name points at no file named for a kernel release;" \
+                "nothing was changed"
+        fi
+        linked[$name]=$release
+        # initrd.img.old pairs with vmlinuz.old, and initrd.img with vmlinuz.
+        pair=${name/initrd.img/vmlinuz}
+        if [[ $name == initrd.img* && $release == "${linked[$pair]:-}" ]]; then
+            continue
+        fi
+        _ku_cl_keep "$release" "$name"
+    done <<< "$KU_CL_SNAPSHOT"
+    if [[ ${linked[vmlinuz]:-} != "$KU_CK_RUNNING" ]]; then
+        KU_CL_PENDING=${linked[vmlinuz]:-}
+    fi
+}
+
+# Add WHY to the reasons cleanup keeps RELEASE for, recording a release it meets first.
+_ku_cl_keep() {
+    if [[ -n ${KU_CL_KEEP[$1]+set} ]]; then
+        KU_CL_KEEP[$1]+=", $2"
+    else
+        KU_CL_KEEP[$1]=$2
+        KU_CL_KEEP_ORDER+=("$1")
+    fi
+}
+
+# Plan the rc step from the kernel packages dpkg lists (ku_probe_kernel_packages): a package
+# removed with its config files left, status c with any want but hold, of kind image, binary,
+# modules, base or headers, is purged unless cleanup keeps its release. A held one and one of a
+# kept release are skipped, and a debug build and the headers and build tools an ABI's kernels
+# share are listed; the plan shows each. Returns 1 when dpkg-query cannot list the packages.
+_ku_cl_plan_rc() {
+    local out name state kind release
+    KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
+    out=$(ku_probe_kernel_packages) || return 1
+    while IFS=$'\t' read -r name state _ kind release; do
+        [[ -n $name && $state == ?c ]] || continue
+        case $kind in
+            dbg) _ku_cl_rc_leave "$name" list "a debug build" ;;
+            common) _ku_cl_rc_leave "$name" list "headers shared by the kernels of $release" ;;
+            kbuild) _ku_cl_rc_leave "$name" list "build tools shared by the kernels of $release" ;;
+            *)
+                if [[ $state == h? ]]; then
+                    _ku_cl_rc_leave "$name" skip held
+                elif [[ -n ${KU_CL_KEEP[$release]+set} ]]; then
+                    _ku_cl_rc_leave "$name" skip "its kernel is kept"
+                else
+                    KU_CL_RC+=("$name")
+                    KU_CL_RC_REL+=("$release")
+                fi
+                ;;
+        esac
+    done <<< "$out"
+}
+
+# Record that the rc step leaves the package NAME, with the plan's ACTION, skip or list, and
+# WHY.
+_ku_cl_rc_leave() {
+    KU_CL_RC_LEFT+=("$1")
+    KU_CL_RC_ACTION+=("$2")
+    KU_CL_RC_WHY+=("$3")
+}
+
+# Run apt-get's simulation (-s) of ARGS, quietly and without waiting for a lock, and set
+# KU_CL_SIM to the packages it would remove, from its Purg and Remv lines, and KU_CL_SIM_OTHER
+# to those it would install or configure, from its Inst and Conf lines. Each line it prints
+# shows as a debug line. Returns apt-get's status.
+_ku_cl_simulate() {
+    local out line status=0
+    KU_CL_SIM=() KU_CL_SIM_OTHER=()
+    out=$(_ku_cl_child apt-get -s -q -o DPkg::Lock::Timeout=0 "$@") || status=$?
+    while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        ku_log debug "apt-get -s: ${line//[[:cntrl:]]/ }"
+        if [[ $line =~ ^(Purg|Remv)\ ([^[:space:][:cntrl:]]+) ]]; then
+            KU_CL_SIM+=("${BASH_REMATCH[2]}")
+        elif [[ $line =~ ^(Inst|Conf)\ ([^[:space:][:cntrl:]]+) ]]; then
+            KU_CL_SIM_OTHER+=("${BASH_REMATCH[2]}")
+        fi
+    done <<< "$out"
+    return "$status"
+}
+
+# Simulate the purge of KU_CL_SET with the options the real one takes, which keep a local apt
+# configuration from widening it, and return 0 when apt would remove exactly those packages and
+# install or configure none. Returns 1 otherwise, with KU_CL_WHY saying how it differs: the
+# simulation failed, or names packages to install or configure, more to remove, or fewer.
+_ku_cl_exact_set() {
+    local name status=0
+    local -a extra=() missing=()
+    local -A planned=() simulated=()
+    KU_CL_WHY=""
+    _ku_cl_simulate -o APT::Get::AutomaticRemove=false \
+        -o APT::Get::AutomaticRemove::Kernels=false purge "${KU_CL_SET[@]}" || status=$?
+    if (( status )); then
+        KU_CL_WHY="apt-get cannot simulate the purge (status $status)"
+        return 1
+    fi
+    for name in "${KU_CL_SET[@]}"; do
+        planned[$name]=1
+    done
+    for name in "${KU_CL_SIM[@]}"; do
+        simulated[$name]=1
+        [[ -n ${planned[$name]+set} ]] || extra+=("$name")
+    done
+    for name in "${KU_CL_SET[@]}"; do
+        [[ -n ${simulated[$name]+set} ]] || missing+=("$name")
+    done
+    if (( ${#KU_CL_SIM_OTHER[@]} )); then
+        KU_CL_WHY="apt would also install or configure $(ku_join "${KU_CL_SIM_OTHER[@]}")"
+    fi
+    if (( ${#extra[@]} )); then
+        KU_CL_WHY+="${KU_CL_WHY:+; }apt would also remove $(ku_join "${extra[@]}")"
+    fi
+    if (( ${#missing[@]} )); then
+        KU_CL_WHY+="${KU_CL_WHY:+; }apt would not remove $(ku_join "${missing[@]}")"
+    fi
+    [[ -z $KU_CL_WHY ]]
+}
+
+# Print the plan through _ku_cl_plan_line when it holds anything to show: the releases kept,
+# the purges a pending reboot puts off, the packages the rc step purges and those it leaves,
+# then the sync. Prints nothing when there is nothing to purge, leave or put off.
+_ku_cl_plan_print() {
+    local release i text pending=""
+    local -a parts=() records=()
+    if _ku_cl_wanted rc; then
+        pending=$KU_CL_PENDING
+    fi
+    if (( ! ${#KU_CL_SET[@]} && ! ${#KU_CL_RC_LEFT[@]} )) && [[ -z $pending ]]; then
+        return 0
+    fi
+    for release in "${KU_CL_KEEP_ORDER[@]}"; do
+        parts+=("$release (${KU_CL_KEEP[$release]})")
+        records+=(protect keep "$release" "${KU_CL_KEEP[$release]}")
+    done
+    _ku_cl_plan_line "keep $(ku_join "${parts[@]}")" "${records[@]}"
+    if [[ -n $pending ]]; then
+        text="purge nothing while a reboot is pending: /boot/vmlinuz points at $pending, but"
+        text+=" $KU_CK_RUNNING is running; reboot first"
+        _ku_cl_plan_line "$text" rc skip "$pending" "reboot first"
+    fi
+    if (( ${#KU_CL_RC[@]} )); then
+        records=()
+        for i in "${!KU_CL_RC[@]}"; do
+            records+=(rc purge "${KU_CL_RC[i]}" "${KU_CL_RC_REL[i]}")
+        done
+        text="purge $(_ku_cl_count "${#KU_CL_RC[@]}" package) removed with config files left:"
+        _ku_cl_plan_line "$text $(ku_join "${KU_CL_RC[@]}")" "${records[@]}"
+    fi
+    if (( ${#KU_CL_RC_LEFT[@]} )); then
+        parts=() records=()
+        for i in "${!KU_CL_RC_LEFT[@]}"; do
+            parts+=("${KU_CL_RC_LEFT[i]} (${KU_CL_RC_WHY[i]})")
+            records+=(rc "${KU_CL_RC_ACTION[i]}" "${KU_CL_RC_LEFT[i]}" "${KU_CL_RC_WHY[i]}")
+        done
+        text="leave $(_ku_cl_count "${#KU_CL_RC_LEFT[@]}" package) removed with config files"
+        _ku_cl_plan_line "$text left: $(ku_join "${parts[@]}")" "${records[@]}"
+    fi
+    if (( ${#KU_CL_SET[@]} )); then
+        _ku_cl_plan_line "then sync"
+    fi
+}
 
 # Print one line of the plan: TEXT, unless it is empty, on stderr through ku_plan, whatever the
 # verbosity, and with --porcelain each RECORD after it, the four fields STEP, ACTION, OBJECT and
@@ -278,4 +583,105 @@ _ku_cl_plan_line() {
         printf '%s\n' "$line"
         shift 4
     done
+}
+
+# Print COUNT and NOUN, the noun with an s unless COUNT is 1: "1 package", "2 packages".
+_ku_cl_count() {
+    if (( $1 == 1 )); then
+        printf '%s %s' "$1" "$2"
+    else
+        printf '%s %ss' "$1" "$2"
+    fi
+}
+
+# =======================================================
+#                        PURGE
+# =======================================================
+
+# After the question, check that the plan still holds, or exit: plan again from the same
+# snapshot and simulate the purge again, then check the locks, and last take the snapshot anew,
+# so that it also covers what changed while the others ran. Exits 75 when apt or dpkg runs or
+# the set, its simulation or the snapshot changed, and 3 when the locks cannot be read. A window
+# of milliseconds stays until apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to
+# wait for.
+_ku_cl_recheck() {
+    local now planned=" ${KU_CL_SET[*]} " changed=0
+    if ! _ku_cl_plan || [[ " ${KU_CL_SET[*]} " != "$planned" ]] || ! _ku_cl_exact_set; then
+        changed=1
+    fi
+    _ku_cl_not_busy
+    if ! now=$(_ku_cl_snapshot) || [[ $now != "$KU_CL_SNAPSHOT" ]]; then
+        changed=1
+    fi
+    if (( changed )); then
+        ku_die "$KU_EX_BUSY" "dpkg's packages, apt's auto marks or the links in /boot changed" \
+            "while the question waited, as when apt ran meanwhile, so the plan no longer holds:" \
+            "run cleanup again; nothing was changed"
+    fi
+}
+
+# Run the one apt-get purge of KU_CL_SET, with apt's output on stderr, once the exit handler
+# that reports a purge a signal cut short is registered; then run check's boot-links and
+# kernels items again. Exits as _ku_cl_failed says when apt-get fails, and 4 when an item fails
+# after the purge.
+_ku_cl_purge() {
+    local i status=0 failed=0
+    ku_cleanup_add _ku_cl_interrupted
+    KU_CL_PURGING=1
+    ku_run _ku_cl_child apt-get -y -q -o DPkg::Lock::Timeout=0 \
+        -o APT::Get::AutomaticRemove=false -o APT::Get::AutomaticRemove::Kernels=false purge \
+        "${KU_CL_SET[@]}" >&2 || status=$?
+    KU_CL_PURGING=0
+    if (( status )); then
+        _ku_cl_failed "$status"
+    fi
+    ku_check_items boot-links kernels
+    for i in "${!KU_CHECK_ITEM[@]}"; do
+        if [[ ${KU_CHECK_STATUS[i]} == fail || ${KU_CHECK_STATUS[i]} == skip ]]; then
+            failed=1
+            ku_log error "${KU_CHECK_ITEM[i]}: ${KU_CHECK_DETAIL[i]}"
+        fi
+    done
+    if (( failed )); then
+        ku_die "$KU_EX_WRITE" "the purge ran, but the check of the links and kernels after it" \
+            "fails: run 'kernel-updater check' and settle that before the next reboot"
+    fi
+}
+
+# Exit after the purge failed with STATUS, the advice depending on what is left, in this order:
+# 4 when dpkg's state changed, whether or not apt or dpkg holds a lock now, naming
+# 'dpkg --configure -a' and check; 75 while apt or dpkg holds its lock; and 3 otherwise, apt or
+# apt-guard having refused the purge before dpkg changed anything.
+_ku_cl_failed() {
+    local holder busy=0
+    if _ku_cl_dpkg_changed; then
+        ku_die "$KU_EX_WRITE" "apt-get purge failed with status $1 after dpkg began to change its" \
+            "database: run 'dpkg --configure -a', then 'kernel-updater check'"
+    fi
+    holder=$(_ku_cl_dpkg_busy) || busy=$?
+    if (( busy == 0 )); then
+        ku_die "$KU_EX_BUSY" "apt-get purge failed with status $1 while apt or dpkg runs:" \
+            "$holder; run cleanup again once it is done; nothing was changed"
+    fi
+    ku_die "$KU_EX_REFUSED" "apt-get purge failed with status $1 before dpkg changed anything," \
+        "as when apt or apt-guard refuses it, which its messages above explain; nothing was" \
+        "changed"
+}
+
+# Exit handler, registered right before the purge: when a signal cut the purge short, say
+# whether dpkg's state changed, and if so that 'dpkg --configure -a', then check must settle
+# it; then sync, unless the run synced already. The exit status stays 128+N.
+_ku_cl_interrupted() {
+    if (( KU_CL_PURGING )); then
+        if _ku_cl_dpkg_changed; then
+            ku_log error "the purge was cut short after dpkg began to change its database: run" \
+                "'dpkg --configure -a', then 'kernel-updater check'"
+        else
+            ku_log error "the purge was cut short before dpkg changed its database; nothing was" \
+                "purged"
+        fi
+    fi
+    if (( ! KU_CL_SYNCED )) && ! sync; then
+        ku_log warning "sync failed: run it before the stick is unplugged"
+    fi
 }

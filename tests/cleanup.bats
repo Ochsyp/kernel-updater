@@ -6,15 +6,22 @@
 # and usage errors, root and the tool's lock, the keys detect fills, the identity of /boot, the
 # links in /boot, the kernel packages' states, an interrupted dpkg run, apt's and dpkg's locks
 # as /proc/locks shows them, a clean system with nothing to do, the plan lines in both forms,
-# and the environment the tools it runs get. No identifier is printed.
+# and the environment the tools it runs get; then the purge of the config files removed kernels
+# left: what it plans, keeps and lists, a pending reboot, the dry run and the question, the one
+# purge and the sync, the simulation that must match the plan, changes while the question
+# waits, a purge that fails or is interrupted, and the check after it. No identifier is printed.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
 load helpers
 
+V0=9.0.0+kali-amd64
 V1=9.0.1+kali-amd64
 V2=9.0.2+kali-amd64
 CONF=/etc/kernel-updater.conf
+# The options every apt-get purge cleanup simulates or runs takes, after -s or -y.
+PURGE_OPTS="-q -o DPkg::Lock::Timeout=0 -o APT::Get::AutomaticRemove=false"
+PURGE_OPTS+=" -o APT::Get::AutomaticRemove::Kernels=false purge"
 # The variables that would point dpkg at another database, force it or change apt's
 # configuration, which no tool cleanup runs may inherit.
 OVERRIDES=(DPKG_ROOT DPKG_ADMINDIR DPKG_FORCE APT_CONFIG DPKG_FRONTEND_LOCKED)
@@ -44,10 +51,10 @@ setup() {
     stubs
 }
 
-# Write the stubs that answer for the system: root, the tool's lock, stat, /boot's mount, dpkg
-# and linux-version, and apt-get, apt-mark and dkms, which answer a simulation (-s) with
-# nothing to do and refuse anything else. dpkg-query and those three leave the environment
-# they got in env.NAME beside the stub log.
+# Write the stubs that answer for the system: root, the tool's lock, stat, /boot's mount, dpkg,
+# linux-version and sync; apt-get as the apt-get stub below says; and apt-mark and dkms, which
+# answer a simulation (-s) with nothing to do and refuse anything else. dpkg-query, apt-get,
+# apt-mark and dkms leave the environment they got in env.NAME beside the stub log.
 stubs() {
     local name
     mkstub id <<'EOF'
@@ -79,7 +86,8 @@ EOF
     mkstub linux-version <<'EOF'
 [[ $1 == sort ]] && exec sort -V
 EOF
-    for name in apt-get apt-mark dkms; do
+    mkstub sync
+    for name in apt-mark dkms; do
         mkstub "$name" <<'EOF'
 env > "${STUB_LOG%/*}/env.$STUB_NAME"
 [[ " $* " != *" -s "* ]] || exit 0
@@ -87,6 +95,44 @@ printf '%s: refused under test\n' "$STUB_NAME" >&2
 exit 100
 EOF
     done
+    stub_apt_get
+}
+
+# Write the apt-get stub. A simulation (-s) prints what apt prints for the removal of each
+# package after "purge", except APT_SIM_SKIP, then the lines of APT_SIM_EXTRA, and exits
+# APT_SIM_STATUS; the second one first runs the file APT_SIM_DO names, as an apt run while the
+# question waits would change the system. Any other call, such as the real purge, runs the file
+# APT_DO names and exits APT_STATUS, or refuses with 100 while APT_DO is unset.
+stub_apt_get() {
+    mkstub apt-get <<'EOF'
+env > "${STUB_LOG%/*}/env.$STUB_NAME"
+if [[ " $* " == *" -s "* ]]; then
+    count=${STUB_LOG%/*}/apt-get.count
+    n=$(( $(cat "$count" 2> /dev/null || printf 0) + 1 ))
+    printf '%s\n' "$n" > "$count"
+    if (( n == 2 )) && [[ -n ${APT_SIM_DO:-} ]]; then
+        . "$APT_SIM_DO"
+    fi
+    printf 'Reading package lists...\nBuilding dependency tree...\n'
+    printf 'The following packages will be REMOVED:\n'
+    purge=0
+    for arg in "$@"; do
+        if (( purge )) && [[ $arg != "${APT_SIM_SKIP:-}" ]]; then
+            printf 'Purg %s [9.0-1kali1]\n' "$arg"
+        elif [[ $arg == purge ]]; then
+            purge=1
+        fi
+    done
+    [[ -z ${APT_SIM_EXTRA:-} ]] || printf '%s\n' "$APT_SIM_EXTRA"
+    exit "${APT_SIM_STATUS:-0}"
+fi
+if [[ -z ${APT_DO:-} ]]; then
+    printf '%s: refused under test\n' "$STUB_NAME" >&2
+    exit 100
+fi
+. "$APT_DO"
+exit "${APT_STATUS:-0}"
+EOF
 }
 
 # Write the configuration detect leaves: boot_fs_uuid FS and boot_luks_uuid LUKS, each left out
@@ -131,6 +177,34 @@ private_output() {
     local all="${output,,}${stderr,,}"
     [[ "$all" != *5ca1ab1e* && "$all" != */dev/* ]] ||
         { printf 'an identifier was printed\n' >&2; return 1; }
+}
+
+# Add packages to dpkg's list: NAME and STATE pairs, STATE as ${db:Status-Abbrev} gives it
+# without its blank, such as rc or hc, each with a package version.
+listed() {
+    while (( $# )); do
+        printf '%s\t%s \t%s\n' "$1" "$2" 9.0-1kali1 >> "$DPKG_QUERY_OUT"
+        shift 2
+    done
+}
+
+# Have the real purge run the shell CODE, then exit STATUS, 0 by default.
+on_purge() {
+    export APT_DO="$BATS_TEST_TMPDIR/apt.do" APT_STATUS=${2:-0}
+    printf '%s\n' "$1" > "$APT_DO"
+}
+
+# Have the second simulation of the next run, the one after the question, first run the shell
+# CODE.
+on_recheck() {
+    export APT_SIM_DO="$BATS_TEST_TMPDIR/apt-sim.do"
+    printf '%s\n' "$1" > "$APT_SIM_DO"
+    rm -f "$BATS_TEST_TMPDIR/apt-get.count"
+}
+
+# Print the apt-get and sync calls in the stub log, in order.
+apt_calls() {
+    grep -E '^(apt-get|sync)( |$)' "$STUB_LOG" || true
 }
 
 @test "cleanup --help prints its usage, and an unknown option or an argument exits 64" {
@@ -402,4 +476,268 @@ private_output() {
         vmlinuz.old rc list 'odd name' 'two lines' rc skip x -)" ]
     [ "$stderr" = "$(printf 'kernel-updater: plan: %s\n' \
         'keep A (running, vmlinuz) and B (vmlinuz.old)' 'then sync')" ]
+}
+
+@test "The rc step plans the config files removed kernels left, and lists those it leaves" {
+    local name
+    listed "linux-headers-$V0" rc linux-headers-9.0.0+kali-common rc linux-headers-amd64 rc \
+        "linux-image-$V0" rc "linux-image-$V0-dbg" rc "linux-image-$V0-dbgsym" rc \
+        linux-image-9.0.3+kali-amd64-unsigned rc linux-image-9.0.4+kali-amd64 hc \
+        linux-image-amd64 rc linux-config-9.0 rc linux-kbuild-9.0.0+kali rc linux-libc-dev rc \
+        firmware-linux-free rc
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\t%s\t%s\t%s\n' protect keep "$V2" 'running, vmlinuz' \
+        protect keep "$V1" vmlinuz.old \
+        rc purge "linux-headers-$V0" "$V0" rc purge "linux-image-$V0" "$V0" \
+        rc purge linux-image-9.0.3+kali-amd64-unsigned 9.0.3+kali-amd64 \
+        rc list linux-headers-9.0.0+kali-common 'headers shared by the kernels of 9.0.0+kali' \
+        rc list "linux-image-$V0-dbg" 'a debug build' \
+        rc list "linux-image-$V0-dbgsym" 'a debug build' \
+        rc skip linux-image-9.0.4+kali-amd64 held \
+        rc list linux-kbuild-9.0.0+kali 'build tools shared by the kernels of 9.0.0+kali')" ]
+    [[ "$stderr" == *"plan: keep $V2 (running, vmlinuz) and $V1 (vmlinuz.old)"* ]]
+    [[ "$stderr" == *"plan: purge 3 packages removed with config files left: linux-headers-$V0, \
+linux-image-$V0 and linux-image-9.0.3+kali-amd64-unsigned"* ]]
+    [[ "$stderr" == *"plan: leave 5 packages removed with config files left: \
+linux-headers-9.0.0+kali-common (headers shared by the kernels of 9.0.0+kali), \
+linux-image-$V0-dbg (a debug build), "*", linux-image-9.0.4+kali-amd64 (held) and \
+linux-kbuild-9.0.0+kali (build tools shared by the kernels of 9.0.0+kali)"* ]]
+    [[ "$stderr" == *"plan: then sync"*"dry run: nothing was changed"* ]]
+    [ "$(apt_calls)" = "apt-get -s $PURGE_OPTS linux-headers-$V0 linux-image-$V0 \
+linux-image-9.0.3+kali-amd64-unsigned" ]
+    # Metapackages, linux-config, linux-libc-dev and firmware are no kernel's own packages.
+    for name in linux-headers-amd64 linux-image-amd64 linux-config linux-libc-dev firmware; do
+        [[ "$output$stderr$(< "$STUB_LOG")" != *"$name"* ]] ||
+            { printf '%s was named\n' "$name" >&2; return 1; }
+    done
+    private_output
+    # --no-rc leaves the step out.
+    : > "$STUB_LOG"
+    run_ku cleanup -n --no-rc --porcelain
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    refute_line_match '^apt-get' "$STUB_LOG"
+}
+
+@test "No package of the running kernel's release or of one a /boot link points at is purged" {
+    printf 'initrd 9.0.5\n' > "$ROOT/boot/initrd.img-9.0.5+kali-amd64"
+    ln -sfn initrd.img-9.0.5+kali-amd64 "$ROOT/boot/initrd.img.old"
+    # linux-image-V2-unsigned replaced linux-image-V2, which dpkg keeps with its config files.
+    : > "$DPKG_QUERY_OUT"
+    listed "linux-headers-$V1" rc "linux-image-$V0" rc "linux-image-$V1" ii "linux-image-$V2" rc \
+        "linux-image-$V2-unsigned" ii linux-modules-9.0.5+kali-amd64 rc
+    on_purge ''
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\t%s\t%s\t%s\n' protect keep "$V2" 'running, vmlinuz' \
+        protect keep "$V1" vmlinuz.old protect keep 9.0.5+kali-amd64 initrd.img.old \
+        rc purge "linux-image-$V0" "$V0" rc skip "linux-headers-$V1" 'its kernel is kept' \
+        rc skip "linux-image-$V2" 'its kernel is kept' \
+        rc skip linux-modules-9.0.5+kali-amd64 'its kernel is kept')" ]
+    [[ "$stderr" == *"plan: keep $V2 (running, vmlinuz), $V1 (vmlinuz.old) and \
+9.0.5+kali-amd64 (initrd.img.old)"* ]]
+    [ "$(apt_calls | tail -n 2)" = "$(printf '%s\n' "apt-get -y $PURGE_OPTS linux-image-$V0" \
+        sync)" ]
+    [[ "$stderr" == *"cleanup: purged 1 package"* ]]
+    private_output
+}
+
+@test "While a reboot into the kernel vmlinuz points at is pending, cleanup purges nothing" {
+    listed "linux-image-$V0" rc
+    export UNAME_R=$V1
+    run_ku cleanup --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\t%s\t%s\t%s\n' protect keep "$V1" 'running, vmlinuz.old' \
+        protect keep "$V2" vmlinuz rc skip "$V2" 'reboot first')" ]
+    [[ "$stderr" == *"plan: purge nothing while a reboot is pending: /boot/vmlinuz points at \
+$V2, but $V1 is running; reboot first"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    [[ "$stderr" != *"Run the cleanup"* ]]
+    refute_line_match '^apt-get' "$STUB_LOG"
+    private_output
+}
+
+@test "A dry run only simulates, and a declined question or no terminal exits 10 unpurged" {
+    listed "linux-image-$V0" rc
+    on_purge ''
+    run_ku cleanup -n
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"plan: purge 1 package removed with config files left: linux-image-$V0"* ]]
+    [[ "$stderr" == *"plan: then sync"*"dry run: nothing was changed"* ]]
+    [ "$(apt_calls)" = "apt-get -s $PURGE_OPTS linux-image-$V0" ]
+    # No terminal to ask on, then a no on it.
+    run_ku cleanup
+    [ "$status" -eq 10 ]
+    [[ "$stderr" == *"no terminal to confirm on; pass --yes to go ahead unattended"* ]]
+    printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku cleanup
+    [ "$status" -eq 10 ]
+    [[ "$stderr" == *"Run the cleanup as planned? Purged packages cannot be rolled back. [y/N]"* ]]
+    [[ "$stderr" == *"declined; nothing was changed"* ]]
+    [ -z "$output" ]
+    refute_line_match '^(apt-get -y|sync)( |$)' "$STUB_LOG"
+}
+
+@test "With --yes or a yes, cleanup runs one apt-get purge of the planned set, then sync" {
+    listed "linux-headers-$V0" rc "linux-image-$V0" rc
+    on_purge ''
+    export DPKG_FORCE=all
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(apt_calls)" = "$(printf '%s\n' \
+        "apt-get -s $PURGE_OPTS linux-headers-$V0 linux-image-$V0" \
+        "apt-get -s $PURGE_OPTS linux-headers-$V0 linux-image-$V0" \
+        "apt-get -y $PURGE_OPTS linux-headers-$V0 linux-image-$V0" sync)" ]
+    [[ "$stderr" == *"cleanup: purged 2 packages"* ]]
+    # The purge, which the stub logged last, gets no force flag for dpkg.
+    refute_line_match '^DPKG_FORCE=' "$BATS_TEST_TMPDIR/env.apt-get"
+    : > "$STUB_LOG"
+    printf 'y\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku cleanup
+    [ "$status" -eq 0 ]
+    [ "$(apt_calls | tail -n 2)" = "$(printf '%s\n' \
+        "apt-get -y $PURGE_OPTS linux-headers-$V0 linux-image-$V0" sync)" ]
+    private_output
+}
+
+@test "A purge apt would widen, mix with installs or not simulate refuses with 3, unpurged" {
+    listed "linux-image-$V0" rc
+    on_purge ''
+    export APT_SIM_EXTRA='Purg linux-image-amd64 [2026.1]'
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"the purge cannot run as planned: apt would also remove linux-image-amd64; \
+nothing was changed"* ]]
+    [ -z "$output" ]
+    export APT_SIM_EXTRA='Inst linux-image-9.0.9+kali-amd64 (9.0.9-1 kali-rolling [amd64])'
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"apt would also install or configure linux-image-9.0.9+kali-amd64;"* ]]
+    export APT_SIM_EXTRA='Conf linux-base (4.12)'
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"apt would also install or configure linux-base;"* ]]
+    export APT_SIM_EXTRA="" APT_SIM_SKIP="linux-image-$V0"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"apt would not remove linux-image-$V0;"* ]]
+    export APT_SIM_SKIP="" APT_SIM_STATUS=100
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"apt-get cannot simulate the purge (status 100); nothing was changed"* ]]
+    [ -z "$output" ]
+    refute_line_match '^(apt-get -y|sync)( |$)' "$STUB_LOG"
+    private_output
+}
+
+@test "dpkg's status, apt's auto marks, a link or a lock that changes while it asks exits 75" {
+    local change
+    listed "linux-image-$V0" rc
+    on_purge ''
+    lock_line 4242 /var/lib/dpkg/lock-frontend apt-get > "$BATS_TEST_TMPDIR/held"
+    # shellcheck disable=SC2016 # the stub expands the variables
+    for change in 'printf "Package: x\n" >> "$KU_ROOT/var/lib/dpkg/status"' \
+        'printf "Package: x\nAuto-Installed: 1\n" >> "$KU_ROOT/var/lib/apt/extended_states"' \
+        'ln -sfn vmlinuz-9.0.2+kali-amd64 "$KU_ROOT/boot/vmlinuz.old"'; do
+        on_recheck "$change"
+        run_ku cleanup --yes
+        [ "$status" -eq 75 ] || { printf '%s: exited %s\n' "$change" "$status" >&2; return 1; }
+        [[ "$stderr" == *"changed while the question waited"*"so the plan no longer holds: run \
+cleanup again; nothing was changed"* ]]
+    done
+    ln -sfn "vmlinuz-$V1" "$ROOT/boot/vmlinuz.old"
+    on_recheck "cat '$BATS_TEST_TMPDIR/held' > \"\$KU_ROOT/proc/locks\""
+    run_ku cleanup --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"apt or dpkg is running: PID 4242 (apt-get) holds"* ]]
+    refute_line_match '^(apt-get -y|sync)( |$)' "$STUB_LOG"
+    private_output
+}
+
+@test "A failed purge exits 4 once dpkg's database changed, else 75 while a lock is held, else 3" {
+    export HELD="$BATS_TEST_TMPDIR/held"
+    listed "linux-image-$V0" rc
+    lock_line 4242 /var/lib/dpkg/lock-frontend apt-get > "$HELD"
+    # dpkg changed its status file, with apt's lock held when apt-get failed or not.
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'printf "Package: x\n" >> "$KU_ROOT/var/lib/dpkg/status"' 100
+    run_ku cleanup --yes
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"apt-get purge failed with status 100 after dpkg began to change its \
+database: run 'dpkg --configure -a', then 'kernel-updater check'"* ]]
+    [ "$(apt_calls | tail -n 1)" = sync ]
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'printf "Package: y\n" >> "$KU_ROOT/var/lib/dpkg/status"
+        cat "$HELD" > "$KU_ROOT/proc/locks"' 100
+    run_ku cleanup --yes
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"run 'dpkg --configure -a', then 'kernel-updater check'"* ]]
+    # So does dpkg's journal alone, which dpkg folds into the status file only later.
+    : > "$ROOT/proc/locks"
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge ': > "$KU_ROOT/var/lib/dpkg/updates/0000"' 100
+    run_ku cleanup --yes
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"after dpkg began to change its database"* ]]
+    rm "$ROOT/var/lib/dpkg/updates/0000"
+    # Nothing changed, and apt or dpkg holds its lock now.
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'cat "$HELD" > "$KU_ROOT/proc/locks"' 100
+    run_ku cleanup --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"apt-get purge failed with status 100 while apt or dpkg runs: PID 4242 \
+(apt-get) holds /var/lib/dpkg/lock-frontend; run cleanup again once it is done; nothing was \
+changed"* ]]
+    # Nothing changed and no lock is held: apt or apt-guard refused.
+    : > "$ROOT/proc/locks"
+    on_purge '' 100
+    run_ku cleanup --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"apt-get purge failed with status 100 before dpkg changed anything"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    [ -z "$output" ]
+    private_output
+}
+
+@test "An interrupt during the purge exits 130 and says how to settle what dpkg left" {
+    listed "linux-image-$V0" rc
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'printf "Package: x\n" >> "$KU_ROOT/var/lib/dpkg/status"
+        kill -INT "$PPID"'
+    run_ku cleanup --yes
+    [ "$status" -eq 130 ]
+    [[ "$stderr" == *"interrupted by SIGINT"* ]]
+    [[ "$stderr" == *"the purge was cut short after dpkg began to change its database: run \
+'dpkg --configure -a', then 'kernel-updater check'"* ]]
+    [[ "$stderr" != *"cleanup: purged"* ]]
+    [ "$(apt_calls | tail -n 1)" = sync ]
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'kill -INT "$PPID"'
+    run_ku cleanup --yes
+    [ "$status" -eq 130 ]
+    [[ "$stderr" == *"the purge was cut short before dpkg changed its database; nothing was \
+purged"* ]]
+    private_output
+}
+
+@test "boot-links or kernels failing in the check after the purge exits 4" {
+    listed "linux-image-$V0" rc
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'rm "$KU_ROOT/boot/initrd.img.old"'
+    run_ku cleanup --yes
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"error: boot-links: initrd.img.old is missing or no symlink"* ]]
+    [[ "$stderr" == *"the purge ran, but the check of the links and kernels after it fails"* ]]
+    ln -s "initrd.img-$V1" "$ROOT/boot/initrd.img.old"
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'printf "linux-modules-9.0.2+kali-amd64\tiF \t9-1kali1\n" >> "$DPKG_QUERY_OUT"'
+    run_ku cleanup --yes
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"error: kernels: $V2 is half-configured (iF): run dpkg --configure -a"* ]]
+    [ "$(apt_calls | tail -n 1)" = sync ]
+    private_output
 }
