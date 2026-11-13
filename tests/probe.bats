@@ -76,6 +76,43 @@ dpkg_lists() {
     [ "$output" = $'9.0.1+kali-amd64\thi' ]
 }
 
+@test "The kernel package probe gives each versioned package its kind and release" {
+    dpkg_lists firmware-linux-free 'ii ' linux-base 'ii ' linux-base-9.0.4+kali-amd64 'ii ' \
+        linux-binary-9.0.4+kali-amd64 'ii ' linux-config-9.0 'rc ' \
+        linux-headers-9.0.2+kali-amd64 'rc ' linux-headers-9.0.2+kali-common 'rc ' \
+        linux-headers-9.0.2+kali-common-rt 'rc ' linux-headers-amd64 'ii ' \
+        linux-image-9.0.1+kali-amd64 'rc ' linux-image-9.0.2+kali-amd64-dbg 'rc ' \
+        linux-image-9.0.2+kali-amd64-unsigned-dbgsym 'rc ' \
+        linux-image-9.0.3+kali-amd64-unsigned 'hc ' linux-image-9.0.4+kali-amd64 'ii ' \
+        linux-image-9.0.5+kali-amd64 'un ' linux-image-amd64 'ii ' linux-kbuild-9.0.2+kali 'rc ' \
+        linux-libc-dev 'ii ' linux-modules-9.0.4+kali-amd64:amd64 'ii ' 'linux-image-9.0;id' 'rc '
+    run ku_probe_kernel_packages
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\t%s\t9.0-1kali1\t%s\t%s\n' \
+        linux-base-9.0.4+kali-amd64 ii base 9.0.4+kali-amd64 \
+        linux-binary-9.0.4+kali-amd64 ii binary 9.0.4+kali-amd64 \
+        linux-headers-9.0.2+kali-amd64 rc headers 9.0.2+kali-amd64 \
+        linux-headers-9.0.2+kali-common rc common 9.0.2+kali \
+        linux-headers-9.0.2+kali-common-rt rc common 9.0.2+kali \
+        linux-image-9.0.1+kali-amd64 rc image 9.0.1+kali-amd64 \
+        linux-image-9.0.2+kali-amd64-dbg rc dbg 9.0.2+kali-amd64 \
+        linux-image-9.0.2+kali-amd64-unsigned-dbgsym rc dbg 9.0.2+kali-amd64 \
+        linux-image-9.0.3+kali-amd64-unsigned hc image 9.0.3+kali-amd64 \
+        linux-image-9.0.4+kali-amd64 ii image 9.0.4+kali-amd64 \
+        linux-kbuild-9.0.2+kali rc kbuild 9.0.2+kali \
+        linux-modules-9.0.4+kali-amd64:amd64 ii modules 9.0.4+kali-amd64)" ]
+    [[ "$(< "$STUB_LOG")" == *" linux-image-\\* linux-binary-\\* linux-modules-\\*"* ]]
+    [[ "$(< "$STUB_LOG")" == *" linux-base-\\* linux-headers-\\* linux-kbuild-\\*"* ]]
+    # dpkg-query's exit 1 for a pattern without a match still counts; a failure returns 1.
+    export DPKG_QUERY_STATUS=1
+    run ku_probe_kernel_packages
+    [ "$status" -eq 0 ]
+    [ "${#lines[@]}" -eq 12 ]
+    export DPKG_QUERY_STATUS=2
+    run ku_probe_kernel_packages
+    [ "$status" -eq 1 ]
+}
+
 @test "dpkg-query's exit 1 for a pattern without a match still counts, and a failure returns 1" {
     dpkg_lists linux-image-9.0.1+kali-amd64 'ii '
     export DPKG_QUERY_STATUS=1

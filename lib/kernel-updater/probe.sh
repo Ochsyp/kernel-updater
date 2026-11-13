@@ -13,7 +13,7 @@
 # -binary, -modules and -base packages, -unsigned builds included and -dbg and -dbgsym left out.
 # Returns 1 when dpkg-query fails and 2 when neither linux-version nor sort -V orders them.
 ku_probe_kernels() {
-    local out status=0 name abbrev version rank versions sorted
+    local out status=0 name abbrev kind version rank versions sorted
     local -A state=() worst=()
     # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
     out=$(dpkg-query -W -f '${binary:Package}\t${db:Status-Abbrev}\t${Version}\n' \
@@ -21,11 +21,8 @@ ku_probe_kernels() {
     # dpkg-query exits 1 when a pattern matches no package, and still lists the others.
     (( status <= 1 )) || return 1
     while IFS=$'\t' read -r name abbrev _; do
-        [[ ${name%%:*} =~ ^linux-(image|binary|modules|base)-([0-9].*)$ ]] || continue
-        version=${BASH_REMATCH[2]%-unsigned}
-        if [[ $version == *-dbg || $version == *-dbgsym ]] || ! ku_valid_release "$version"; then
-            continue
-        fi
+        _ku_probe_kernel_name "$name" kind version || continue
+        [[ $kind =~ ^(image|binary|modules|base)$ ]] || continue
         abbrev=${abbrev// /}
         # STATE is the one that matters most: a transitional state such as iU or iF, then hi,
         # then ii, and rc only when every package is rc: when linux-image-V-unsigned replaces
@@ -56,6 +53,55 @@ ku_probe_kernels() {
             printf '%s\t%s\n' "$version" "${state[$version]}"
         fi
     done <<< "$sorted"
+}
+
+# Print NAME<TAB>STATE<TAB>VERSION<TAB>KIND<TAB>RELEASE for each versioned kernel package dpkg
+# knows in a state other than not-installed, in dpkg's order: STATE is ${db:Status-Abbrev}
+# without blanks, such as rc, VERSION the package's version, or - without one, and KIND and
+# RELEASE what _ku_probe_kernel_name reads from the name. Metapackages, linux-base,
+# linux-config-X.Y, linux-libc-dev and firmware are left out. Returns 1 when dpkg-query fails.
+ku_probe_kernel_packages() {
+    local out status=0 name abbrev version kind release
+    # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
+    out=$(dpkg-query -W -f '${binary:Package}\t${db:Status-Abbrev}\t${Version}\n' \
+        'linux-image-*' 'linux-binary-*' 'linux-modules-*' 'linux-base-*' 'linux-headers-*' \
+        'linux-kbuild-*' 2> /dev/null) || status=$?
+    # dpkg-query exits 1 when a pattern matches no package, and still lists the others.
+    (( status <= 1 )) || return 1
+    while IFS=$'\t' read -r name abbrev version; do
+        _ku_probe_kernel_name "$name" kind release || continue
+        abbrev=${abbrev// /}
+        [[ $abbrev != ?n ]] || continue
+        printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$abbrev" "${version:--}" "$kind" "$release"
+    done <<< "$out"
+}
+
+# Set the variables named KIND_VAR and RELEASE_VAR from the package NAME, whose architecture
+# after a colon does not count, and return 0 when it names a versioned kernel package: image,
+# binary, modules, base or headers, with the kernel release in the name, an -unsigned build's
+# that of the build it stands in for; common, the headers the flavours of one ABI share, as in
+# linux-headers-6.12.38+kali-common, and kbuild, their build tools, each with the ABI in the
+# name; or dbg for a -dbg or -dbgsym build, with its kernel's release. The release must have
+# the shape of one. Returns 1, both variables empty, for any other name. Shared by
+# ku_probe_kernels and ku_probe_kernel_packages.
+_ku_probe_kernel_name() {
+    local pk_name=${1%%:*} pk_kind="" pk_release=""
+    if [[ $pk_name =~ ^linux-(image|binary|modules|base|headers)-([0-9].*)$ ]]; then
+        pk_kind=${BASH_REMATCH[1]} pk_release=${BASH_REMATCH[2]%-unsigned}
+        if [[ $pk_release =~ ^(.+)-(dbg|dbgsym)$ ]]; then
+            pk_kind=dbg pk_release=${BASH_REMATCH[1]%-unsigned}
+        elif [[ $pk_kind == headers && $pk_release =~ ^(.+)-common(-rt)?$ ]]; then
+            pk_kind=common pk_release=${BASH_REMATCH[1]}
+        fi
+    elif [[ $pk_name =~ ^linux-kbuild-([0-9].*)$ ]]; then
+        pk_kind=kbuild pk_release=${BASH_REMATCH[1]}
+    fi
+    if [[ -z $pk_kind ]] || ! ku_valid_release "$pk_release"; then
+        pk_kind="" pk_release=""
+    fi
+    printf -v "$2" '%s' "$pk_kind"
+    printf -v "$3" '%s' "$pk_release"
+    [[ -n $pk_kind ]]
 }
 
 # Print SOURCE<TAB>FSTYPE<TAB>UUID of the filesystem mounted at /boot, the topmost one when
