@@ -263,20 +263,26 @@ with the owner's original script.
   real NTFS and rolls it back. The `ntfs` job installs `dmsetup` for it.
 - `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules] [-n] [-y] [--porcelain]`
   purges, after one question and in one `apt-get purge` run, the config files removed kernels
-  left, once a simulation shows that apt would remove exactly those packages and install or
-  configure none. It never purges a package of the running kernel's release or of one a link
-  in `/boot` points at, and purges nothing while a reboot into the kernel `/boot/vmlinuz`
-  points at is pending. Held packages, debug builds and the headers and build tools the
-  kernels of one ABI share are only listed, and metapackages are never touched. `--no-rc`
-  leaves the step out; `--no-autoremove` and `--no-modules` have nothing to leave out yet.
-  First it checks, as root, under the tool's lock and in a dry run too, that it may run: it
-  refuses with 3 until `migrate --stage detect` set `boot_fs_uuid` and `boot_luks_uuid`, exits
-  66 while `/boot` is not mounted and 78 on another `/boot` or LUKS container, and refuses with
-  3 while `apt-get`, `apt-mark` or `dpkg-query` is missing, while the links in `/boot` are not
-  kept there or do not reach a kernel, naming `migrate --stage system`, while `check`'s
-  `kernels` item fails, and after an interrupted dpkg run. It exits 75 while apt or dpkg holds
-  its lock, which it finds in `/proc/locks` and names by PID and command, and when dpkg's
-  database, apt's auto marks, the links or the planned set changed while the question waited.
+  left and the old kernels apt's autoremove names, once a simulation shows that apt would
+  remove exactly those packages and install or configure none. It never purges a package of
+  the running kernel's release or of one a link in `/boot` points at, nor one that shares its
+  version with such a package, as the headers of the `.old` kernel's ABI do, and purges
+  nothing while a reboot into the kernel `/boot/vmlinuz` points at is pending. Of the config
+  files left, those of held packages, debug builds and the headers and build tools the kernels
+  of one ABI share are only listed. Of what apt's autoremove names, held packages, debug builds
+  and anything that is no versioned kernel package, metapackages included, are only listed,
+  and old kernels marked manual, which apt never prunes, are listed with an `apt-mark auto`
+  hint. `--no-rc` and `--no-autoremove` leave their step out; `--no-modules` has nothing to
+  leave out yet. First it checks, as root, under the tool's lock and in a dry run too, that it
+  may run: it refuses with 3 until `migrate --stage detect` set `boot_fs_uuid` and
+  `boot_luks_uuid`, exits 66 while `/boot` is not mounted and 78 on another `/boot` or LUKS
+  container, and refuses with 3 while `apt-get`, `apt-mark` or `dpkg-query` is missing, while
+  the links in `/boot` are not kept there or do not reach a kernel, naming
+  `migrate --stage system`, while `check`'s `kernels` item fails, after an interrupted dpkg
+  run, and when apt's simulation of its autoremove fails or would install or configure a
+  package. It exits 75 while apt or dpkg holds its lock, which it finds in `/proc/locks` and
+  names by PID and command, and when dpkg's database, apt's auto marks, what apt's autoremove
+  names, the links or the planned set changed while the question waited.
   A purge that fails exits 4 once dpkg began to change its database, naming
   `dpkg --configure -a` and `check`, else 75 while apt or dpkg holds its lock, else 3; one that
   a signal cuts short says the same and exits 128+N. After the purge, `check`'s `boot-links`
@@ -285,8 +291,11 @@ with the owner's original script.
   tools it runs inherit no `DPKG_ROOT`, `DPKG_ADMINDIR`, `DPKG_FORCE`, `APT_CONFIG`,
   `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`, and run with `LC_ALL=C.UTF-8`.
 - `tests/cleanup.bats`, which runs `cleanup` on a migrated system with stub tools, and
-  `tests/container/cleanup.bats`, which purges a dummy kernel with the real apt-get and dpkg
-  and finds a real fcntl lock on dpkg's frontend lock in `/proc/locks`.
+  `tests/container/cleanup.bats`, which purges dummy kernels with the real apt-get and dpkg,
+  among them the old kernel apt's autoremove names once the dummies are marked auto, keeps the
+  kernel `vmlinuz.old` points at when apt keeps another, refuses a purge that would take along
+  a package that depends on an old kernel's headers, and finds a real fcntl lock on dpkg's
+  frontend lock in `/proc/locks`.
 
 ### Changed
 
@@ -347,7 +356,8 @@ with the owner's original script.
   kbuild and debug builds included, with its kind and release for `cleanup`; what `check`
   reports does not change.
 - The container suite's `reset_system` also purges the split, modules, base and headers
-  dummies and empties `cleanup`'s quarantine, and `run_container_cleanup` runs `cleanup` there
-  with `KU_TEST=1`, which lets `SOURCE_DATE_EPOCH` through to apt.
+  dummies and the dummy that depends on headers, and empties `cleanup`'s quarantine, and
+  `run_container_cleanup` runs `cleanup` there with `KU_TEST=1`, which lets
+  `SOURCE_DATE_EPOCH` through to apt.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

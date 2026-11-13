@@ -242,15 +242,15 @@ install_kernels() {
     done
 }
 
-# Purge every dummy kernel package, whatever its state, the split ones and any headers
-# included, empty /boot and cleanup's quarantine, remove the default links from / and write
-# /etc/kernel-img.conf with link_in_boot = VALUE, yes or no.
+# Purge every dummy kernel package, whatever its state, the split ones, any headers and
+# ku-test-dkms, which depends on headers, included, empty /boot and cleanup's quarantine, remove
+# the default links from / and write /etc/kernel-img.conf with link_in_boot = VALUE, yes or no.
 reset_system() {
     local -a packages=()
     # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
     mapfile -t packages < <(dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' \
         'linux-image-9.*' 'linux-binary-9.*' 'linux-modules-9.*' 'linux-base-9.*' \
-        'linux-headers-9.*' 2> /dev/null | awk '$1 !~ /^.n$/ { print $2 }')
+        'linux-headers-9.*' ku-test-dkms 2> /dev/null | awk '$1 !~ /^.n$/ { print $2 }')
     if (( ${#packages[@]} )); then
         printf '%s install\n' "${packages[@]}" | dpkg --set-selections
         dpkg --force-hold --force-remove-reinstreq --purge "${packages[@]}"

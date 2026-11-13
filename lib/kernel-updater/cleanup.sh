@@ -32,14 +32,24 @@ KU_CL_SNAPSHOT=""
 declare -gA KU_CL_KEEP=()
 KU_CL_KEEP_ORDER=() KU_CL_PENDING=""
 
+# The kernel packages dpkg lists, as ku_probe_kernel_packages printed them for the plan.
+KU_CL_PACKAGES=""
+
 # The rc step: the packages it purges (KU_CL_RC) and their releases (KU_CL_RC_REL), and those
 # it leaves (KU_CL_RC_LEFT), each with the plan's action, skip or list (KU_CL_RC_ACTION), and
 # why (KU_CL_RC_WHY).
 KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
 
-# The packages the one apt-get purge removes (KU_CL_SET); those the last simulation would
-# remove (KU_CL_SIM) and install or configure (KU_CL_SIM_OTHER); and how the simulation of the
-# purge differs from the plan (KU_CL_WHY).
+# The autoremove step: the packages it purges (KU_CL_AR) and their releases (KU_CL_AR_REL), and
+# those it leaves (KU_CL_AR_LEFT), each with the plan's action, skip or list (KU_CL_AR_ACTION),
+# and why (KU_CL_AR_WHY); and the packages of old kernels marked manual, which apt never
+# prunes (KU_CL_MANUAL).
+KU_CL_AR=() KU_CL_AR_REL=() KU_CL_AR_LEFT=() KU_CL_AR_ACTION=() KU_CL_AR_WHY=() KU_CL_MANUAL=()
+
+# The packages the one apt-get purge removes, the rc step's, then the autoremove step's
+# (KU_CL_SET); those the last simulation would remove (KU_CL_SIM) and install or configure
+# (KU_CL_SIM_OTHER); and why the plan cannot be made, or how the simulation of the purge
+# differs from it (KU_CL_WHY).
 KU_CL_SET=() KU_CL_SIM=() KU_CL_SIM_OTHER=() KU_CL_WHY=""
 
 # 1 while apt-get purges, for the exit handler, and 1 once the run synced after the purge.
@@ -80,8 +90,8 @@ EOF
 # dry run too, take the snapshot, plan the purge and print the plan. With something to purge
 # and no dry run, ask once, check the plan again, run the one apt-get purge, check the links and
 # kernels again and sync. Exits 0 when done, when nothing was left to do and after a dry run; 3
-# when a check or the purge's simulation refuses, or apt refused the purge; 4 when the purge
-# stopped after dpkg began to change its database, or the check after it fails; 10 when
+# when a check or a simulation refuses, or apt refused the purge; 4 when the purge stopped
+# after dpkg began to change its database, or the check after it fails; 10 when
 # declined; 64 on a usage error; 66 when /boot is not mounted or its LUKS header cannot be read;
 # 75 while another run, apt or dpkg holds a lock, or when the system changed while the question
 # waited; 77 when not root; 78 on a bad configuration or another /boot; and 128+N when signal N
@@ -114,7 +124,7 @@ ku_cmd_cleanup() {
             "nothing was changed"
     fi
     if ! _ku_cl_plan; then
-        ku_die "$KU_EX_REFUSED" "dpkg-query cannot list the kernel packages; nothing was changed"
+        ku_die "$KU_EX_REFUSED" "$KU_CL_WHY; nothing was changed"
     fi
     if (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; then
         ku_die "$KU_EX_REFUSED" "the purge cannot run as planned: $KU_CL_WHY; nothing was changed"
@@ -369,16 +379,30 @@ _ku_cl_dpkg_changed() {
 # =======================================================
 
 # Work out the plan from KU_CL_SNAPSHOT and the packages dpkg lists: the releases cleanup keeps
-# and a pending reboot (_ku_cl_protected); the rc step, unless --no-rc or a pending reboot
-# leaves it out; and KU_CL_SET, the packages the one purge removes. Returns 1 when dpkg-query
-# cannot list the kernel packages.
+# and a pending reboot (_ku_cl_protected); unless a pending reboot puts the purges off, the rc
+# step and the autoremove step, each unless --no-rc or --no-autoremove leaves it out; and
+# KU_CL_SET, the packages the one purge removes, the rc step's first. Returns 1, with KU_CL_WHY
+# saying why, when dpkg-query cannot list the kernel packages or the autoremove step cannot be
+# planned.
 _ku_cl_plan() {
     KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
+    KU_CL_AR=() KU_CL_AR_REL=() KU_CL_AR_LEFT=() KU_CL_AR_ACTION=() KU_CL_AR_WHY=()
+    KU_CL_MANUAL=() KU_CL_SET=() KU_CL_PACKAGES="" KU_CL_WHY=""
     _ku_cl_protected
-    if _ku_cl_wanted rc && [[ -z $KU_CL_PENDING ]]; then
-        _ku_cl_plan_rc || return 1
+    if [[ -n $KU_CL_PENDING ]] || ! { _ku_cl_wanted rc || _ku_cl_wanted autoremove; }; then
+        return 0
     fi
-    KU_CL_SET=("${KU_CL_RC[@]}")
+    if ! KU_CL_PACKAGES=$(ku_probe_kernel_packages); then
+        KU_CL_WHY="dpkg-query cannot list the kernel packages"
+        return 1
+    fi
+    if _ku_cl_wanted rc; then
+        _ku_cl_plan_rc
+    fi
+    if _ku_cl_wanted autoremove; then
+        _ku_cl_plan_autoremove || return 1
+    fi
+    KU_CL_SET=("${KU_CL_RC[@]}" "${KU_CL_AR[@]}")
 }
 
 # Set KU_CL_KEEP and KU_CL_KEEP_ORDER to the releases nothing named for may be purged or moved:
@@ -423,15 +447,14 @@ _ku_cl_keep() {
     fi
 }
 
-# Plan the rc step from the kernel packages dpkg lists (ku_probe_kernel_packages): a package
-# removed with its config files left, status c with any want but hold, of kind image, binary,
-# modules, base or headers, is purged unless cleanup keeps its release. A held one and one of a
-# kept release are skipped, and a debug build and the headers and build tools an ABI's kernels
-# share are listed; the plan shows each. Returns 1 when dpkg-query cannot list the packages.
+# Plan the rc step from the kernel packages dpkg lists (KU_CL_PACKAGES): a package removed with
+# its config files left, status c with any want but hold, of kind image, binary, modules, base
+# or headers, is purged unless cleanup keeps its release. A held one and one of a kept release
+# are skipped, and a debug build and the headers and build tools an ABI's kernels share are
+# listed; the plan shows each.
 _ku_cl_plan_rc() {
-    local out name state kind release
+    local name state kind release
     KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
-    out=$(ku_probe_kernel_packages) || return 1
     while IFS=$'\t' read -r name state _ kind release; do
         [[ -n $name && $state == ?c ]] || continue
         case $kind in
@@ -449,7 +472,7 @@ _ku_cl_plan_rc() {
                 fi
                 ;;
         esac
-    done <<< "$out"
+    done <<< "$KU_CL_PACKAGES"
 }
 
 # Record that the rc step leaves the package NAME, with the plan's ACTION, skip or list, and
@@ -460,22 +483,150 @@ _ku_cl_rc_leave() {
     KU_CL_RC_WHY+=("$3")
 }
 
+# Plan the autoremove step. apt decides what is garbage: the source is its simulation of
+# 'autoremove --purge', and the kernel packages dpkg lists (KU_CL_PACKAGES) say more about each
+# package it names. A versioned kernel package, of kind image, binary, modules, base or headers,
+# or the headers or build tools the kernels of one ABI share, is purged, an -unsigned build
+# counting for its release, unless cleanup keeps its release, dpkg does not list it as
+# installed, its version is that of an installed package of a kept release, as with the headers
+# the .old kernel shares with the others of its ABI, or it is held or marked manual. A package
+# the rc step purges is left out; a debug build and any other package are only listed. The
+# installed kernel packages of the other releases that apt-mark showmanual names, which apt
+# never prunes, go to KU_CL_MANUAL. Returns 1, with KU_CL_WHY saying why, when the simulation
+# fails or would install or configure a package, or apt-mark cannot list the manual marks.
+_ku_cl_plan_autoremove() {
+    local name key state version kind release i out status=0
+    local -a check=() check_rel=() others=()
+    local -A dpkg_state=() dpkg_version=() kept=() taken=() manual=()
+    KU_CL_AR=() KU_CL_AR_REL=() KU_CL_AR_LEFT=() KU_CL_AR_ACTION=() KU_CL_AR_WHY=()
+    KU_CL_MANUAL=()
+    _ku_cl_simulate -o APT::Get::AutomaticRemove::Kernels=false autoremove --purge || status=$?
+    if (( status )); then
+        KU_CL_WHY="apt-get cannot simulate its autoremove (status $status)"
+        return 1
+    fi
+    if (( ${#KU_CL_SIM_OTHER[@]} )); then
+        KU_CL_WHY="apt's autoremove would also install or configure"
+        KU_CL_WHY+=" $(ku_join "${KU_CL_SIM_OTHER[@]}")"
+        return 1
+    fi
+    # dpkg's state and version of each kernel package, and the versions of the installed
+    # packages of the releases cleanup keeps.
+    while IFS=$'\t' read -r name state version kind release; do
+        [[ -n $name ]] || continue
+        _ku_cl_bare "$name" key
+        dpkg_state[$key]=$state
+        dpkg_version[$key]=$version
+        if [[ -n ${KU_CL_KEEP[$release]+set} && $state == ?[!c]* && $version != - ]]; then
+            kept[$version]=1
+        fi
+    done <<< "$KU_CL_PACKAGES"
+    for name in "${KU_CL_RC[@]}"; do
+        _ku_cl_bare "$name" key
+        taken[$key]=1
+    done
+    for name in "${KU_CL_SIM[@]}"; do
+        _ku_cl_bare "$name" key
+        [[ -z ${taken[$key]+set} ]] || continue
+        taken[$key]=1
+        state=${dpkg_state[$key]:-} version=${dpkg_version[$key]:-}
+        if ! _ku_probe_kernel_name "$name" kind release; then
+            _ku_cl_ar_leave "$name" list "not a versioned kernel package"
+        elif [[ $kind == dbg ]]; then
+            _ku_cl_ar_leave "$name" list "a debug build"
+        elif [[ -n ${KU_CL_KEEP[$release]+set} ]]; then
+            _ku_cl_ar_leave "$name" skip "its kernel is kept"
+        elif [[ $state != ?[!c]* ]]; then
+            _ku_cl_ar_leave "$name" skip "dpkg does not list it as installed"
+        elif [[ -n ${kept[$version]+set} ]]; then
+            _ku_cl_ar_leave "$name" skip "shares its version with a kept kernel"
+        elif [[ $state == h* ]]; then
+            _ku_cl_ar_leave "$name" skip held
+        else
+            check+=("$name")
+            check_rel+=("$release")
+        fi
+    done
+    # The installed kernel packages of the other releases that apt does not name, which it
+    # never does while one is marked manual; a held one stays unnamed.
+    while IFS=$'\t' read -r name state version kind release; do
+        [[ -n $name ]] || continue
+        _ku_cl_bare "$name" key
+        if [[ -z ${taken[$key]+set} && $kind != dbg && $state == [!h][!c]* &&
+            -z ${KU_CL_KEEP[$release]+set} && -z ${kept[$version]+set} ]]; then
+            others+=("$name")
+        fi
+    done <<< "$KU_CL_PACKAGES"
+    if (( ${#check[@]} || ${#others[@]} )); then
+        out=$(_ku_cl_child apt-mark showmanual) || status=$?
+        if (( status )); then
+            KU_CL_WHY="apt-mark cannot list the packages marked manual (status $status)"
+            return 1
+        fi
+        while IFS= read -r name; do
+            [[ -n $name ]] || continue
+            _ku_cl_bare "$name" key
+            manual[$key]=1
+        done <<< "$out"
+    fi
+    for i in "${!check[@]}"; do
+        _ku_cl_bare "${check[i]}" key
+        if [[ -n ${manual[$key]+set} ]]; then
+            KU_CL_MANUAL+=("${check[i]}")
+        else
+            KU_CL_AR+=("${check[i]}")
+            KU_CL_AR_REL+=("${check_rel[i]}")
+        fi
+    done
+    for name in "${others[@]}"; do
+        _ku_cl_bare "$name" key
+        if [[ -n ${manual[$key]+set} ]]; then
+            KU_CL_MANUAL+=("$name")
+        fi
+    done
+}
+
+# Record that the autoremove step leaves the package NAME, with the plan's ACTION, skip or
+# list, and WHY.
+_ku_cl_ar_leave() {
+    KU_CL_AR_LEFT+=("$1")
+    KU_CL_AR_ACTION+=("$2")
+    KU_CL_AR_WHY+=("$3")
+}
+
+# Set the variable named VAR to the package NAME without the architecture after a colon, which
+# dpkg-query prints for some packages and apt and apt-mark leave out for the native one.
+_ku_cl_bare() {
+    local cl_bare=${1%%:*}
+    printf -v "$2" '%s' "${cl_bare:-$1}"
+}
+
 # Run apt-get's simulation (-s) of ARGS, quietly and without waiting for a lock, and set
 # KU_CL_SIM to the packages it would remove, from its Purg and Remv lines, and KU_CL_SIM_OTHER
-# to those it would install or configure, from its Inst and Conf lines. Each line it prints
-# shows as a debug line. Returns apt-get's status.
+# to those it would install or configure, from its Inst and Conf lines, each once and in apt's
+# order. Each line it prints shows as a debug line. Returns apt-get's status.
 _ku_cl_simulate() {
-    local out line status=0
+    local out line name status=0
+    local -A removed=() other=()
     KU_CL_SIM=() KU_CL_SIM_OTHER=()
     out=$(_ku_cl_child apt-get -s -q -o DPkg::Lock::Timeout=0 "$@") || status=$?
     while IFS= read -r line; do
         [[ -n $line ]] || continue
         ku_log debug "apt-get -s: ${line//[[:cntrl:]]/ }"
-        if [[ $line =~ ^(Purg|Remv)\ ([^[:space:][:cntrl:]]+) ]]; then
-            KU_CL_SIM+=("${BASH_REMATCH[2]}")
-        elif [[ $line =~ ^(Inst|Conf)\ ([^[:space:][:cntrl:]]+) ]]; then
-            KU_CL_SIM_OTHER+=("${BASH_REMATCH[2]}")
-        fi
+        [[ $line =~ ^(Purg|Remv|Inst|Conf)\ ([^[:space:][:cntrl:]]+) ]] || continue
+        name=${BASH_REMATCH[2]}
+        case ${BASH_REMATCH[1]} in
+            Purg | Remv)
+                [[ -z ${removed[$name]+set} ]] || continue
+                removed[$name]=1
+                KU_CL_SIM+=("$name")
+                ;;
+            *)
+                [[ -z ${other[$name]+set} ]] || continue
+                other[$name]=1
+                KU_CL_SIM_OTHER+=("$name")
+                ;;
+        esac
     done <<< "$out"
     return "$status"
 }
@@ -519,14 +670,22 @@ _ku_cl_exact_set() {
 
 # Print the plan through _ku_cl_plan_line when it holds anything to show: the releases kept,
 # the purges a pending reboot puts off, the packages the rc step purges and those it leaves,
-# then the sync. Prints nothing when there is nothing to purge, leave or put off.
+# those the autoremove step purges and those it leaves, the packages of old kernels marked
+# manual, each with the hint 'apt-mark auto', then the sync. Prints nothing when there is
+# nothing to purge, leave or put off.
 _ku_cl_plan_print() {
-    local release i text pending=""
-    local -a parts=() records=()
-    if _ku_cl_wanted rc; then
+    local release i name step text pending=""
+    local -a parts=() records=() steps=()
+    for step in rc autoremove; do
+        if _ku_cl_wanted "$step"; then
+            steps+=("$step")
+        fi
+    done
+    if (( ${#steps[@]} )); then
         pending=$KU_CL_PENDING
     fi
-    if (( ! ${#KU_CL_SET[@]} && ! ${#KU_CL_RC_LEFT[@]} )) && [[ -z $pending ]]; then
+    if (( ! ${#KU_CL_SET[@]} && ! ${#KU_CL_RC_LEFT[@]} && ! ${#KU_CL_AR_LEFT[@]} &&
+        ! ${#KU_CL_MANUAL[@]} )) && [[ -z $pending ]]; then
         return 0
     fi
     for release in "${KU_CL_KEEP_ORDER[@]}"; do
@@ -537,7 +696,11 @@ _ku_cl_plan_print() {
     if [[ -n $pending ]]; then
         text="purge nothing while a reboot is pending: /boot/vmlinuz points at $pending, but"
         text+=" $KU_CK_RUNNING is running; reboot first"
-        _ku_cl_plan_line "$text" rc skip "$pending" "reboot first"
+        records=()
+        for step in "${steps[@]}"; do
+            records+=("$step" skip "$pending" "reboot first")
+        done
+        _ku_cl_plan_line "$text" "${records[@]}"
     fi
     if (( ${#KU_CL_RC[@]} )); then
         records=()
@@ -556,6 +719,28 @@ _ku_cl_plan_print() {
         text="leave $(_ku_cl_count "${#KU_CL_RC_LEFT[@]}" package) removed with config files"
         _ku_cl_plan_line "$text left: $(ku_join "${parts[@]}")" "${records[@]}"
     fi
+    if (( ${#KU_CL_AR[@]} )); then
+        records=()
+        for i in "${!KU_CL_AR[@]}"; do
+            records+=(autoremove purge "${KU_CL_AR[i]}" "${KU_CL_AR_REL[i]}")
+        done
+        text="purge $(_ku_cl_count "${#KU_CL_AR[@]}" package) apt autoremove names for old"
+        _ku_cl_plan_line "$text kernels: $(ku_join "${KU_CL_AR[@]}")" "${records[@]}"
+    fi
+    if (( ${#KU_CL_AR_LEFT[@]} )); then
+        parts=() records=()
+        for i in "${!KU_CL_AR_LEFT[@]}"; do
+            parts+=("${KU_CL_AR_LEFT[i]} (${KU_CL_AR_WHY[i]})")
+            records+=(autoremove "${KU_CL_AR_ACTION[i]}" "${KU_CL_AR_LEFT[i]}"
+                "${KU_CL_AR_WHY[i]}")
+        done
+        text="leave $(_ku_cl_count "${#KU_CL_AR_LEFT[@]}" package) apt autoremove names:"
+        _ku_cl_plan_line "$text $(ku_join "${parts[@]}")" "${records[@]}"
+    fi
+    for name in "${KU_CL_MANUAL[@]}"; do
+        text="marked manual; 'apt-mark auto $name' lets apt prune it"
+        _ku_cl_plan_line "leave $name: $text" autoremove list "$name" "$text"
+    done
     if (( ${#KU_CL_SET[@]} )); then
         _ku_cl_plan_line "then sync"
     fi
@@ -599,11 +784,11 @@ _ku_cl_count() {
 # =======================================================
 
 # After the question, check that the plan still holds, or exit: plan again from the same
-# snapshot and simulate the purge again, then check the locks, and last take the snapshot anew,
-# so that it also covers what changed while the others ran. Exits 75 when apt or dpkg runs or
-# the set, its simulation or the snapshot changed, and 3 when the locks cannot be read. A window
-# of milliseconds stays until apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to
-# wait for.
+# snapshot, which simulates apt's autoremove again, and simulate the purge again, then check
+# the locks, and last take the snapshot anew, so that it also covers what changed while the
+# others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the snapshot changed,
+# and 3 when the locks cannot be read. A window of milliseconds stays until apt takes its lock,
+# which DPkg::Lock::Timeout=0 makes it refuse to wait for.
 _ku_cl_recheck() {
     local now planned=" ${KU_CL_SET[*]} " changed=0
     if ! _ku_cl_plan || [[ " ${KU_CL_SET[*]} " != "$planned" ]] || ! _ku_cl_exact_set; then
@@ -614,9 +799,9 @@ _ku_cl_recheck() {
         changed=1
     fi
     if (( changed )); then
-        ku_die "$KU_EX_BUSY" "dpkg's packages, apt's auto marks or the links in /boot changed" \
-            "while the question waited, as when apt ran meanwhile, so the plan no longer holds:" \
-            "run cleanup again; nothing was changed"
+        ku_die "$KU_EX_BUSY" "dpkg's packages, apt's auto marks, what apt's autoremove names or" \
+            "the links in /boot changed while the question waited, as when apt ran meanwhile, so" \
+            "the plan no longer holds: run cleanup again; nothing was changed"
     fi
 }
 
