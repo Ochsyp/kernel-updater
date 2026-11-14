@@ -10,9 +10,11 @@
 # stays when apt keeps another one, and a purge that would take along a package that depends on
 # an old kernel's headers refuses; the empty module tree a kernel install that the /boot guard
 # refused leaves is removed with rmdir, and a tree dkms lists modules for is kept until it lists
-# none, then moved into the quarantine; and a real fcntl lock on dpkg's frontend lock, as apt
-# takes it, shows in /proc/locks on the container's overlay filesystem. Stubs stand in only for
-# what a container cannot answer: /boot's LUKS mapping, uname, lsinitramfs, dumpe2fs and dkms.
+# none, then moved into the quarantine; a back-dated quarantine entry that a run saw long ago
+# expires, while a fresh one and a back-dated one no run saw stay; and a real fcntl lock on
+# dpkg's frontend lock, as apt takes it, shows in /proc/locks on the container's overlay
+# filesystem. Stubs stand in only for what a container cannot answer: /boot's LUKS mapping,
+# uname, lsinitramfs, dumpe2fs and dkms.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -244,6 +246,36 @@ ku-test/1.0 -k $DKMS_REL')"* ]]
         "$(printf '0 %s\n' 700 700 600)" ]
     [ "$(dummies)" = "$(printf 'linux-image-%s ii\n' "$V3" "$V2")" ]
     assert_links "$V3" "$V2"
+}
+
+@test "A back-dated quarantine entry a run saw expires, and a fresh or unseen one stays" {
+    local base=/var/lib/kernel-updater/quarantine tab=$'\t' now old fresh unseen entry
+    now=$(date -u +%Y%m%dT%H%M%SZ)
+    old=9.0.30+kali-amd64.20200101T000000Z fresh=9.0.31+kali-amd64.$now
+    unseen=9.0.32+kali-amd64.20200101T000000Z
+    mkdir -p "$base"
+    chmod 0700 "$base"
+    for entry in "$old" "$fresh" "$unseen"; do
+        mkdir -p "$base/$entry/tree/kernel"
+        printf 'module\n' > "$base/$entry/tree/kernel/a.ko"
+        printf 'path: /usr/lib/modules/%s\n' "${entry%.*}" > "$base/$entry/origin"
+    done
+    # The old entry was made and seen long ago, the fresh one now, and no run saw the third.
+    printf '20200102T000000Z\n' > "$base/$old/seen"
+    printf '%s\n' "$now" > "$base/$fresh/seen"
+    run_container_cleanup --yes --porcelain --no-rc --no-autoremove
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$output" == *"expire${tab}delete${tab}$base/$old${tab}"*" days old (quarantine_days 30)"* ]]
+    [[ "$output" == *"expire${tab}keep${tab}$base/$fresh${tab}0 days old (quarantine_days 30)"* ]]
+    [[ "$output" == *"expire${tab}keep${tab}$base/$unseen${tab}"*" days old by its stamp; this run \
+marks it seen (quarantine_days 30)"* ]]
+    [[ "$stderr" == *"cleanup: deleted 1 expired quarantine entry"* ]]
+    [ ! -e "$base/$old" ]
+    [ "$(< "$base/$fresh/tree/kernel/a.ko")" = module ]
+    [ "$(< "$base/$unseen/tree/kernel/a.ko")" = module ]
+    [[ "$(< "$base/$unseen/seen")" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
+    [ "$(stat -c '%u %a' "$base/$unseen/seen")" = '0 600' ]
+    [ "$(package_state "linux-image-$V1")" = rc ]
 }
 
 @test "A real fcntl lock on dpkg's frontend lock, as apt takes it, exits 75 and names its holder" {
