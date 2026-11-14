@@ -119,16 +119,17 @@ keeps none:
 Runs as root under the tool's lock. docs/migration.md walks through the stages. Exits 0 when
 done or nothing was left to do, 3 when a check refuses or another stage must run first, 4
 when a write fails, 10 when declined, 64 on a usage error, 66 when /boot, partition 1 or a
-backup cannot be found or read, 75 when another run holds the lock or the kernels or their
-links changed while the question waited, 77 when not run as root and 78 when the
-configuration names another /boot, container or stick.
+backup cannot be found or read, 75 when another run holds the lock or the kernels, their
+links or a file on partition 1 changed while the question waited, 77 when not run as root
+and 78 when the configuration names another /boot, container or stick.
 EOF
 }
 
 # Parse the options, then run the stage, or roll a stage run back, as root and under the lock.
 # Exits as the stage does: 0 when done or nothing was left to do, 3 refused, 4 write failed,
 # 10 declined, 64 usage, 66 missing input, 75 busy, also when the system stage's plan no longer
-# holds after its question, 77 not root, 78 another /boot or stick.
+# holds after its question or a file on partition 1 changed since the plan read it, before
+# anything was written (ku_deploy_files), 77 not root, 78 another /boot or stick.
 ku_cmd_migrate() {
     local stage=all staged=0 rollback=0 stamp="" deploy="" output=""
     while (( $# )); do

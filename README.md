@@ -88,12 +88,12 @@ messages to stderr.
 | 0 | Success |
 | 1 | Unexpected error |
 | 2 | Findings: `lint` found an error or a `check` item failed, or either warned with `--strict`; the postinst hook found a kernel that may not boot |
-| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 changed since it was read, reached through a symlink, or on a path other users can change, a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST`, or `cleanup` refused: a check before its plan failed, apt's simulation failed, would install or configure a package or would remove other packages than planned, `dpkg-query` failed before anything changed, or apt or apt-guard refused the purge before dpkg changed anything |
+| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 where the plan found none, reached through a symlink, or on a path other users can change, a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST`, or `cleanup` refused: a check before its plan failed, apt's simulation failed, would install or configure a package or would remove other packages than planned, `dpkg-query` failed before anything changed, or apt or apt-guard refused the purge before dpkg changed anything |
 | 4 | A write failed. The message says what that left: nothing changed, the previous state put back, a backup to copy back or a file to remove by hand, the files written before it, or an `output_dir` that holds no complete export, so that the export must run again. For `cleanup`, a purge that stopped after dpkg began to change its database, a check of the links and kernels that fails after the purge, or a module tree or quarantine entry that could not be removed, moved or deleted: the message says what is done and what is left |
 | 10 | Declined, or no terminal to confirm on without `--yes` |
 | 64 | Usage error |
 | 66 | An input file cannot be read, `/boot` is not mounted for `migrate` or `cleanup` or the LUKS header of its container cannot be read, the stick's partition 1 cannot be found or read, or `migrate --rollback` finds no backup |
-| 75 | Busy: another run holds the lock, or, for `cleanup`, apt or dpkg holds its lock, named by PID and command; or the system changed while the question of `cleanup` or of `migrate`'s system stage waited, as when apt ran meanwhile, so that its plan no longer holds. Nothing was changed: run it again once the other run is done |
+| 75 | Busy: another run holds the lock, or, for `cleanup`, apt or dpkg holds its lock, named by PID and command; or the system changed while the question of `cleanup` or of `migrate`'s system stage waited, as when apt ran meanwhile, so that its plan no longer holds; or a file on partition 1 changed after the plan of a `migrate` stage or rollback read it and before the writer wrote anything. Nothing was changed: run it again once the other run is done |
 | 77 | Not run as root |
 | 78 | Bad configuration, a stick other than the one `disk_ptuuid` and `p1_fs_uuid` name, or for `migrate` and `cleanup` a `/boot` or LUKS container other than the configuration names |
 | 128+N | Interrupted by signal N |
@@ -425,8 +425,9 @@ MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` 
   partition 1 to build the new files comes only from a root no user but root can change, for
   an export too: while a desktop has partition 1 mounted for its user there is none, and the
   tool asks you to unmount it there and run again.
-- **The safe writer** replaces one file at a time: it refuses with exit 3 when the file
-  changed since the plan read it, a symlink lies on its way, or a user other than root could
+- **The safe writer** replaces one file at a time: it exits 75 when the file changed since the
+  plan read it, as a run that plans anew can then succeed, and refuses with exit 3 when a file
+  exists where the plan found none, a symlink lies on its way, or a user other than root could
   change a directory on its path; copies it to `NAME.ku-<UTC stamp>.bak` beside it and keeps
   that backup and the newest others, `backups_keep` in all, so that a clock that went back
   never costs the backup a restore needs; writes the new bytes, CRLF line endings and all, to
@@ -445,9 +446,10 @@ MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` 
   leaves the new file in place and says that the old one waits beside it under its aside
   name. When moving it back fails, the message names the backup to copy by hand, and the old
   file waits beside it under its aside name. Given several files, it runs the checks of every
-  file before it writes the first, so that a file that changed, a symlink or a path other
-  users can change refuses before anything is written; a backup name taken within the same
-  second shows only when its file's turn comes, and a later failure names the files it wrote.
+  file before it writes the first, so that a file that changed (75), a symlink or a path other
+  users can change (3) stops it before anything is written; a backup name taken within the same
+  second shows only when its file's turn comes, and a later failure, a file that changed
+  meanwhile included, exits 4 and names the files it wrote.
   `migrate` reads what it builds on with `ku_deploy_read`, which follows no symlink either,
   since one on partition 1 could lead root to a file such as the LUKS key, and records in the
   tripwire's baseline just the files it wrote, with `ku_baseline_update`.
@@ -570,10 +572,11 @@ bats tests/
   bootable kernel beside another image, the order of its `linux-update-symlinks` calls, its edit
   of `kernel-img.conf` and a write of it that fails, the links left in `/`, grub-pc's question,
   results that fail its check, links kept on another kernel that boots and a kernel install
-  while it asks; menu and finalize written and exported, their refusals, the stick's own GRUB
-  lists, the parameters a plan hides, the initrds `live` needs, `kali.cfg` written anew, the
-  export a write makes stale, the baseline finalize leaves to `baseline`, and the baseline
-  entries every write keeps for files changed outside the tool; byte-exact
+  while it asks; menu and finalize written and exported, their refusals, a `grub.cfg` that
+  changes while menu asks, the stick's own GRUB lists, the parameters a plan hides, the initrds
+  `live` needs, `kali.cfg` written anew, the export a write makes stale, the baseline finalize
+  leaves to `baseline`, and the baseline entries every write keeps for files changed outside
+  the tool; byte-exact
   rollbacks, written and exported, and their refusals: a backup that does not match its
   `MANIFEST`, a menu whose kernels are gone, and a stick that still sources `kali.cfg`, and the
   changes to `grub.cfg` a rollback drops; backups named in the order of the runs, removed while

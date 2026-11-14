@@ -38,10 +38,12 @@ KU_DEPLOY_WINDOWS_DIR="BOOT:\\multibootusb\\grub\\"
 
 # Replace RELPATH under partition 1's ROOT with the bytes of the local file SOURCE, CRLF line
 # endings and all. EXPECTED is the SHA-256 the plan read from the target, or - for a target
-# that must not exist yet. In this order: re-hash the target and exit 3, nothing changed, when
-# it changed since; exit 3 when the target or a directory between ROOT and it is a symlink, or
-# when a user other than root could change the path to it (ku_p1_root_only), which KU_P1_DIR
-# needs not pass, as it stands in for a private mount; copy the target to
+# that must not exist yet. In this order: exit 3, nothing changed, when the target exists
+# although the plan expected none, and re-hash it and exit 75, nothing changed, when it changed
+# since the plan read it, as a run that plans anew can then succeed; exit 3 when the target or
+# a directory between ROOT and it is a symlink, or when a user other than root could change the
+# path to it (ku_p1_root_only), which KU_P1_DIR needs not pass, as it stands in for a private
+# mount; copy the target to
 # RELPATH.ku-<UTC stamp>.bak beside it and keep that backup and the newest others, backups_keep
 # in all; write SOURCE to a temporary file in the same directory, sync it, put it in the
 # target's place (_ku_deploy_replace, which moves the target aside first) and sync the
@@ -53,7 +55,7 @@ KU_DEPLOY_WINDOWS_DIR="BOOT:\\multibootusb\\grub\\"
 # temporary file on every path. Exits 66 when SOURCE
 # is a symlink or cannot be read. With --dry-run it stops after the checks and says what it
 # would write. Within ku_deploy_files, once it wrote an earlier file, a failure exits 4 and
-# names the files written (_ku_deploy_die).
+# names the files written (_ku_deploy_die); so do a refusal and a change since the plan read it.
 ku_deploy_write() {
     local root=$1 rel=$2 source=$3 expected=$4 target dir name want got stamp="" backup=-
     local tmp="" aside="" path rest
@@ -80,7 +82,9 @@ ku_deploy_write() {
         fi
     elif [[ ! -L $target ]] && { [[ ! -f $target ]] || ! got=$(_ku_deploy_hash "$target") ||
         [[ $got != "$expected" ]]; }; then
-        _ku_deploy_die "$KU_EX_REFUSED" 1 \
+        # Busy rather than refused: a run that plans anew from what the target holds now can
+        # succeed, as when the system changed while a question waited.
+        _ku_deploy_die "$KU_EX_BUSY" 1 \
             "refusing to write $rel: it changed since the plan read it"
     fi
     # b. No symlink may take the write elsewhere, and no user but root may put one in its way
@@ -202,11 +206,11 @@ _ku_deploy_replace() {
 
 # Write several files to partition 1's ROOT with ku_deploy_write, in the order given as
 # RELPATH SOURCE EXPECTED triples: migrate writes kali.cfg before the grub.cfg that sources
-# it. First it runs the checks of every triple, so that a refusal (3) or a source that cannot be
-# read (66) leaves the stick as it was. Then it writes them in turn and stops at the first
-# failure, which exits as ku_deploy_write says while no file was written yet, and else exits 4,
-# naming the files written before it, since the stick then changed. A RELPATH given twice is an
-# error of the caller (1).
+# it. First it runs the checks of every triple, so that a refusal (3), a file that changed since
+# the plan read it (75) or a source that cannot be read (66) leaves the stick as it was. Then it
+# writes them in turn and stops at the first failure, which exits as ku_deploy_write says while
+# no file was written yet, and else exits 4, naming the files written before it, since the
+# stick then changed. A RELPATH given twice is an error of the caller (1).
 ku_deploy_files() {
     local root=$1 i
     local -A seen=()
