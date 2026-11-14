@@ -13,53 +13,38 @@ on the same stick, with an encrypted `/boot` that GRUB unlocks and an encrypted 
 it. The same install also runs as a virtual machine straight from the stick, booting through
 the same menu.
 
-The Kali entries name a kernel version (`/vmlinuz-<version>`, `/initrd.img-<version>`). Once
-apt installs a new kernel and removes the old one, they point at files that no longer exist.
+Until `migrate` has run, the Kali entries name a kernel version (`/vmlinuz-<version>`,
+`/initrd.img-<version>`). Once apt installs a new kernel and removes the old one, they point at
+files that no longer exist. That is the problem `migrate` solves.
 
-## Current state: `update_kernel.sh` (legacy)
-
-`update_kernel.sh` is the script this project starts from. It stays for reference while the
-phases below replace it, and the last phase removes it. **Do not run it.** It:
-
-- rewrites every kernel version in the given `grub.cfg` to the running kernel, so the menu
-  never moves to a newly installed kernel and has no entry for the previous one;
-- purges kernel packages with `apt-get purge -y` and runs a system-wide
-  `apt-get autoremove -y`, with no dry run and no confirmation;
-- deletes the `/lib/modules` directory of a kernel it wrongly takes for removed, a held one
-  for example;
-- rebuilds every initramfs, the known-good fallback's included.
-
-For reference, it is called as:
-
-```text
-sudo ./update_kernel.sh GRUB_CFG
-```
-
-## The redesign
+## How it works
 
 Debian's own tooling can keep the menu stable. With `link_in_boot = yes` in
 `/etc/kernel-img.conf`, every kernel install and removal updates relative links in `/boot`:
 `vmlinuz` and `initrd.img` point at the newest kernel, `vmlinuz.old` and `initrd.img.old` at
-the previous one. The redesign moves the Kali entries into a file of their own that boots
-those links, writes it to the stick once, and leaves kernel housekeeping to apt from then on.
-Guard hooks refuse a kernel install while the encrypted `/boot` is not mounted, and a `check`
-command reports the state of the stick.
+the previous one. `migrate` moves the Kali entries into a file of their own that boots those
+links and changes the stick's menu once, through a safe writer that keeps backups, or exports
+the files for Windows to copy. From then on apt does the kernel housekeeping, and a kernel
+install or removal changes nothing on the stick's partition 1.
+[docs/migration.md](docs/migration.md) walks through the switch.
 
-The phases, one pull request each:
+The rest of the tool:
 
-1. Repository scaffolding and the imported script
-2. Command-line framework, safety rails and an offline `lint` for GRUB configs
-3. A read-only `check` of the system and the stick, with a Kali container in CI
-4. Guard hooks for kernel installs, and an installer
-5. Finding and safely writing the stick's boot partition, an export mode, and a boot-file
-   tripwire
-6. `migrate`: the one-time switch to the link-based menu, with rollback
-7. `cleanup` of leftover kernel packages and module trees, removal of the legacy script, and
-   release 1.0.0
+- Once `boot_fs_uuid` is set, guard hooks refuse a kernel install or removal while the
+  encrypted `/boot` is not mounted, and apt-guard refuses such an apt run before dpkg starts.
+- `check` reports the state of the system and the stick. Its tripwire compares the stick's
+  boot code with the baseline that `baseline` records.
+- `lint` finds errors in GRUB configs that GRUB reports only at boot.
+- `cleanup` purges the old kernels apt's autoremove names and the config files removed kernels
+  left, and removes or quarantines the module trees no package owns.
+
+The commands that change the system, `baseline`, `migrate` and `cleanup`, run as root under the
+tool's lock, print a plan and ask before they carry it out, and change nothing with
+`--dry-run`.
 
 ## Usage
 
-The redesigned tool is `bin/kernel-updater`. Run it from a checkout, or install it, together
+The tool is `bin/kernel-updater`. Run it from a checkout, or install it, together
 with its hooks, with `install.sh` (see [Installing](#installing)). It needs Bash 4.4 or later,
 GNU coreutils and awk; `grub-script-check` (Debian package `grub-common`) adds a syntax check
 to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk` and `blkid`
@@ -427,8 +412,8 @@ later stages run.
 
 ## Examples
 
-`examples/grub.cfg` is a synthetic MultiBootUSB config with the versioned Kali entries the
-legacy script edits. Every identifier in it is made up and starts with `5ca1ab1e`. Keep real
+`examples/grub.cfg` is a synthetic MultiBootUSB config with versioned Kali entries of the kind
+`migrate` replaces. Every identifier in it is made up and starts with `5ca1ab1e`. Keep real
 configs out of the repository: `.gitignore` excludes a `grub.cfg` in the repository root,
 any `*.real.cfg` and `*.bak` copies.
 

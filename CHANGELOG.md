@@ -9,6 +9,10 @@ All notable changes to this project are listed here. The format follows
 The script is being redesigned in phases, one pull request each. These entries compare it
 with the owner's original script.
 
+### Migration
+
+- `update_kernel.sh` is gone: use `kernel-updater` as `docs/migration.md` describes.
+
 ### Added
 
 - `update_kernel.sh`, imported from the owner's machine. It is legacy: the README says not to
@@ -391,5 +395,13 @@ with the owner's original script.
   with `KU_TEST=1`, which lets `SOURCE_DATE_EPOCH` through to apt.
 - `install.sh --uninstall` removes `/var/lib/kernel-updater` only when it is empty, and leaves
   every directory inside it, such as one in a quarantined module tree, as it is.
+- The README drops its section on the original script and its list of phases; a "How it works"
+  section takes their place. `SECURITY.md` drops its warning about that script.
+
+### Removed
+
+- `update_kernel.sh`, the original script, with its tests in `tests/legacy.bats` and their
+  runner `run_legacy` in `tests/helpers.bash`; `tests/static.bats` and `tests/repo.bats` no
+  longer list it.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
