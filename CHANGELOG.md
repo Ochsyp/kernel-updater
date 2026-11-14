@@ -11,7 +11,8 @@ with the owner's original script.
 
 ### Migration
 
-- `update_kernel.sh` is gone: use `kernel-updater` as `docs/migration.md` describes.
+- `update_kernel.sh` is gone: use `kernel-updater` as `docs/migration.md` describes, and
+  `docs/runbook.md` for routine use and recovery.
 
 ### Added
 
@@ -265,71 +266,26 @@ with the owner's original script.
   with the real `linux-update-symlinks`, `debconf` and `grub-script-check`; and
   `tests/ntfs/migrate.bats`, which lints with the stick's own GRUB lists, writes the new menu to
   real NTFS and rolls it back. The `ntfs` job installs `dmsetup` for it.
-- `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules] [-n] [-y] [--porcelain]`
-  purges, after one question and in one `apt-get purge` run, the config files removed kernels
-  left and the old kernels apt's autoremove names, once a simulation shows that apt would
-  remove exactly those packages and install or configure none. It never purges a package of
-  the running kernel's release or of one a link in `/boot` points at, nor one that shares its
-  version with such a package, as the headers of the `.old` kernel's ABI do, and purges
-  nothing while a reboot into the kernel `/boot/vmlinuz` points at is pending. Of the config
-  files left, those of held packages, debug builds and the headers and build tools the kernels
-  of one ABI share are only listed. Of what apt's autoremove names, held packages, debug builds
-  and anything that is no versioned kernel package, metapackages included, are only listed,
-  and old kernels marked manual, which apt never prunes, are listed with an `apt-mark auto`
-  hint. A module tree in `/usr/lib/modules`, or in `/lib/modules` when `/usr` is not merged,
-  is removed with `rmdir` when it is empty, and otherwise moved, in one rename that
-  `mv --no-copy -T` keeps from turning into a copy, to
-  `/var/lib/kernel-updater/quarantine/RELEASE.STAMP/tree`, beside an `origin` file that says
-  where it came from and why, once no package owns it or is named for its release, its kernel
-  is not one cleanup keeps, `/boot` holds no file of that release, it holds no `.fresh-install`
-  and dkms lists no modules for it. A tree on another filesystem than the quarantine, or with
-  an `mv` older than coreutils 9.2, is only listed. The plan shows why it keeps a tree, but
-  leaves out installed kernels' trees, and lists the tree of a release this run purges for the
-  next run. Right before it removes or moves a tree it checks the locks and every reason again,
-  and leaves the tree with a warning when one holds now. The first run that finds a quarantine
-  entry, unless it is a dry run, notes the time in a `seen` file there. Once more than
-  `quarantine_days` whole days have passed since the move and since that run, the entry
-  expires: after the question, its tree is deleted with `rm -r --one-file-system`, then
-  `origin` and `seen`, then the entry with `rmdir`, and a part it lacks is skipped. Nothing
-  expires while the clock reads earlier than an entry was made or seen, which it warns about,
-  and the plan shows each entry's age. An entry of another name, kind, owner or filesystem, or
-  one that holds anything else, is only listed, and so is the whole quarantine when a symlink
-  leads to it or it is no directory of root's with mode 0700; an entry that changed after the
-  question stays, with a warning. `--no-rc`, `--no-autoremove` and `--no-modules` leave their
-  step out, and `--no-modules` the quarantine too. First it checks, as root, under the tool's
-  lock and in a dry run too, that it may run: it refuses with 3 until `migrate --stage detect` set
-  `boot_fs_uuid` and `boot_luks_uuid`, exits 66 while `/boot` is not mounted and 78 on another
-  `/boot` or LUKS container, and refuses with 3 while `apt-get`, `apt-mark` or `dpkg-query` is
-  missing, while the links in `/boot` are not kept there or do not reach a kernel, naming
-  `migrate --stage system`, while `check`'s `kernels` item fails, after an interrupted dpkg
-  run, and when apt's simulation of its autoremove fails or would install or configure a
-  package. It exits 75 while apt or dpkg holds its lock, which it finds in `/proc/locks` and
-  names by PID and command, and when dpkg's database, apt's auto marks, what apt's autoremove
-  names, the links or the planned set changed while the question waited.
-  A purge that fails exits 4 once dpkg began to change its database, naming
-  `dpkg --configure -a` and `check`, else 75 while apt or dpkg holds its lock, else 3; one that
-  a signal cuts short says the same and exits 128+N. After the purge, `check`'s `boot-links`
-  and `kernels` items must pass, or it exits 4, which leaves the module trees alone. When
-  `dpkg-query` fails on a module tree, it refuses with 3 before anything changed and exits 4
-  after, and a tree it cannot remove or move, or an entry it cannot delete, exits 4; each says
-  what is done and what is left. `sync` runs before the last line, which says what the run
-  did. Its plan lines go to stderr, and with `--porcelain` its records go to stdout as `STEP`,
-  `ACTION`, `OBJECT` and `DETAIL` fields once the run ends with 0, so that a run that fails, is
-  declined or is cut short leaves stdout empty. The tools it runs inherit no `DPKG_ROOT`,
-  `DPKG_ADMINDIR`, `DPKG_FORCE`, `APT_CONFIG`, `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`,
-  and run with `LC_ALL=C.UTF-8`.
-- `quarantine_days` in `/etc/kernel-updater.conf`: how many whole days a module tree `cleanup`
-  moved into its quarantine stays there once a later run saw it, 0 to 999 without a leading
-  zero, 30 by default, 0 for ever.
-- `tests/cleanup.bats`, which runs `cleanup` on a migrated system with stub tools, and
-  `tests/container/cleanup.bats`, which purges dummy kernels with the real apt-get and dpkg,
-  among them the old kernel apt's autoremove names once the dummies are marked auto, keeps the
-  kernel `vmlinuz.old` points at when apt keeps another, refuses a purge that would take along
-  a package that depends on an old kernel's headers, removes the empty module tree a kernel
-  install that the `/boot` guard refused leaves, moves a tree into the quarantine once a dkms
-  stub lists no modules for it, deletes a back-dated quarantine entry a run saw long ago but
-  keeps a fresh one and one no run saw yet, and finds a real fcntl lock on dpkg's frontend lock
-  in `/proc/locks`.
+- `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules]`, which purges, in one
+  apt-get run, the config files removed kernels left and the old kernels apt's autoremove
+  names, once a simulation shows apt would remove exactly those. It never purges the running
+  kernel or a kernel the links in `/boot` point at, and purges nothing while a reboot into a
+  new kernel is pending. Held packages, debug builds and what is no versioned kernel package,
+  metapackages included, stay, and the plan says why; an old kernel marked manual stays with
+  an `apt-mark auto` hint. Purges cannot be rolled back, so run it with `-n` first. A module
+  tree no package owns is removed when empty and otherwise moved to
+  `/var/lib/kernel-updater/quarantine`, where it can be moved back until it expires,
+  `quarantine_days` after a later run first saw it there. It exits 75 while apt or dpkg holds
+  its lock, which it finds in `/proc/locks`, or when the system changed while its question
+  waited, and `--porcelain` prints its plan as tab-separated records.
+- `quarantine_days` in `/etc/kernel-updater.conf`: 0 to 999 whole days, 30 by default; 0 keeps
+  the quarantined module trees until you delete them.
+- `docs/runbook.md`: routine use, what the plan of `cleanup` says and what to do when it
+  refuses, how to restore or delete a quarantined tree, recovery when a new kernel fails, a
+  rebuild of one kernel's initrd, and an optional GRUB default entry.
+- Tests for `cleanup`: `tests/cleanup.bats` with stub tools, and `tests/container/cleanup.bats`
+  with real apt-get and dpkg runs on dummy kernels, module trees and quarantine entries, and a
+  real fcntl lock on dpkg's frontend lock.
 
 ### Changed
 
@@ -382,7 +338,7 @@ with the owner's original script.
 - `tests/static.bats` also covers `migrate.sh` and runs `menu.awk`, and `tests/helpers.bash`
   loads `migrate.sh`.
 - `migrate` and `cleanup` share `ku_plan` and `ku_join`, now in `common.sh`, and
-  `ku_boot_identity`, now in `check.sh`; what `migrate` prints and refuses does not change.
+  `ku_boot_identity`, now in `check.sh`.
 - `tests/static.bats` also covers `cleanup.sh`, `tests/helpers.bash` loads it, and
   `tests/cli.bats` expects `cleanup` among the commands.
 - `ku_probe_kernels` shares its reading of kernel package names with the new
@@ -395,8 +351,11 @@ with the owner's original script.
   with `KU_TEST=1`, which lets `SOURCE_DATE_EPOCH` through to apt.
 - `install.sh --uninstall` removes `/var/lib/kernel-updater` only when it is empty, and leaves
   every directory inside it, such as one in a quarantined module tree, as it is.
-- The README drops its section on the original script and its list of phases; a "How it works"
-  section takes their place. `SECURITY.md` drops its warning about that script.
+- The README describes the finished tool and links the runbook, which `docs/migration.md` now
+  points to for routine use and for a kernel that fails. `SECURITY.md` drops its warning about
+  the original script.
+- `migrate` exits 75 instead of 3 when the kernels or their links changed while the question of
+  its system stage waited, as `cleanup` does when the system changes while its question waits.
 
 ### Removed
 

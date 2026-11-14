@@ -7,7 +7,7 @@
 # -------------------------------------------------------
 
 # Known keys and the check their values must pass (the _ku_valid_* function of that name),
-# and the defaults; an empty default leaves an optional key unset. Later phases add keys here.
+# and the defaults; an empty default leaves an optional key unset.
 declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid
     [verify_action]=verify_action [disk_ptuuid]=ptuuid [p1_fs_uuid]=ntfs_serial [deploy]=deploy
     [p1_path]=abs_path [output_dir]=abs_path [backups_keep]=count [root_device]=root_device

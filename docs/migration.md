@@ -191,11 +191,8 @@ removes an export it makes stale.
 
 ## Routine use afterwards
 
-Update as usual, with `/boot` unlocked and mounted: `sudo apt full-upgrade`. A new kernel moves
-`/boot/vmlinuz` and `/boot/initrd.img` to itself and the `.old` links to the kernel they left;
-removing a kernel moves them back. Neither `grub.cfg` nor `kali.cfg` changes, so there is
-nothing to copy or deploy. The hooks refuse a kernel install while `/boot` is not mounted, and
-check that a new kernel's initrd would boot. Run `sudo kernel-updater check` now and then.
+Update as usual with `/boot` unlocked and mounted, `sudo apt full-upgrade`: nothing on the stick
+changes. [runbook.md](runbook.md#routine-use) covers routine use, `cleanup` and recovery.
 
 ## Rolling back
 
@@ -237,9 +234,5 @@ again while the legacy entries remain; after the finalize stage, roll that back 
 
 ## When a new kernel fails
 
-Boot "Kali GNU/Linux (previous kernel)": it boots the kernel the `.old` links point at. When the
-postinst hook found the new kernel's initrd lacking, its package is half-configured; fix the
-cause, rebuild the initrd with `sudo update-initramfs -u -k VERSION`, then run
-`sudo dpkg --configure -a`. To give the new kernel up instead, remove it with
-`sudo apt remove linux-image-VERSION`: linux-base then points the links back at the kernels
-left.
+Boot "Kali GNU/Linux (previous kernel)", then follow
+[the runbook](runbook.md#when-a-new-kernel-fails).
