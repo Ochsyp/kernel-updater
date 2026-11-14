@@ -4,7 +4,7 @@
 # e2fsprogs for the ext4 image the hook tests mount on /boot, mawk, gawk and grub-common. The
 # base image is pinned by digest; Dependabot proposes updates. Run it with --privileged for the
 # mounts.
-FROM kalilinux/kali-rolling:latest@sha256:7997e0581c4f5c185cfe6773d5cae8fcc7c6b79798726ccaabf843af4bcd2013
+FROM kalilinux/kali-rolling:latest@sha256:6ec743d9fc5cd397451eeddeff3869bcfab5de9bd5dec5b1f34cbfbd80313073
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
