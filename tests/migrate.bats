@@ -8,12 +8,12 @@
 # a write of it that fails, the links left in /, grub-pc's question of its own, a result that
 # fails its check, links kept on another kernel that boots, and a kernel install while it runs;
 # menu and finalize on a partition-1 tree that KU_P1_DIR names, written and exported, with
-# their refusals, the parameters a plan hides, the initrds live needs, kali.cfg written anew,
-# the export a write makes stale and the baseline, whose entries a write keeps for files changed
-# outside the tool; --rollback of each stage, byte for byte, written and exported, with its
-# refusals and the changes to grub.cfg it drops; backups named in the order of the runs,
-# removed while unfinished and passed over without a MANIFEST; and root, the lock, declining
-# and usage errors. No value is printed.
+# their refusals and a grub.cfg that changes while menu asks, the parameters a plan hides, the
+# initrds live needs, kali.cfg written anew, the export a write makes stale and the baseline,
+# whose entries a write keeps for files changed outside the tool; --rollback of each stage,
+# byte for byte, written and exported, with its refusals and the changes to grub.cfg it drops;
+# backups named in the order of the runs, removed while unfinished and passed over without a
+# MANIFEST; and root, the lock, declining and usage errors. No value is printed.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -694,6 +694,33 @@ EOF
     [[ "$stderr" == *"or leave them out of previous_variants; nothing was changed"* ]]
 }
 
+@test "A grub.cfg changed while menu asks exits 75 and writes nothing, and a new run writes it" {
+    local other=$'menuentry "Other" {\r\n\ttrue\r\n}\r\n'
+    system_done
+    # grub-script-check, which checks the new files once the plan read the stick's, adds
+    # GSC_CHANGES to the stick's grub.cfg, as another program writing the stick while the
+    # question waits would.
+    mkstub grub-script-check <<'EOF'
+[[ -z ${GSC_CHANGES:-} || ${*: -1} != */grub.cfg ]] ||
+    printf '%s' "$GSC_CHANGES" >> "$KU_P1_DIR/multibootusb/grub/grub.cfg"
+EOF
+    export GSC_CHANGES=$other
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"refusing to write multibootusb/grub/grub.cfg: it changed since the plan \
+read it; nothing was changed"* ]]
+    [[ "$stderr" != *"info: wrote"* ]]
+    [ ! -e "$GRUB/kali.cfg" ]
+    cmp <(cat "$BATS_TEST_TMPDIR/grub.before"; printf '%s' "$other") "$GRUB/grub.cfg"
+    # Run again, the stage plans anew from the grub.cfg it finds, and writes both files.
+    export GSC_CHANGES=""
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 0 ]
+    cmp "$FIXTURES/kali.expected.cfg" "$GRUB/kali.cfg"
+    grep -q -F 'menuentry "Other"' "$GRUB/grub.cfg"
+    private_output
+}
+
 @test "finalize removes the legacy entries, records the baseline, and rolls back" {
     system_done
     run_ku migrate --stage finalize --yes
@@ -1218,8 +1245,9 @@ EOF
     run_ku migrate --help
     [ "$status" -eq 0 ]
     [[ "$output" == "Usage: kernel-updater migrate "* ]]
-    # 75 also means that the system changed while the question waited, as for cleanup.
+    # 75 also means that the system, or a file on partition 1 a stage writes, changed while the
+    # question waited, as for cleanup.
     local usage=${output//$'\n'/ }
-    [[ "$usage" == *" 75 when another run holds the lock or the kernels or their links changed"* ]]
-    [[ "$usage" == *"changed while the question waited, 77 when not run as root"* ]]
+    [[ "$usage" == *" 75 when another run holds the lock or the kernels, their links or a file"* ]]
+    [[ "$usage" == *"on partition 1 changed while the question waited, 77 when not run"* ]]
 }
