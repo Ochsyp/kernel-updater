@@ -11,11 +11,12 @@
 declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid
     [verify_action]=verify_action [disk_ptuuid]=ptuuid [p1_fs_uuid]=ntfs_serial [deploy]=deploy
     [p1_path]=abs_path [output_dir]=abs_path [backups_keep]=count [root_device]=root_device
-    [menu_variants]=menu_variants [previous_variants]=variants)
+    [menu_variants]=menu_variants [previous_variants]=variants [quarantine_days]=days)
 declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="" [verify_action]=fail
     [disk_ptuuid]="" [p1_fs_uuid]="" [deploy]=auto [p1_path]=""
     [output_dir]=/root/kernel-updater/out [backups_keep]=5 [root_device]=""
-    [menu_variants]="default,failsafe" [previous_variants]="default,failsafe")
+    [menu_variants]="default,failsafe" [previous_variants]="default,failsafe"
+    [quarantine_days]=30)
 
 # The keys the config file read last sets, each with its line number, so that migrate can tell
 # a key the file sets from a default.
@@ -146,6 +147,13 @@ _ku_valid_abs_path() {
 # How many backups of a file on partition 1 to keep: 1 to 99.
 _ku_valid_count() {
     [[ $1 =~ ^[1-9][0-9]?$ ]]
+}
+
+# How many days a module tree stays in cleanup's quarantine once a later run saw it: 0 to 999,
+# where 0 keeps it until it is deleted by hand. A leading zero is refused, as bash arithmetic
+# would read 030 as octal and 08 as no number at all.
+_ku_valid_days() {
+    [[ $1 =~ ^(0|[1-9][0-9]{0,2})$ ]]
 }
 
 # What the Kali kernel line gets as root=: an absolute device path without . or ..

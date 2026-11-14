@@ -55,6 +55,18 @@ KU_CL_SET=() KU_CL_SIM=() KU_CL_SIM_OTHER=() KU_CL_WHY=""
 # 1 while apt-get purges, for the exit handler, and 1 once the run synced after the purge.
 KU_CL_PURGING=0 KU_CL_SYNCED=0
 
+# Where cleanup moves the module trees no package owns: one entry RELEASE.STAMP per tree, STAMP
+# the UTC time it was made, holding origin, which says where the tree came from, and the tree.
+KU_CL_QUARANTINE=/var/lib/kernel-updater/quarantine
+
+# The module trees step: the modules directories it scans (KU_CL_MODULES); the trees the plan
+# shows (KU_CL_TREE), each with the plan's action, rmdir, quarantine, keep or list
+# (KU_CL_TREE_ACTION), and why (KU_CL_TREE_WHY); whether mv can refuse to copy, 1 or 0, once
+# known (KU_CL_MV), and why a tree cannot move into the quarantine (KU_CL_MOVE_WHY); and how
+# many planned trees were removed, moved and left (KU_CL_REMOVED, KU_CL_MOVED, KU_CL_LEFT).
+KU_CL_MODULES=() KU_CL_TREE=() KU_CL_TREE_ACTION=() KU_CL_TREE_WHY=() KU_CL_MV=""
+KU_CL_MOVE_WHY="" KU_CL_REMOVED=0 KU_CL_MOVED=0 KU_CL_LEFT=0
+
 # Print the cleanup command's usage on stdout.
 ku_cleanup_usage() {
     cat << 'EOF'
@@ -87,15 +99,17 @@ EOF
 }
 
 # Parse the options, then, as root and under the tool's lock, check that cleanup may run, in a
-# dry run too, take the snapshot, plan the purge and print the plan. With something to purge
-# and no dry run, ask once, check the plan again, run the one apt-get purge, check the links and
-# kernels again and sync. Exits 0 when done, when nothing was left to do and after a dry run; 3
-# when a check or a simulation refuses, or apt refused the purge; 4 when the purge stopped
-# after dpkg began to change its database, or the check after it fails; 10 when
-# declined; 64 on a usage error; 66 when /boot is not mounted or its LUKS header cannot be read;
-# 75 while another run, apt or dpkg holds a lock, or when the system changed while the question
-# waited; 77 when not root; 78 on a bad configuration or another /boot; and 128+N when signal N
-# cut it short.
+# dry run too, take the snapshot, plan the purge and the module trees and print the plan. With
+# something to purge, remove or move and no dry run, ask once, check the plan again, run the one
+# apt-get purge, check the links and kernels again, check each planned module tree again and
+# remove or move it, and sync. Exits 0 when done, also when a re-check left a planned tree, when
+# nothing was left to do and after a dry run; 3 when a check or a simulation refuses, apt
+# refused the purge, or dpkg-query fails before anything was changed; 4 when the purge stopped
+# after dpkg began to change its database, the check after it fails, or a module tree cannot be
+# removed or moved, or checked once something was changed; 10 when declined; 64 on a usage
+# error; 66 when /boot is not mounted or its LUKS header cannot be read; 75 while another run,
+# apt or dpkg holds a lock, or when the system changed while the question waited; 77 when not
+# root; 78 on a bad configuration or another /boot; and 128+N when signal N cut it short.
 ku_cmd_cleanup() {
     while (( $# )); do
         case $1 in
@@ -129,8 +143,11 @@ ku_cmd_cleanup() {
     if (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; then
         ku_die "$KU_EX_REFUSED" "the purge cannot run as planned: $KU_CL_WHY; nothing was changed"
     fi
+    if _ku_cl_wanted modules && ! _ku_cl_plan_trees; then
+        ku_die "$KU_EX_REFUSED" "$KU_CL_WHY; nothing was changed"
+    fi
     _ku_cl_plan_print
-    if (( ! ${#KU_CL_SET[@]} )); then
+    if (( ! ${#KU_CL_SET[@]} )) && ! _ku_cl_tree_acts; then
         ku_log info "cleanup: nothing to do"
         return 0
     fi
@@ -141,12 +158,36 @@ ku_cmd_cleanup() {
     ku_ask "Run the cleanup as planned? Purged packages cannot be rolled back." ||
         ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
     _ku_cl_recheck
-    _ku_cl_purge
+    # From here on the run changes the system, and the exit handler syncs whatever ends it.
+    ku_cleanup_add _ku_cl_interrupted
+    if (( ${#KU_CL_SET[@]} )); then
+        _ku_cl_purge
+    fi
+    _ku_cl_trees
     if ! sync; then
         ku_log warning "sync failed: run it before the stick is unplugged"
     fi
     KU_CL_SYNCED=1
-    ku_log info "cleanup: purged $(_ku_cl_count "${#KU_CL_SET[@]}" package)"
+    _ku_cl_summary
+}
+
+# Print the summary on stderr: how many packages the run purged, and how many planned module
+# trees it removed, moved into the quarantine and left because a re-check kept them.
+_ku_cl_summary() {
+    local -a parts=()
+    if (( ${#KU_CL_SET[@]} )); then
+        parts+=("purged $(_ku_cl_count "${#KU_CL_SET[@]}" package)")
+    fi
+    if (( KU_CL_REMOVED )); then
+        parts+=("removed $(_ku_cl_count "$KU_CL_REMOVED" "empty module tree")")
+    fi
+    if (( KU_CL_MOVED )); then
+        parts+=("moved $(_ku_cl_count "$KU_CL_MOVED" "module tree") into the quarantine")
+    fi
+    if (( KU_CL_LEFT )); then
+        parts+=("left $(_ku_cl_count "$KU_CL_LEFT" "module tree") a re-check kept")
+    fi
+    ku_log info "cleanup: $(ku_join "${parts[@]}")"
 }
 
 # Return 0 unless --no-rc, --no-autoremove or --no-modules left STEP out: rc, autoremove or
@@ -671,8 +712,9 @@ _ku_cl_exact_set() {
 # Print the plan through _ku_cl_plan_line when it holds anything to show: the releases kept,
 # the purges a pending reboot puts off, the packages the rc step purges and those it leaves,
 # those the autoremove step purges and those it leaves, the packages of old kernels marked
-# manual, each with the hint 'apt-mark auto', then the sync. Prints nothing when there is
-# nothing to purge, leave or put off.
+# manual, each with the hint 'apt-mark auto', the module trees the plan removes, moves, keeps or
+# lists, then the sync. Prints nothing when there is nothing to purge, leave, put off or show
+# of the module trees.
 _ku_cl_plan_print() {
     local release i name step text pending=""
     local -a parts=() records=() steps=()
@@ -685,7 +727,7 @@ _ku_cl_plan_print() {
         pending=$KU_CL_PENDING
     fi
     if (( ! ${#KU_CL_SET[@]} && ! ${#KU_CL_RC_LEFT[@]} && ! ${#KU_CL_AR_LEFT[@]} &&
-        ! ${#KU_CL_MANUAL[@]} )) && [[ -z $pending ]]; then
+        ! ${#KU_CL_MANUAL[@]} && ! ${#KU_CL_TREE[@]} )) && [[ -z $pending ]]; then
         return 0
     fi
     for release in "${KU_CL_KEEP_ORDER[@]}"; do
@@ -741,7 +783,17 @@ _ku_cl_plan_print() {
         text="marked manual; 'apt-mark auto $name' lets apt prune it"
         _ku_cl_plan_line "leave $name: $text" autoremove list "$name" "$text"
     done
-    if (( ${#KU_CL_SET[@]} )); then
+    for i in "${!KU_CL_TREE[@]}"; do
+        case ${KU_CL_TREE_ACTION[i]} in
+            rmdir) text="remove the empty directory ${KU_CL_TREE[i]}" ;;
+            quarantine) text="move ${KU_CL_TREE[i]} into the quarantine: ${KU_CL_TREE_WHY[i]}" ;;
+            keep) text="keep ${KU_CL_TREE[i]}: ${KU_CL_TREE_WHY[i]}" ;;
+            *) text="leave ${KU_CL_TREE[i]}: ${KU_CL_TREE_WHY[i]}" ;;
+        esac
+        _ku_cl_plan_line "$text" modules "${KU_CL_TREE_ACTION[i]}" "${KU_CL_TREE[i]}" \
+            "${KU_CL_TREE_WHY[i]}"
+    done
+    if (( ${#KU_CL_SET[@]} )) || _ku_cl_tree_acts; then
         _ku_cl_plan_line "then sync"
     fi
 }
@@ -784,14 +836,16 @@ _ku_cl_count() {
 # =======================================================
 
 # After the question, check that the plan still holds, or exit: plan again from the same
-# snapshot, which simulates apt's autoremove again, and simulate the purge again, then check
-# the locks, and last take the snapshot anew, so that it also covers what changed while the
-# others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the snapshot changed,
-# and 3 when the locks cannot be read. A window of milliseconds stays until apt takes its lock,
-# which DPkg::Lock::Timeout=0 makes it refuse to wait for.
+# snapshot, which simulates apt's autoremove again, and simulate the purge again, if there is
+# one, then check the locks, and last take the snapshot anew, so that it also covers what
+# changed while the others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the
+# snapshot changed, and 3 when the locks cannot be read. A window of milliseconds stays until
+# apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to wait for. The module trees
+# are checked one by one, right before each is removed or moved (_ku_cl_trees).
 _ku_cl_recheck() {
     local now planned=" ${KU_CL_SET[*]} " changed=0
-    if ! _ku_cl_plan || [[ " ${KU_CL_SET[*]} " != "$planned" ]] || ! _ku_cl_exact_set; then
+    if ! _ku_cl_plan || [[ " ${KU_CL_SET[*]} " != "$planned" ]] ||
+        { (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; }; then
         changed=1
     fi
     _ku_cl_not_busy
@@ -805,13 +859,12 @@ _ku_cl_recheck() {
     fi
 }
 
-# Run the one apt-get purge of KU_CL_SET, with apt's output on stderr, once the exit handler
-# that reports a purge a signal cut short is registered; then run check's boot-links and
-# kernels items again. Exits as _ku_cl_failed says when apt-get fails, and 4 when an item fails
-# after the purge.
+# Run the one apt-get purge of KU_CL_SET, with apt's output on stderr, once the caller
+# registered the exit handler that reports a purge a signal cut short (_ku_cl_interrupted); then
+# run check's boot-links and kernels items again. Exits as _ku_cl_failed says when apt-get
+# fails, and 4 when an item fails after the purge, which leaves the module trees alone.
 _ku_cl_purge() {
     local i status=0 failed=0
-    ku_cleanup_add _ku_cl_interrupted
     KU_CL_PURGING=1
     ku_run _ku_cl_child apt-get -y -q -o DPkg::Lock::Timeout=0 \
         -o APT::Get::AutomaticRemove=false -o APT::Get::AutomaticRemove::Kernels=false purge \
@@ -853,9 +906,10 @@ _ku_cl_failed() {
         "changed"
 }
 
-# Exit handler, registered right before the purge: when a signal cut the purge short, say
-# whether dpkg's state changed, and if so that 'dpkg --configure -a', then check must settle
-# it; then sync, unless the run synced already. The exit status stays 128+N.
+# Exit handler, registered once the run starts to change the system, right before the purge or
+# the module trees: when a signal cut the purge short, say whether dpkg's state changed, and if
+# so that 'dpkg --configure -a', then check must settle it; then sync, unless the run synced
+# already. The exit status stays 128+N.
 _ku_cl_interrupted() {
     if (( KU_CL_PURGING )); then
         if _ku_cl_dpkg_changed; then
@@ -869,4 +923,444 @@ _ku_cl_interrupted() {
     if (( ! KU_CL_SYNCED )) && ! sync; then
         ku_log warning "sync failed: run it before the stick is unplugged"
     fi
+}
+
+# =======================================================
+#                     MODULE TREES
+# =======================================================
+
+# Set KU_CL_MODULES to the modules directories cleanup scans, of those that are directories:
+# /usr/lib/modules, and /lib/modules unless it is the same directory, as with a merged /usr.
+_ku_cl_modules_dirs() {
+    local usr lib
+    KU_CL_MODULES=()
+    usr=$(ku_path /usr/lib/modules)
+    lib=$(ku_path /lib/modules)
+    if [[ -d $usr ]]; then
+        KU_CL_MODULES+=(/usr/lib/modules)
+    fi
+    if [[ -d $lib && ! $lib -ef $usr ]]; then
+        KU_CL_MODULES+=(/lib/modules)
+    fi
+}
+
+# Plan the module trees step from what the modules directories hold, in their order and each
+# one's in name order. An installed kernel's tree is left unnamed. The tree of a release this
+# run purges packages of is listed: the purge may remove it or leave it, and the next run looks
+# at what is left. A tree _ku_cl_keep_reason keeps is kept, and the plan says why. Any other is
+# removed with rmdir when it is empty, moved into the quarantine when _ku_cl_movable allows, and
+# else listed. An entry that is a symlink, no directory or not named for a kernel release is
+# kept, its name tamed. Returns 1, with KU_CL_WHY saying why, when dpkg-query fails.
+_ku_cl_plan_trees() {
+    local dir path name tree reason status
+    local -a paths=()
+    local -A purged=()
+    KU_CL_TREE=() KU_CL_TREE_ACTION=() KU_CL_TREE_WHY=()
+    for name in "${KU_CL_RC_REL[@]}" "${KU_CL_AR_REL[@]}"; do
+        purged[$name]=1
+    done
+    _ku_cl_modules_dirs
+    for dir in "${KU_CL_MODULES[@]}"; do
+        mapfile -d '' -t paths < <(shopt -s nullglob dotglob
+            set -- "$(ku_path "$dir")"/*
+            (( ! $# )) || printf '%s\0' "$@")
+        for path in "${paths[@]}"; do
+            name=${path##*/}
+            tree=$dir/$name
+            if [[ -L $path || ! -d $path ]] || ! ku_valid_release "$name"; then
+                # A process can give an entry any name, so only plain characters are shown.
+                tree=$dir/${name//[^A-Za-z0-9._+~:@-]/?}
+            elif [[ -n ${purged[$name]+set} ]]; then
+                _ku_cl_tree_add list "$tree" "this run purges packages of its release; the next" \
+                    "cleanup looks at what is left"
+                continue
+            elif [[ ${KU_CK_STATE[$name]:-} == ?i ]]; then
+                continue
+            fi
+            status=0
+            reason=$(_ku_cl_keep_reason "$dir/$name" "$name") || status=$?
+            if (( status == 0 )); then
+                _ku_cl_tree_add keep "$tree" "$reason"
+            elif (( status != 1 )); then
+                KU_CL_WHY=$reason
+                return 1
+            elif _ku_cl_empty "$path"; then
+                _ku_cl_tree_add rmdir "$tree" "empty, and no package owns it"
+            elif _ku_cl_movable "$tree"; then
+                _ku_cl_tree_add quarantine "$tree" "no package owns it"
+            else
+                _ku_cl_tree_add list "$tree" "no package owns it, but $KU_CL_MOVE_WHY"
+            fi
+        done
+    done
+}
+
+# Add the module tree TREE to the plan with ACTION, rmdir, quarantine, keep or list, and WHY,
+# whose words are joined by spaces.
+_ku_cl_tree_add() {
+    KU_CL_TREE_ACTION+=("$1")
+    KU_CL_TREE+=("$2")
+    shift 2
+    KU_CL_TREE_WHY+=("$*")
+}
+
+# Return 0 when the plan removes or moves a module tree, and 1 otherwise.
+_ku_cl_tree_acts() {
+    local action
+    for action in "${KU_CL_TREE_ACTION[@]}"; do
+        if [[ $action == rmdir || $action == quarantine ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Print why the module tree TREE, a path such as /usr/lib/modules/RELEASE, must stay, and
+# return 0, when any of these holds, the cheapest tests first: it is a symlink or no directory,
+# or RELEASE has no kernel release's shape; cleanup keeps RELEASE's kernel; it holds
+# .fresh-install, which a kernel install leaves until it is configured; /boot holds RELEASE's
+# vmlinuz, initrd.img, config or System.map; dpkg lists a package named for RELEASE, its
+# -unsigned build included, in a state other than not-installed, removed with its config files
+# left included; dpkg-query -S names an owner (_ku_cl_owned); or dkms speaks for it
+# (_ku_cl_dkms_reason). Returns 1 when none holds, and 2, printing why, when dpkg-query fails.
+_ku_cl_keep_reason() {
+    local tree=$1 release=$2 real boot file out name state status=0
+    real=$(ku_path "$tree")
+    if [[ -L $real ]]; then
+        printf 'it is a symlink'
+    elif [[ ! -d $real ]]; then
+        printf 'it is no directory'
+    elif ! ku_valid_release "$release"; then
+        printf 'its name is no kernel release'
+    elif [[ -n ${KU_CL_KEEP[$release]+set} ]]; then
+        printf 'its kernel is kept (%s)' "${KU_CL_KEEP[$release]}"
+    elif [[ -e $real/.fresh-install || -L $real/.fresh-install ]]; then
+        printf 'it holds .fresh-install, which a kernel install leaves until it is configured'
+    else
+        boot=$(ku_path /boot)
+        for file in vmlinuz initrd.img config System.map; do
+            if [[ -e $boot/$file-$release || -L $boot/$file-$release ]]; then
+                printf '/boot holds %s-%s' "$file" "$release"
+                return 0
+            fi
+        done
+        # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
+        out=$(_ku_cl_child dpkg-query -W -f '${binary:Package}\t${db:Status-Abbrev}\n' \
+            "*-$release" "*-$release-unsigned" 2> /dev/null) || status=$?
+        # dpkg-query exits 1 when a pattern matches no package, and still lists the others.
+        if (( status > 1 )); then
+            printf 'dpkg-query -W failed with status %s, so cleanup cannot tell which packages' \
+                "$status"
+            printf ' are named for %s' "$release"
+            return 2
+        fi
+        while IFS=$'\t' read -r name state _; do
+            _ku_cl_bare "$name" name
+            state=${state// /}
+            if [[ ($name == *-"$release" || $name == *-"$release"-unsigned) && -n $state &&
+                $state != ?n ]]; then
+                printf 'dpkg lists %s (%s)' "$name" "$state"
+                return 0
+            fi
+        done <<< "$out"
+        status=0
+        out=$(_ku_cl_owned "$release") || status=$?
+        if (( status == 0 )); then
+            printf '%s' "$out"
+        elif (( status == 1 )); then
+            _ku_cl_dkms_reason "$real" "$release" || return 1
+        else
+            printf 'dpkg-query -S failed with status %s, so cleanup cannot tell whether a' "$out"
+            printf ' package owns %s' "$tree"
+            return 2
+        fi
+    fi
+}
+
+# Print which package dpkg-query -S names as the owner of the module tree of RELEASE, as
+# "PACKAGE owns it" for the tree itself and "PACKAGE owns files in it" for a file in it, and
+# return 0. dpkg resolves no merged-/usr alias, so both /lib/modules/RELEASE and
+# /usr/lib/modules/RELEASE are asked, and the globs find a package that lists files in the tree
+# but not the tree itself. Each pattern gets a call of its own: with several, dpkg-query exits 1
+# when any of them finds nothing. Returns 1 when none finds an owner, and 2, printing
+# dpkg-query's status, when it fails.
+_ku_cl_owned() {
+    local release=$1 pattern out line owner status
+    for pattern in "/lib/modules/$release" "/usr/lib/modules/$release" \
+        "/lib/modules/$release/*" "/usr/lib/modules/$release/*"; do
+        status=0
+        out=$(_ku_cl_child dpkg-query -S "$pattern" 2> /dev/null) || status=$?
+        if (( status == 1 )); then
+            continue
+        elif (( status )); then
+            printf '%s' "$status"
+            return 2
+        fi
+        owner=""
+        while IFS= read -r line; do
+            # A diversion line names no owner.
+            if [[ $line == *': /'* && $line != 'diversion by '* ]]; then
+                owner=${line%%: /*}
+                owner=${owner%%, *}
+                break
+            fi
+        done <<< "$out"
+        owner=${owner//[^A-Za-z0-9.+:~_-]/?}
+        if [[ $pattern == *'*' ]]; then
+            printf '%s owns files in it' "${owner:-a package}"
+        else
+            printf '%s owns it' "${owner:-a package}"
+        fi
+        return 0
+    done
+    return 1
+}
+
+# Print why dkms keeps the module tree at REAL, a path under KU_ROOT, of RELEASE, and return 0:
+# 'dkms status -k RELEASE' lists modules, which 'dkms remove' removes, or fails, so that cleanup
+# cannot tell; or dkms is not installed, which env tells by its status 127, and the tree holds
+# updates/dkms, where dkms puts the modules it builds. Returns 1 otherwise.
+_ku_cl_dkms_reason() {
+    local real=$1 release=$2 out status=0 module=MODULE/VERSION
+    # dkms 3 lists MODULE/VERSION, RELEASE, ARCH: STATE, and dkms 2 MODULE, VERSION, RELEASE, ...
+    local dkms3='^([A-Za-z0-9._+-]+)/([A-Za-z0-9._+~-]+),'
+    local dkms2='^([A-Za-z0-9._+-]+), ([A-Za-z0-9._+~-]+),'
+    out=$(_ku_cl_child dkms status -k "$release" 2> /dev/null) || status=$?
+    case $status in
+        0)
+            [[ -n $out ]] || return 1
+            if [[ $out =~ $dkms3 || $out =~ $dkms2 ]]; then
+                module=${BASH_REMATCH[1]}/${BASH_REMATCH[2]}
+            fi
+            printf "dkms lists modules for it ('dkms remove %s -k %s')" "$module" "$release"
+            ;;
+        127)
+            [[ -e $real/updates/dkms || -L $real/updates/dkms ]] || return 1
+            printf 'it holds updates/dkms, and dkms is not installed to tell whose'
+            ;;
+        *)
+            printf 'dkms status fails with status %s, so cleanup cannot tell whether dkms' \
+                "$status"
+            printf ' built modules for it'
+            ;;
+    esac
+}
+
+# Return 0 when the directory DIR holds nothing, hidden entries included, and 1 otherwise.
+_ku_cl_empty() {
+    [[ $(shopt -s nullglob dotglob; set -- "$1"/*; printf '%s' "$#") == 0 ]]
+}
+
+# Return 0 when the module tree TREE may move into the quarantine: mv can refuse to copy, as
+# --no-copy from coreutils 9.2 on does; no symlink leads to the quarantine, which lies in no
+# modules directory; the quarantine, when it is there, is a directory of root's with mode 0700;
+# only root can change the directory that holds it, or the nearest one there is while it is not;
+# and TREE and its directory lie on the device the quarantine is on, or will be, so that the
+# move is one rename. Returns 1 otherwise, with KU_CL_MOVE_WHY saying why.
+_ku_cl_movable() {
+    local real base root resolved dir info owner mode dev out
+    KU_CL_MOVE_WHY=""
+    if [[ -z $KU_CL_MV ]]; then
+        KU_CL_MV=0
+        if out=$(mv --help 2> /dev/null) && [[ $out == *--no-copy* ]]; then
+            KU_CL_MV=1
+        fi
+    fi
+    if (( ! KU_CL_MV )); then
+        KU_CL_MOVE_WHY="mv cannot refuse to copy: --no-copy needs coreutils 9.2"
+        return 1
+    fi
+    real=$(ku_path "$1")
+    base=$(ku_path "$KU_CL_QUARANTINE")
+    root=$(readlink -m -- "$(ku_path /)") || root=""
+    resolved=$(readlink -m -- "$base") || resolved=""
+    if [[ -z $root || $resolved != "${root%/}$KU_CL_QUARANTINE" ]]; then
+        KU_CL_MOVE_WHY="a symlink leads to the quarantine $KU_CL_QUARANTINE"
+        return 1
+    fi
+    for dir in "${KU_CL_MODULES[@]}"; do
+        out=$(readlink -m -- "$(ku_path "$dir")") || out=""
+        if [[ -z $out || $resolved/ == "${out%/}"/* ]]; then
+            KU_CL_MOVE_WHY="the quarantine $KU_CL_QUARANTINE lies in $dir"
+            return 1
+        fi
+    done
+    dir=${base%/*}
+    if [[ -e $base || -L $base ]]; then
+        info=""
+        if [[ -d $base && ! -L $base ]]; then
+            info=$(stat -c '%u %a %d' -- "$base" 2> /dev/null) || info=""
+        fi
+        read -r owner mode dev <<< "$info"
+        if [[ $owner != 0 || $mode != 700 ]]; then
+            KU_CL_MOVE_WHY="the quarantine $KU_CL_QUARANTINE is no directory of root's with mode"
+            KU_CL_MOVE_WHY+=" 0700"
+            return 1
+        fi
+    else
+        # mkdir -p makes the quarantine in the nearest directory there is.
+        while [[ -n $dir && ! -e $dir && ! -L $dir ]]; do
+            dir=${dir%/*}
+        done
+        dir=${dir:-/}
+        dev=$(stat -c %d -- "$dir" 2> /dev/null) || dev=""
+    fi
+    if ! ku_root_only_dir "$dir"; then
+        KU_CL_MOVE_WHY="a user other than root can change the directory that holds the"
+        KU_CL_MOVE_WHY+=" quarantine $KU_CL_QUARANTINE"
+        return 1
+    fi
+    out=$(stat -c %d -- "${real%/*}" "$real" 2> /dev/null) || out=""
+    if [[ -z $dev || $out != "$dev"$'\n'"$dev" ]]; then
+        KU_CL_MOVE_WHY="it lies on another filesystem than the quarantine"
+        return 1
+    fi
+}
+
+# Remove or move the module trees the confirmed plan names, in its order. Right before each,
+# check the locks and every keep test again, and leave the tree, with a warning, while apt or
+# dpkg runs or that cannot be told, when a test keeps it now, when an empty one is no longer
+# empty, or when one may no longer move; a tree that went meanwhile is only reported. Then
+# remove an empty tree with rmdir, which loses nothing, or move one into the quarantine
+# (_ku_cl_quarantine). Exits as _ku_cl_stopped says when dpkg-query fails or a step fails.
+_ku_cl_trees() {
+    local i tree real reason holder status
+    for i in "${!KU_CL_TREE[@]}"; do
+        [[ ${KU_CL_TREE_ACTION[i]} == rmdir || ${KU_CL_TREE_ACTION[i]} == quarantine ]] ||
+            continue
+        tree=${KU_CL_TREE[i]}
+        real=$(ku_path "$tree")
+        if [[ ! -e $real && ! -L $real ]]; then
+            ku_log warning "$tree went while cleanup ran, so there is nothing left to do for it"
+            continue
+        fi
+        status=0
+        holder=$(_ku_cl_dpkg_busy) || status=$?
+        if (( status == 0 )); then
+            _ku_cl_leave "$tree" "apt or dpkg is running: $holder; run cleanup again once it is" \
+                "done"
+            continue
+        elif (( status != 1 )); then
+            _ku_cl_leave "$tree" "cleanup cannot tell whether apt or dpkg is running"
+            continue
+        fi
+        status=0
+        reason=$(_ku_cl_keep_reason "$tree" "${tree##*/}") || status=$?
+        if (( status == 0 )); then
+            _ku_cl_leave "$tree" "$reason"
+            continue
+        elif (( status != 1 )); then
+            _ku_cl_stopped "$reason" "$tree"
+        fi
+        if [[ ${KU_CL_TREE_ACTION[i]} == rmdir ]]; then
+            if ! _ku_cl_empty "$real"; then
+                _ku_cl_leave "$tree" "it is no longer empty"
+                continue
+            fi
+            if ! ku_run rmdir -- "$real"; then
+                _ku_cl_stopped "rmdir cannot remove the empty directory $tree" "$tree" write
+            fi
+            ku_log info "removed the empty directory $tree"
+            KU_CL_REMOVED=$(( KU_CL_REMOVED + 1 ))
+        else
+            _ku_cl_quarantine_base "$tree"
+            if ! _ku_cl_movable "$tree"; then
+                _ku_cl_leave "$tree" "$KU_CL_MOVE_WHY"
+                continue
+            fi
+            _ku_cl_quarantine "$tree"
+            KU_CL_MOVED=$(( KU_CL_MOVED + 1 ))
+        fi
+    done
+}
+
+# Leave the planned module tree TREE where it is, warning why: WHY, whose words are joined by
+# spaces.
+_ku_cl_leave() {
+    local tree=$1
+    shift
+    ku_log warning "left $tree where it is: $*"
+    KU_CL_LEFT=$(( KU_CL_LEFT + 1 ))
+}
+
+# Exit after a step of the module trees stopped with TEXT, saying what is done and that the
+# module tree TREE and those after it stay where they are: 4 once the purge ran or a tree was
+# removed or moved, or with KIND write, when the step itself failed to change something; and 3
+# while nothing was changed.
+_ku_cl_stopped() {
+    local text=$1 tree=$2 kind=${3:-check} count=$(( KU_CL_REMOVED + KU_CL_MOVED ))
+    local -a finished=()
+    if (( ${#KU_CL_SET[@]} )); then
+        finished+=("the purge ran")
+    fi
+    if (( count == 1 )); then
+        finished+=("1 module tree was removed or moved")
+    elif (( count )); then
+        finished+=("$count module trees were removed or moved")
+    fi
+    if (( ! ${#finished[@]} )) && [[ $kind != write ]]; then
+        ku_die "$KU_EX_REFUSED" "$text; nothing was changed"
+    fi
+    text+="; "
+    if (( ${#finished[@]} )); then
+        text+="$(ku_join "${finished[@]}"), and "
+    fi
+    ku_die "$KU_EX_WRITE" "$text$tree and the module trees after it stay where they are: run" \
+        "cleanup again"
+}
+
+# Make the quarantine, and the directories that hold it, with mode 0700, as baseline makes
+# /var/lib/kernel-updater, unless it is there. Exits as _ku_cl_stopped says, for the module tree
+# TREE, when that fails.
+_ku_cl_quarantine_base() {
+    local base
+    base=$(ku_path "$KU_CL_QUARANTINE")
+    [[ ! -e $base && ! -L $base ]] || return 0
+    if ! (umask 077 && mkdir -p -- "${base%/*}" && mkdir -- "$base"); then
+        _ku_cl_stopped "cannot make the quarantine $KU_CL_QUARANTINE" "$1" write
+    fi
+}
+
+# Move the module tree TREE into a new entry of the quarantine, RELEASE.STAMP, STAMP the UTC
+# time, or a second later while that name is taken: make the entry with mode 0700, write its
+# origin, then rename the tree into it as tree with 'mv --no-copy -T', which refuses to copy. A
+# kill before the rename leaves the tree where it was and an entry without tree, which expires
+# like any other. Exits as _ku_cl_stopped says when a step fails.
+_ku_cl_quarantine() {
+    local tree=$1 release=${1##*/} real base epoch stamp entry sha version reasons text tries=0
+    real=$(ku_path "$tree")
+    base=$(ku_path "$KU_CL_QUARANTINE")
+    epoch=$(date -u +%s) || epoch=""
+    if [[ ! $epoch =~ ^[0-9]+$ ]]; then
+        _ku_cl_stopped "date prints no time to name the quarantine entry by" "$tree" write
+    fi
+    while :; do
+        TZ=UTC0 printf -v stamp '%(%Y%m%dT%H%M%SZ)T' "$epoch"
+        entry=$KU_CL_QUARANTINE/$release.$stamp
+        [[ -e $base/${entry##*/} || -L $base/${entry##*/} ]] || break
+        tries=$(( tries + 1 ))
+        if (( tries == 10 )); then
+            text="the quarantine holds an entry for $release of each of the last 10 seconds"
+            _ku_cl_stopped "$text" "$tree" write
+        fi
+        epoch=$(( epoch + 1 ))
+    done
+    if ! (umask 077 && mkdir -- "$(ku_path "$entry")"); then
+        _ku_cl_stopped "cannot make the quarantine entry $entry" "$tree" write
+    fi
+    sha=$(ku_sha256 "$(ku_path /var/lib/dpkg/status)") || sha=-
+    { version=$(< "${KU_SHAREDIR:-}/VERSION"); } 2> /dev/null || version=unknown
+    reasons="no package owns it or is named for its release, its kernel is not kept, /boot"
+    reasons+=" holds none of its files, it holds no .fresh-install and dkms speaks for none of it"
+    if ! (umask 077 && printf '%s\n' "path: $tree" "release: $release" "stamp: $stamp" \
+        "reasons: $reasons" "dpkg-status: $sha" "tool: kernel-updater $version" \
+        > "$(ku_path "$entry")/origin"); then
+        text="cannot write $entry/origin; the entry holds nothing else and expires like any other"
+        _ku_cl_stopped "$text" "$tree" write
+    fi
+    if ! ku_run mv --no-copy -T -- "$real" "$(ku_path "$entry")/tree"; then
+        text="mv cannot move $tree into $entry, which holds only its origin and expires like any"
+        _ku_cl_stopped "$text other" "$tree" write
+    fi
+    ku_log info "moved $tree to $entry/tree; 'mv -T $entry/tree $tree' moves it back"
 }
