@@ -13,7 +13,12 @@
 # kernels apt's autoremove names: which of its packages join the purge and which it keeps or
 # only lists, kernels marked manual, one purge for both steps, a purge apt would widen, the
 # options that leave a step out, and a simulation that fails or changes while the question
-# waits. No identifier is printed.
+# waits; and the module trees: each reason that keeps one, which the plan shows, an owner each
+# of dpkg-query -S's four patterns finds alone, dpkg-query failing, an empty tree removed with
+# rmdir and another moved into the quarantine, origin first, a kill before the move, a
+# quarantine on another device or an mv that cannot refuse to copy, a tree this run's purge
+# leaves, a re-check that keeps a tree, merged and separate modules directories, --no-modules
+# and the dry run. No identifier is printed.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -62,25 +67,29 @@ setup() {
 
 # Write the stubs that answer for the system: root, the tool's lock, stat, /boot's mount, dpkg,
 # linux-version and sync; apt-get as the apt-get stub below says; apt-mark, whose showmanual
-# prints the lines of the file APT_MANUAL names, or nothing, and exits APT_MARK_STATUS; and
-# dkms, which answers a simulation (-s) with nothing to do. apt-mark and dkms refuse anything
-# else. dpkg-query, apt-get, apt-mark and dkms leave the environment they got in env.NAME beside
-# the stub log.
+# prints the lines of the file APT_MANUAL names, or nothing, and exits APT_MARK_STATUS; dkms,
+# whose status -k RELEASE prints the lines of the file DKMS_LIST names that name RELEASE; and mv,
+# rmdir and mkdir, which run the real ones. apt-mark and dkms refuse anything else. dpkg-query,
+# apt-get, apt-mark and dkms leave the environment they got in env.NAME beside the stub log.
 stubs() {
     mkstub id <<'EOF'
 printf '%s\n' "${ID_U:-0}"
 EOF
     mkstub flock
-    # Root owns the config file, with mode 0600; the real stat answers the rest, such as the
-    # inodes of dpkg's lock files.
+    # Root owns the config file and what holds the quarantine, with mode 0600, and the
+    # quarantine, with mode 0700, on the device STAT_DEV when that is set; the real stat answers
+    # the rest, such as the inodes of dpkg's lock files and the devices of the module trees.
     export REAL_STAT
     REAL_STAT=$(type -P stat)
     mkstub stat <<'EOF'
-if [[ " $* " == *" %u %a "* ]]; then
-    printf '0 600\n'
-else
-    exec "$REAL_STAT" "$@"
-fi
+case " $* " in
+    *" %u %a %d "*)
+        dev=$("$REAL_STAT" -c %d -- "${@: -1}") || exit
+        printf '0 700 %s\n' "${STAT_DEV:-$dev}"
+        ;;
+    *" %u %a "*) printf '0 600\n' ;;
+    *) exec "$REAL_STAT" "$@" ;;
+esac
 EOF
     # FINDMNT_OUT is /boot's mount line; empty means /boot is not mounted.
     export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 $BOOT_FS_UUID"
@@ -88,8 +97,36 @@ EOF
 [[ " $* " == *" --mountpoint "* && -n $FINDMNT_OUT ]] || exit 1
 printf '%s\n' "$FINDMNT_OUT"
 EOF
+    # dpkg-query -W prints the file DPKG_QUERY_OUT names and exits DPKG_QUERY_STATUS. -S looks
+    # each pattern up in the PACKAGE: PATH lines of the file DPKG_OWNERS names, as dpkg-query
+    # does: one with a wildcard as a glob whose * matches a slash too, any other as the literal
+    # path; it exits 1 when any pattern finds nothing, or with the status that the file
+    # dpkg-query.S.status beside the stub log holds.
     mkstub dpkg-query <<'EOF'
 env > "${STUB_LOG%/*}/env.dpkg-query"
+if [[ $1 == -S ]]; then
+    shift
+    forced=${STUB_LOG%/*}/dpkg-query.S.status
+    [[ ! -s $forced ]] || exit "$(< "$forced")"
+    status=0
+    for pattern in "$@"; do
+        found=0
+        while IFS= read -r line; do
+            path=${line#*: }
+            case $pattern in
+                *'*'* | *'?'* | *'['*) [[ $path == $pattern ]] || continue ;;
+                *) [[ $path == "$pattern" ]] || continue ;;
+            esac
+            printf '%s\n' "$line"
+            found=1
+        done < "${DPKG_OWNERS:-/dev/null}"
+        if (( ! found )); then
+            printf 'dpkg-query: no path found matching pattern %s\n' "$pattern" >&2
+            status=1
+        fi
+    done
+    exit "$status"
+fi
 cat "$DPKG_QUERY_OUT"
 exit "${DPKG_QUERY_STATUS:-0}"
 EOF
@@ -106,11 +143,48 @@ fi
 printf '%s: refused under test\n' "$STUB_NAME" >&2
 exit 100
 EOF
+    # dkms lists its modules as "MODULE/VERSION, RELEASE, ARCH: STATE". With DKMS_MISSING set it
+    # exits 127, as env does for a tool that is not installed.
     mkstub dkms <<'EOF'
 env > "${STUB_LOG%/*}/env.$STUB_NAME"
-[[ " $* " != *" -s "* ]] || exit 0
+[[ -z ${DKMS_MISSING:-} ]] || exit 127
+if [[ $# == 3 && $1 == status && $2 == -k ]]; then
+    [[ -z ${DKMS_LIST:-} ]] || grep -F ", $3, " "$DKMS_LIST" || true
+    exit 0
+fi
 printf '%s: refused under test\n' "$STUB_NAME" >&2
 exit 100
+EOF
+    # mv takes --no-copy, which the real one may lack and a rename within one filesystem does
+    # without, and names it in its --help unless MV_OLD is set. It notes whether the quarantine
+    # entry it moves into holds origin, and with MV_KILL set kills the tool before it moves
+    # anything, as a kill at that moment would. mkdir notes its umask.
+    export REAL_MV REAL_RMDIR REAL_MKDIR
+    REAL_MV=$(type -P mv) REAL_RMDIR=$(type -P rmdir) REAL_MKDIR=$(type -P mkdir)
+    mkstub mv <<'EOF'
+if [[ $* == --help ]]; then
+    printf 'Usage: mv [OPTION]... [-T] SOURCE DEST\n'
+    [[ -n ${MV_OLD:-} ]] || printf '      --no-copy                do not copy if renaming fails\n'
+    exit 0
+fi
+dest=${*: -1}
+[[ ! -e ${dest%/*}/origin ]] || printf '  origin was written\n' >> "$STUB_LOG"
+if [[ -n ${MV_KILL:-} ]]; then
+    kill -KILL "$PPID"
+    exit 1
+fi
+args=()
+for arg in "$@"; do
+    [[ $arg == --no-copy ]] || args+=("$arg")
+done
+exec "$REAL_MV" "${args[@]}"
+EOF
+    mkstub rmdir <<'EOF'
+exec "$REAL_RMDIR" "$@"
+EOF
+    mkstub mkdir <<'EOF'
+printf '  umask %s\n' "$(umask)" >> "$STUB_LOG"
+exec "$REAL_MKDIR" "$@"
 EOF
     stub_apt_get
 }
@@ -251,6 +325,49 @@ on_recheck() {
 # Print the apt-get and sync calls in the stub log, in order.
 apt_calls() {
     grep -E '^(apt-get|sync)( |$)' "$STUB_LOG" || true
+}
+
+# Make the module tree RELEASE in the modules directory DIR, such as /usr/lib/modules, under
+# ROOT: empty, or holding the files FILE..., each holding its own name.
+module_tree() {
+    local tree=$ROOT$1/$2 file
+    shift 2
+    mkdir -p "$tree"
+    for file in "$@"; do
+        mkdir -p "$(dirname "$tree/$file")"
+        printf '%s\n' "$file" > "$tree/$file"
+    done
+}
+
+# Have dpkg-query -S name PACKAGE as the owner of PATH, for each PACKAGE and PATH pair.
+owns() {
+    export DPKG_OWNERS="$BATS_TEST_TMPDIR/owners"
+    while (( $# )); do
+        printf '%s: %s\n' "$1" "$2" >> "$DPKG_OWNERS"
+        shift 2
+    done
+}
+
+# Print the names in the quarantine, one per line, or nothing while there is none.
+entries() {
+    if [[ -d $ROOT/var/lib/kernel-updater/quarantine ]]; then
+        ls -A "$ROOT/var/lib/kernel-updater/quarantine"
+    fi
+}
+
+# Print the line the stub log holds for a call of NAME with ARGS, each quoted as a stub logs it.
+logged() {
+    local name=$1
+    shift
+    printf '%s' "$name"
+    printf ' %q' "$@"
+    printf '\n'
+}
+
+# Print the plan records of the releases cleanup keeps on setup's system: V2, which runs and
+# vmlinuz points at, and V1, which vmlinuz.old points at.
+kept() {
+    printf '%s\t%s\t%s\t%s\n' protect keep "$V2" 'running, vmlinuz' protect keep "$V1" vmlinuz.old
 }
 
 @test "cleanup --help prints its usage, and an unknown option or an argument exits 64" {
@@ -1043,4 +1160,312 @@ was changed"* ]]
 cleanup again; nothing was changed"* ]]
     refute_line_match '^(apt-get -y|sync)( |$)' "$STUB_LOG"
     private_output
+}
+
+@test "A module tree that must stay is kept and the plan says why, but an installed kernel's not" {
+    local m=/usr/lib/modules release
+    # vmlinuz.old points at 9.0.3, a kernel built by hand that no package holds.
+    printf 'kernel 9.0.3\n' > "$ROOT/boot/vmlinuz-9.0.3+kali-amd64"
+    printf 'initrd 9.0.3\n' > "$ROOT/boot/initrd.img-9.0.3+kali-amd64"
+    ln -sfn vmlinuz-9.0.3+kali-amd64 "$ROOT/boot/vmlinuz.old"
+    ln -sfn initrd.img-9.0.3+kali-amd64 "$ROOT/boot/initrd.img.old"
+    for release in "$V1" "$V2" 9.0.3+kali-amd64; do
+        module_tree $m "$release" kernel/a.ko modules.dep
+    done
+    # A package of modules dkms built for 9.0.4, and 9.0.10's held image, removed with its
+    # config files left.
+    listed ku-modules-9.0.4+kali-amd64 ii linux-image-9.0.10+kali-amd64 hc
+    module_tree $m 9.0.4+kali-amd64 updates/ku.ko
+    module_tree $m 9.0.10+kali-amd64 modules.dep
+    module_tree $m 9.0.5+kali-amd64 .fresh-install
+    module_tree $m 9.0.6+kali-amd64 modules.dep
+    printf 'config\n' > "$ROOT/boot/config-9.0.6+kali-amd64"
+    ln -s "$V1" "$ROOT$m/9.0.7+kali-amd64"
+    printf 'no tree\n' > "$ROOT$m/9.0.8+kali-amd64"
+    module_tree $m 9.0.9+kali-amd64 updates/dkms/ku-test.ko
+    export DKMS_LIST="$BATS_TEST_TMPDIR/dkms.list"
+    printf 'ku-test/1.0, 9.0.9+kali-amd64, x86_64: installed\n' > "$DKMS_LIST"
+    module_tree $m not-a-release modules.dep
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\t%s\t%s\t%s\n' protect keep "$V2" 'running, vmlinuz' \
+        protect keep 9.0.3+kali-amd64 vmlinuz.old rc skip linux-image-9.0.10+kali-amd64 held \
+        modules keep $m/9.0.10+kali-amd64 'dpkg lists linux-image-9.0.10+kali-amd64 (hc)' \
+        modules keep $m/9.0.3+kali-amd64 'its kernel is kept (vmlinuz.old)' \
+        modules keep $m/9.0.4+kali-amd64 'dpkg lists ku-modules-9.0.4+kali-amd64 (ii)' \
+        modules keep $m/9.0.5+kali-amd64 \
+        'it holds .fresh-install, which a kernel install leaves until it is configured' \
+        modules keep $m/9.0.6+kali-amd64 '/boot holds config-9.0.6+kali-amd64' \
+        modules keep $m/9.0.7+kali-amd64 'it is a symlink' \
+        modules keep $m/9.0.8+kali-amd64 'it is no directory' \
+        modules keep $m/9.0.9+kali-amd64 \
+        "dkms lists modules for it ('dkms remove ku-test/1.0 -k 9.0.9+kali-amd64')" \
+        modules keep $m/not-a-release 'its name is no kernel release')" ]
+    [[ "$stderr" == *"plan: keep $m/9.0.9+kali-amd64: dkms lists modules for it ('dkms remove \
+ku-test/1.0 -k 9.0.9+kali-amd64')"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    # Only the tree that no cheaper test keeps is looked up with dpkg-query -S.
+    [ "$(grep -c '^dpkg-query -S ' "$STUB_LOG")" -eq 4 ]
+    # Without dkms, the tree it may have built is kept all the same.
+    export DKMS_MISSING=1
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'\nmodules\tkeep\t'"$m/9.0.9+kali-amd64"$'\t'"it holds updates/dkms, and \
+dkms is not installed to tell whose"$'\n'* ]]
+    private_output
+}
+
+@test "An owner that any one of dpkg-query -S's four patterns finds keeps the tree, each alone" {
+    local m=/usr/lib/modules release entry expected=""
+    local -a patterns=()
+    for release in 9.0.4 9.0.5 9.0.6 9.0.7 9.0.8; do
+        module_tree $m "$release+kali-amd64" kernel/a.ko
+    done
+    owns ku-a /lib/modules/9.0.4+kali-amd64 ku-b /usr/lib/modules/9.0.5+kali-amd64 \
+        ku-c /lib/modules/9.0.6+kali-amd64/extra/c.ko ku-d /usr/lib/modules/9.0.7+kali-amd64/d.ko
+    # As dpkg-query does, the stub exits 1 when one of several patterns finds nothing, and
+    # still prints what the others found.
+    run --separate-stderr "$STUB_BIN/dpkg-query" -S /lib/modules/9.0.4+kali-amd64 \
+        /usr/lib/modules/9.0.4+kali-amd64
+    [ "$status" -eq 1 ]
+    [ "$output" = "ku-a: /lib/modules/9.0.4+kali-amd64" ]
+    : > "$STUB_LOG"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' \
+        modules keep $m/9.0.4+kali-amd64 'ku-a owns it' \
+        modules keep $m/9.0.5+kali-amd64 'ku-b owns it' \
+        modules keep $m/9.0.6+kali-amd64 'ku-c owns files in it' \
+        modules keep $m/9.0.7+kali-amd64 'ku-d owns files in it' \
+        modules quarantine $m/9.0.8+kali-amd64 'no package owns it')" ]
+    # Each pattern gets a call of its own, and the first owner found ends the search.
+    for entry in 9.0.4:1 9.0.5:2 9.0.6:3 9.0.7:4 9.0.8:4; do
+        release=${entry%:*}+kali-amd64
+        patterns=("/lib/modules/$release" "/usr/lib/modules/$release" "/lib/modules/$release/*"
+            "/usr/lib/modules/$release/*")
+        expected+=$(printf 'dpkg-query -S %q\n' "${patterns[@]:0:${entry#*:}}")$'\n'
+    done
+    [ "$(grep '^dpkg-query -S ' "$STUB_LOG")"$'\n' = "$expected" ]
+    private_output
+}
+
+@test "dpkg-query -S failing refuses with 3 before any change, and exits 4 after the purge" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 failed="$BATS_TEST_TMPDIR/dpkg-query.S.status"
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
+    printf '2\n' > "$failed"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"dpkg-query -S failed with status 2, so cleanup cannot tell whether a \
+package owns $tree; nothing was changed"* ]]
+    [ -z "$output" ]
+    refute_line_match '^(apt-get -y|sync)( |$)' "$STUB_LOG"
+    rm "$failed"
+    listed "linux-image-$V0" rc
+    on_purge "printf '2\n' > '$failed'"
+    run_ku cleanup --yes
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"dpkg-query -S failed with status 2, so cleanup cannot tell whether a \
+package owns $tree; the purge ran, and $tree and the module trees after it stay where they \
+are: run cleanup again"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    [ -z "$(entries)" ]
+    refute_line_match '^mv --no-copy' "$STUB_LOG"
+    [ "$(apt_calls | tail -n 1)" = sync ]
+    private_output
+}
+
+@test "An empty module tree no package owns is removed with rmdir, and rm never runs" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64
+    stub_refuse rm
+    module_tree /usr/lib/modules 9.0.8+kali-amd64
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules rmdir "$tree" \
+        'empty, and no package owns it')" ]
+    [[ "$stderr" == *"plan: remove the empty directory $tree"*"plan: then sync"* ]]
+    [[ "$stderr" == *"cleanup: removed 1 empty module tree"* ]]
+    [ ! -e "$ROOT$tree" ]
+    [ -d "$ROOT/usr/lib/modules" ]
+    [ "$(grep -E '^(rm|rmdir|mv|mkdir|sync)( |$)' "$STUB_LOG")" = \
+        "$(logged rmdir -- "$ROOT$tree"; printf 'sync\n')" ]
+    [ ! -e "$ROOT/var/lib/kernel-updater" ]
+    private_output
+}
+
+@test "A module tree no package owns moves into a quarantine entry of mode 0700, origin first" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 base="$ROOT/var/lib/kernel-updater/quarantine"
+    local entry line
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko modules.dep
+    printf 'Package: x\n' > "$ROOT/var/lib/dpkg/status"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules quarantine "$tree" \
+        'no package owns it')" ]
+    [[ "$stderr" == *"plan: move $tree into the quarantine: no package owns it"* ]]
+    [[ "$stderr" == *"cleanup: moved 1 module tree into the quarantine"* ]]
+    [ ! -e "$ROOT$tree" ]
+    entry=$(entries)
+    [[ "$entry" =~ ^9\.0\.8\+kali-amd64\.[0-9]{8}T[0-9]{6}Z$ ]]
+    [ "$(< "$base/$entry/tree/kernel/a.ko")" = kernel/a.ko ]
+    [ "$(< "$base/$entry/tree/modules.dep")" = modules.dep ]
+    # origin says where the tree came from, when and why; the run that made the entry writes no
+    # seen.
+    for line in "path: $tree" "release: 9.0.8+kali-amd64" "stamp: ${entry##*.}" \
+        "dpkg-status: $(sha256sum < "$ROOT/var/lib/dpkg/status" | cut -d ' ' -f 1)" \
+        "tool: kernel-updater $(< "$REPO_DIR/share/kernel-updater/VERSION")"; do
+        grep -F -q -x -e "$line" "$base/$entry/origin" ||
+            { printf 'origin lacks "%s"\n' "$line" >&2; return 1; }
+    done
+    grep -q '^reasons: no package owns it' "$base/$entry/origin"
+    [ ! -e "$base/$entry/seen" ]
+    # The entry is made with umask 077, and origin is written before the tree is renamed.
+    [ "$(grep -F -x -A 1 -e "$(logged mkdir -- "$base/$entry")" "$STUB_LOG")" = \
+        "$(logged mkdir -- "$base/$entry"; printf '  umask 0077\n')" ]
+    [ "$(grep -F -x -A 1 -e "$(logged mv --no-copy -T -- "$ROOT$tree" "$base/$entry/tree")" \
+        "$STUB_LOG")" = "$(logged mv --no-copy -T -- "$ROOT$tree" "$base/$entry/tree"
+        printf '  origin was written\n')" ]
+    # Git Bash on Windows keeps no such modes.
+    if [[ $OSTYPE == linux* ]]; then
+        [ "$(stat -c %a "$base")" = 700 ]
+        [ "$(stat -c %a "$base/$entry")" = 700 ]
+    fi
+    [ "$(apt_calls | tail -n 1)" = sync ]
+    private_output
+}
+
+@test "A kill after origin and before the move leaves the tree, which the next run plans again" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 base="$ROOT/var/lib/kernel-updater/quarantine"
+    local entry
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
+    export MV_KILL=1
+    run_ku cleanup --yes
+    [ "$status" -eq 137 ]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    entry=$(entries)
+    grep -F -q -x -e "path: $tree" "$base/$entry/origin"
+    [ ! -e "$base/$entry/tree" ]
+    export MV_KILL=""
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules quarantine "$tree" \
+        'no package owns it')" ]
+    # The half-made entry stays as it is until it expires.
+    [ "$(entries)" = "$entry" ]
+    [ ! -e "$base/$entry/tree" ]
+}
+
+@test "A tree on another device than the quarantine, or without mv --no-copy, is only listed" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
+    mkdir -p "$ROOT/var/lib/kernel-updater/quarantine"
+    export STAT_DEV=4242
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules list "$tree" \
+        'no package owns it, but it lies on another filesystem than the quarantine')" ]
+    [[ "$stderr" == *"plan: leave $tree: no package owns it, but it lies on another filesystem \
+than the quarantine"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    export STAT_DEV="" MV_OLD=1
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules list "$tree" \
+        'no package owns it, but mv cannot refuse to copy: --no-copy needs coreutils 9.2')" ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    [ -z "$(entries)" ]
+    [ "$(grep -E '^(mv|mkdir|rmdir)( |$)' "$STUB_LOG" | sort -u)" = "mv --help" ]
+}
+
+@test "A tree whose release this run purges packages of is left, and the next run plans it" {
+    local tree=/usr/lib/modules/$V0
+    listed "linux-image-$V0" rc
+    module_tree /usr/lib/modules "$V0" modules.dep
+    # The purge takes V0's package from dpkg's list, and leaves the tree.
+    on_purge "grep -v '^linux-image-$V0' '$DPKG_QUERY_OUT' > '$BATS_TEST_TMPDIR/rest'
+        cat '$BATS_TEST_TMPDIR/rest' > '$DPKG_QUERY_OUT'"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' rc purge "linux-image-$V0" "$V0" \
+        modules list "$tree" \
+        'this run purges packages of its release; the next cleanup looks at what is left')" ]
+    [[ "$stderr" == *"cleanup: purged 1 package"* ]]
+    [ -f "$ROOT$tree/modules.dep" ]
+    refute_line_match '^(mkdir|rmdir)( |$)|^mv --no-copy' "$STUB_LOG"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules quarantine "$tree" \
+        'no package owns it')" ]
+    private_output
+}
+
+@test "A planned tree a re-check finds owned, or while apt holds its lock, stays with a warning" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 gone=/usr/lib/modules/9.0.9+kali-amd64
+    listed "linux-image-$V0" rc
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
+    module_tree /usr/lib/modules 9.0.9+kali-amd64
+    owns ku-tool /usr/bin/ku-tool
+    # A package that owns files in the tree turns up while the purge runs, and the empty tree
+    # goes.
+    on_purge "printf 'ku-late: %s\n' '$tree/extra/late.ko' >> '$DPKG_OWNERS'
+        rm -d '$ROOT$gone'"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'\nmodules\tquarantine\t'"$tree"$'\tno package owns it\nmodules\trmdir\t'"\
+$gone"$'\tempty, and no package owns it' ]]
+    [[ "$stderr" == *"warning: left $tree where it is: ku-late owns files in it"* ]]
+    [[ "$stderr" == *"warning: $gone went while cleanup ran, so there is nothing left to do for \
+it"* ]]
+    [[ "$stderr" == *"cleanup: purged 1 package and left 1 module tree a re-check kept"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    [ -z "$(entries)" ]
+    # So does a lock apt or dpkg holds by then.
+    printf 'ku-tool: /usr/bin/ku-tool\n' > "$DPKG_OWNERS"
+    lock_line 4242 /var/lib/dpkg/lock-frontend apt-get > "$BATS_TEST_TMPDIR/held"
+    on_purge "cat '$BATS_TEST_TMPDIR/held' > '$ROOT/proc/locks'"
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: left $tree where it is: apt or dpkg is running: PID 4242 \
+(apt-get) holds /var/lib/dpkg/lock-frontend; run cleanup again once it is done"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    [ -z "$(entries)" ]
+    refute_line_match '^(mkdir|rmdir)( |$)|^mv --no-copy' "$STUB_LOG"
+    private_output
+}
+
+@test "With a merged /usr cleanup scans one modules directory, and both with a separate /lib" {
+    module_tree /usr/lib/modules 9.0.8+kali-amd64
+    ln -s usr/lib "$ROOT/lib"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules rmdir \
+        /usr/lib/modules/9.0.8+kali-amd64 'empty, and no package owns it')" ]
+    rm "$ROOT/lib"
+    module_tree /lib/modules 9.0.9+kali-amd64
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' \
+        modules rmdir /usr/lib/modules/9.0.8+kali-amd64 'empty, and no package owns it' \
+        modules rmdir /lib/modules/9.0.9+kali-amd64 'empty, and no package owns it')" ]
+}
+
+@test "--no-modules leaves the module trees alone, and a dry run removes and moves nothing" {
+    module_tree /usr/lib/modules 9.0.8+kali-amd64
+    module_tree /usr/lib/modules 9.0.9+kali-amd64 kernel/a.ko
+    find "$ROOT" | sort > "$BATS_TEST_TMPDIR/tree.before"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' \
+        modules rmdir /usr/lib/modules/9.0.8+kali-amd64 'empty, and no package owns it' \
+        modules quarantine /usr/lib/modules/9.0.9+kali-amd64 'no package owns it')" ]
+    [[ "$stderr" == *"plan: then sync"*"dry run: nothing was changed"* ]]
+    find "$ROOT" | sort | cmp - "$BATS_TEST_TMPDIR/tree.before"
+    refute_line_match '^(mkdir|rmdir|sync)( |$)|^mv --no-copy' "$STUB_LOG"
+    : > "$STUB_LOG"
+    run_ku cleanup --yes --no-modules --porcelain
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    find "$ROOT" | sort | cmp - "$BATS_TEST_TMPDIR/tree.before"
+    refute_line_match '^(dpkg-query -S|dkms|mv|mkdir|rmdir)( |$)' "$STUB_LOG"
 }

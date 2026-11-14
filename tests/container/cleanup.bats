@@ -8,20 +8,28 @@
 # check stay as they were; a pending reboot purges nothing; once the dummies are marked auto, the
 # old kernel apt's autoremove names is purged in the same run, the kernel vmlinuz.old points at
 # stays when apt keeps another one, and a purge that would take along a package that depends on
-# an old kernel's headers refuses; and a real fcntl lock on dpkg's frontend lock, as apt takes
-# it, shows in /proc/locks on the container's overlay filesystem. Stubs stand in only for what a
-# container cannot answer: /boot's LUKS mapping, uname, lsinitramfs and dumpe2fs.
+# an old kernel's headers refuses; the empty module tree a kernel install that the /boot guard
+# refused leaves is removed with rmdir, and a tree dkms lists modules for is kept until it lists
+# none, then moved into the quarantine; and a real fcntl lock on dpkg's frontend lock, as apt
+# takes it, shows in /proc/locks on the container's overlay filesystem. Stubs stand in only for
+# what a container cannot answer: /boot's LUKS mapping, uname, lsinitramfs, dumpe2fs and dkms.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
 load ../helpers
 load container
 
-# Build the dummy kernels, and the headers of V2 with a dummy that depends on them, as a
-# package of DKMS modules built for one kernel does.
+# A dummy kernel with a real kernel's maintainer scripts, whose preinst makes its module tree,
+# the release of a module tree dkms built for, and a preinst hook that runs the checkout's
+# /boot guard, as the one install.sh installs runs the installed tool.
+HOOKED=9.0.20+kali-amd64 DKMS_REL=9.0.21+kali-amd64 GUARD=/etc/kernel/preinst.d/00-ku-test-guard
+
+# Build the dummy kernels, the hooked one included, and the headers of V2 with a dummy that
+# depends on them, as a package of DKMS modules built for one kernel does.
 setup_file() {
     container_setup_file
     in_test_container || return 0
+    build_hooked_kernel "$HOOKED"
     build_package "linux-headers-$V2" "Version: ${V2%%+*}-1"
     build_package ku-test-dkms "Version: 1.0-1" "Depends: linux-headers-$V2"
 }
@@ -50,13 +58,15 @@ esac
 EOF
 }
 
-# Stop the process a test left holding dpkg's frontend lock, and mark the dummies manual again.
+# Stop the process a test left holding dpkg's frontend lock, remove the /boot guard a test
+# left, and mark the dummies manual again.
 teardown() {
     in_test_container || return 0
     if [[ -n ${LOCK_PID:-} ]]; then
         kill "$LOCK_PID" 2> /dev/null || true
         wait "$LOCK_PID" 2> /dev/null || true
     fi
+    rm -f "$GUARD"
     manual_marks
 }
 
@@ -173,6 +183,67 @@ dummies() {
     [ "$(package_state "linux-image-$V2")" = ii ]
     [ "$(package_state "linux-headers-$V2")" = ii ]
     [ "$(package_state ku-test-dkms)" = ii ]
+}
+
+@test "The empty module tree of a kernel install the /boot guard refused is removed with rmdir" {
+    local modules=/usr/lib/modules tab=$'\t'
+    # With a merged /usr, the preinst's /lib/modules is /usr/lib/modules.
+    [[ /lib -ef /usr/lib ]] || modules=/lib/modules
+    mkdir -p "${GUARD%/*}"
+    printf '#!/bin/sh\nexec < /dev/null >&2\nexec bash %s hook boot-guard preinst "$@"\n' \
+        "'$REPO_DIR/bin/kernel-updater'" > "$GUARD"
+    chmod 0755 "$GUARD"
+    # The kernel's preinst makes its module tree, then the guard refuses while /boot is not
+    # mounted, and the postrm that undoes the install leaves the tree empty.
+    run env PATH="$STUB_BIN:$PATH" BOOT_MOUNT= dpkg -i "$(kernel_deb "$HOOKED")"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"refusing to install kernel $HOOKED"* ]]
+    [[ "$(package_state "linux-image-$HOOKED")" != ?i* ]]
+    [ -d "$modules/$HOOKED" ]
+    [ -z "$(ls -A "$modules/$HOOKED")" ]
+    rm "$GUARD"
+    run_container_cleanup --yes --porcelain --no-rc --no-autoremove
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$output" == *"modules${tab}rmdir${tab}$modules/$HOOKED${tab}empty, and no package owns \
+it"* ]]
+    [[ "$stderr" == *"cleanup: removed 1 empty module tree"* ]]
+    [ ! -e "$modules/$HOOKED" ]
+    [ "$(package_state "linux-image-$V1")" = rc ]
+    [ -z "$(find /var/lib/kernel-updater/quarantine -mindepth 1 2> /dev/null)" ]
+}
+
+@test "A module tree dkms lists modules for stays, and moves into the quarantine once it does not" {
+    local tree=/usr/lib/modules/$DKMS_REL base=/var/lib/kernel-updater/quarantine tab=$'\t'
+    local entry
+    mkdir -p "$tree/updates/dkms"
+    printf 'module\n' > "$tree/updates/dkms/ku-test.ko"
+    export DKMS_LIST="$BATS_TEST_TMPDIR/dkms.list"
+    printf 'ku-test/1.0, %s, x86_64: installed\n' "$DKMS_REL" > "$DKMS_LIST"
+    mkstub dkms <<'EOF'
+[[ $# == 3 && $1 == status && $2 == -k ]] || exit 100
+grep -F ", $3, " "$DKMS_LIST" || true
+EOF
+    run_container_cleanup -n --porcelain
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$output" == *"modules${tab}keep${tab}$tree${tab}dkms lists modules for it ('dkms remove \
+ku-test/1.0 -k $DKMS_REL')"* ]]
+    : > "$DKMS_LIST"
+    run_container_cleanup --yes --porcelain
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$output" == *"rc${tab}purge${tab}linux-image-$V1${tab}$V1"* ]]
+    [[ "$output" == *"modules${tab}quarantine${tab}$tree${tab}no package owns it"* ]]
+    [[ "$stderr" == *"cleanup: purged 1 package and moved 1 module tree into the quarantine"* ]]
+    [ ! -e "$tree" ]
+    entry=$(ls "$base")
+    [[ $entry =~ ^9\.0\.21\+kali-amd64\.[0-9]{8}T[0-9]{6}Z$ ]]
+    [ "$(< "$base/$entry/tree/updates/dkms/ku-test.ko")" = module ]
+    grep -F -q -x -e "path: $tree" "$base/$entry/origin"
+    # The run that made the entry writes no seen, and only root can reach the tree.
+    [ ! -e "$base/$entry/seen" ]
+    [ "$(stat -c '%u %a' "$base" "$base/$entry" "$base/$entry/origin")" = \
+        "$(printf '0 %s\n' 700 700 600)" ]
+    [ "$(dummies)" = "$(printf 'linux-image-%s ii\n' "$V3" "$V2")" ]
+    assert_links "$V3" "$V2"
 }
 
 @test "A real fcntl lock on dpkg's frontend lock, as apt takes it, exits 75 and names its holder" {

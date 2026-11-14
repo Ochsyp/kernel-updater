@@ -254,10 +254,12 @@ _ki_install() {
 }
 
 # Remove every file the manifest lists: the APT configuration first and the kernel hooks next,
-# so nothing runs a file already gone, then the manifest and the tool's directories once they
-# are empty. Refuses with exit 3, before removing anything, when a listed file changed since.
+# so nothing runs a file already gone, then the manifest, the tool's library and data
+# directories once they are empty, and /var/lib/kernel-updater only when nothing else is left in
+# it: the baseline and cleanup's quarantine stay, empty directories in a quarantined module tree
+# included. Refuses with exit 3, before removing anything, when a listed file changed since.
 _ki_uninstall() {
-    local dest target conflict dir
+    local dest target conflict dir state=0
     local -a order=() present=() conflicts=()
     if [[ ! -e $(ku_path "$KI_MANIFEST") ]]; then
         ku_log info "kernel-updater is not installed: $KI_MANIFEST does not exist"
@@ -301,15 +303,24 @@ _ki_uninstall() {
     fi
     rm -f -- "$(ku_path "$KI_MANIFEST")"
     # Only directories of the tool's own, and only empty ones.
-    for dir in "$KI_PREFIX/lib/kernel-updater" "$KI_PREFIX/share/kernel-updater" \
-        "${KI_MANIFEST%/*}"; do
+    for dir in "$KI_PREFIX/lib/kernel-updater" "$KI_PREFIX/share/kernel-updater"; do
         dir=$(ku_path "$dir")
         if [[ -d $dir ]]; then
             find "$dir" -depth -type d -empty -delete
         fi
     done
+    # The state directory goes only when it is empty: an empty directory within it may belong
+    # to a module tree in cleanup's quarantine, which a move back must find as it was.
+    dir=$(ku_path "${KI_MANIFEST%/*}")
+    if [[ -d $dir ]] && ! rmdir -- "$dir" 2> /dev/null; then
+        state=1
+    fi
     sync
     ku_log info "kernel-updater is uninstalled; /etc/kernel-updater.conf stays"
+    if (( state )); then
+        ku_log info "${KI_MANIFEST%/*} stays, with what kernel-updater keeps there besides the" \
+            "manifest, such as the baseline and the module trees cleanup moved into its quarantine"
+    fi
 }
 
 # Write SOURCE to TARGET with MODE through a temporary file in TARGET's directory renamed over

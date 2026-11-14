@@ -243,9 +243,11 @@ install_kernels() {
 }
 
 # Purge every dummy kernel package, whatever its state, the split ones, any headers and
-# ku-test-dkms, which depends on headers, included, empty /boot and cleanup's quarantine, remove
-# the default links from / and write /etc/kernel-img.conf with link_in_boot = VALUE, yes or no.
+# ku-test-dkms, which depends on headers, included, remove the module trees of the dummies'
+# releases, empty /boot and cleanup's quarantine, remove the default links from / and write
+# /etc/kernel-img.conf with link_in_boot = VALUE, yes or no.
 reset_system() {
+    local dir
     local -a packages=()
     # shellcheck disable=SC2016 # dpkg-query expands the ${...} fields itself
     mapfile -t packages < <(dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' \
@@ -255,6 +257,12 @@ reset_system() {
         printf '%s install\n' "${packages[@]}" | dpkg --set-selections
         dpkg --force-hold --force-remove-reinstreq --purge "${packages[@]}"
     fi
+    # A kernel's preinst makes its tree, and the dummies' postrm leaves it, as a test may.
+    for dir in /usr/lib/modules /lib/modules; do
+        if [[ -d $dir ]]; then
+            find "$dir" -mindepth 1 -path "$dir/9.[01].*" -delete
+        fi
+    done
     find /boot -mindepth 1 -delete
     if [[ -d /var/lib/kernel-updater/quarantine ]]; then
         find /var/lib/kernel-updater/quarantine -mindepth 1 -delete
