@@ -18,7 +18,12 @@
 # rmdir and another moved into the quarantine, origin first, a kill before the move, a
 # quarantine on another device or an mv that cannot refuse to copy, a tree this run's purge
 # leaves, a re-check that keeps a tree, merged and separate modules directories, --no-modules
-# and the dry run. No identifier is printed.
+# and the dry run; and the quarantine's expiry: seen, which a real run writes, the age that
+# counts from the newer of an entry's stamp and seen, the order of the deletion and the parts an
+# entry lacks, quarantine_days, a clock that is behind, the entries and the quarantine that are
+# only listed, the dry run and the question, and an entry that changed or went meanwhile; the
+# records --porcelain prints only once the run ends with 0, and sync before the last line. No
+# identifier is printed.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -39,6 +44,8 @@ AUTOREMOVE_OPTS+=" autoremove --purge"
 # The variables that would point dpkg at another database, force it or change apt's
 # configuration, which no tool cleanup runs may inherit.
 OVERRIDES=(DPKG_ROOT DPKG_ADMINDIR DPKG_FORCE APT_CONFIG DPKG_FRONTEND_LOCKED)
+# The quarantine, as cleanup names it.
+Q=/var/lib/kernel-updater/quarantine
 
 # A migrated Kali system: kernels V1 and V2, V2 running, linux-base keeping the links in /boot
 # on V2 and V1, a configuration that names /boot and its LUKS container, dpkg's and apt's state
@@ -54,6 +61,8 @@ setup() {
     : > "$ROOT/var/lib/dpkg/lock-frontend"
     : > "$ROOT/var/lib/apt/extended_states"
     : > "$ROOT/proc/locks"
+    # The time the date stub gives: 2026-11-14 12:00:00 UTC.
+    export DATE_NOW=1794657600
     configure 5ca1ab1e-0000-4000-8000-000000000b01 5ca1ab1e-0000-4000-8000-000000000c01
     printf 'do_symlinks = yes\nlink_in_boot = yes\n' > "$ROOT/etc/kernel-img.conf"
     kernels "$V1" "$V2"
@@ -66,19 +75,23 @@ setup() {
 }
 
 # Write the stubs that answer for the system: root, the tool's lock, stat, /boot's mount, dpkg,
-# linux-version and sync; apt-get as the apt-get stub below says; apt-mark, whose showmanual
-# prints the lines of the file APT_MANUAL names, or nothing, and exits APT_MARK_STATUS; dkms,
-# whose status -k RELEASE prints the lines of the file DKMS_LIST names that name RELEASE; and mv,
-# rmdir and mkdir, which run the real ones. apt-mark and dkms refuse anything else. dpkg-query,
-# apt-get, apt-mark and dkms leave the environment they got in env.NAME beside the stub log.
+# linux-version, date and sync; apt-get as the apt-get stub below says; apt-mark, whose
+# showmanual prints the lines of the file APT_MANUAL names, or nothing, and exits
+# APT_MARK_STATUS; dkms, whose status -k RELEASE prints the lines of the file DKMS_LIST names
+# that name RELEASE; and mv, rmdir, mkdir and rm, which run the real ones. apt-mark and dkms
+# refuse anything else. dpkg-query, apt-get, apt-mark and dkms leave the environment they got
+# in env.NAME beside the stub log.
 stubs() {
     mkstub id <<'EOF'
 printf '%s\n' "${ID_U:-0}"
 EOF
     mkstub flock
     # Root owns the config file and what holds the quarantine, with mode 0600, and the
-    # quarantine, with mode 0700, on the device STAT_DEV when that is set; the real stat answers
-    # the rest, such as the inodes of dpkg's lock files and the devices of the module trees.
+    # quarantine, with mode 0700, on the device STAT_DEV when that is set. Asked for owners and
+    # devices, it shows root's and the real devices, but another user's for each path the file
+    # foreign.owner beside the stub log lists, and another device for each that foreign.dev
+    # lists. The real stat answers the rest, such as the inodes of dpkg's lock files and the
+    # devices of the module trees.
     export REAL_STAT
     REAL_STAT=$(type -P stat)
     mkstub stat <<'EOF'
@@ -87,9 +100,33 @@ case " $* " in
         dev=$("$REAL_STAT" -c %d -- "${@: -1}") || exit
         printf '0 700 %s\n' "${STAT_DEV:-$dev}"
         ;;
+    *" %u %d "*)
+        shift 3
+        for path in "$@"; do
+            dev=$("$REAL_STAT" -c %d -- "$path") || exit
+            owner=0
+            if grep -F -q -x -e "$path" "${STUB_LOG%/*}/foreign.owner" 2> /dev/null; then
+                owner=1000
+            fi
+            if grep -F -q -x -e "$path" "${STUB_LOG%/*}/foreign.dev" 2> /dev/null; then
+                dev=4242
+            fi
+            printf '%s %s\n' "$owner" "$dev"
+        done
+        ;;
     *" %u %a "*) printf '0 600\n' ;;
     *) exec "$REAL_STAT" "$@" ;;
 esac
+EOF
+    # date -u +%s prints DATE_NOW, the time the tests set; the real date answers the rest.
+    export REAL_DATE
+    REAL_DATE=$(type -P date)
+    mkstub date <<'EOF'
+if [[ $* == '-u +%s' ]]; then
+    printf '%s\n' "$DATE_NOW"
+    exit 0
+fi
+exec "$REAL_DATE" "$@"
 EOF
     # FINDMNT_OUT is /boot's mount line; empty means /boot is not mounted.
     export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 $BOOT_FS_UUID"
@@ -133,7 +170,11 @@ EOF
     mkstub linux-version <<'EOF'
 [[ $1 == sort ]] && exec sort -V
 EOF
-    mkstub sync
+    # sync says on stderr that it ran when SYNC_SAYS is set, and exits SYNC_STATUS.
+    mkstub sync <<'EOF'
+[[ -z ${SYNC_SAYS:-} ]] || printf 'sync ran\n' >&2
+exit "${SYNC_STATUS:-0}"
+EOF
     mkstub apt-mark <<'EOF'
 env > "${STUB_LOG%/*}/env.$STUB_NAME"
 if [[ $* == showmanual ]]; then
@@ -158,9 +199,18 @@ EOF
     # mv takes --no-copy, which the real one may lack and a rename within one filesystem does
     # without, and names it in its --help unless MV_OLD is set. It notes whether the quarantine
     # entry it moves into holds origin, and with MV_KILL set kills the tool before it moves
-    # anything, as a kill at that moment would. mkdir notes its umask.
-    export REAL_MV REAL_RMDIR REAL_MKDIR
+    # anything, as a kill at that moment would. mkdir notes its umask. rm fails for a path that
+    # ends in RM_FAIL, as on a read-only filesystem.
+    export REAL_MV REAL_RMDIR REAL_MKDIR REAL_RM
     REAL_MV=$(type -P mv) REAL_RMDIR=$(type -P rmdir) REAL_MKDIR=$(type -P mkdir)
+    REAL_RM=$(type -P rm)
+    mkstub rm <<'EOF'
+if [[ -n ${RM_FAIL:-} && ${*: -1} == *"$RM_FAIL" ]]; then
+    printf 'rm: cannot remove %s: Read-only file system\n' "${*: -1}" >&2
+    exit 1
+fi
+exec "$REAL_RM" "$@"
+EOF
     mkstub mv <<'EOF'
 if [[ $* == --help ]]; then
     printf 'Usage: mv [OPTION]... [-T] SOURCE DEST\n'
@@ -368,6 +418,35 @@ logged() {
 # vmlinuz points at, and V1, which vmlinuz.old points at.
 kept() {
     printf '%s\t%s\t%s\t%s\n' protect keep "$V2" 'running, vmlinuz' protect keep "$V1" vmlinuz.old
+}
+
+# Print the UTC time DAYS days and SECONDS seconds before DATE_NOW, the date stub's time, or
+# after it when negative, as cleanup writes a stamp: YYYYmmddTHHMMSSZ.
+ago() {
+    date -u -d "@$(( DATE_NOW - $1 * 86400 - ${2:-0} ))" +%Y%m%dT%H%M%SZ
+}
+
+# Make the quarantine entry RELEASE.STAMP under ROOT as cleanup leaves one: its tree, which holds
+# a module, and its origin; with SEEN, also its seen, which holds SEEN.
+quarantined() {
+    local entry=$ROOT$Q/$1.$2
+    mkdir -p "$entry/tree/kernel"
+    printf 'module\n' > "$entry/tree/kernel/a.ko"
+    printf 'path: /usr/lib/modules/%s\n' "$1" > "$entry/origin"
+    if [[ -n ${3:-} ]]; then
+        printf '%s\n' "$3" > "$entry/seen"
+    fi
+}
+
+# Print the plan record of the quarantine entry NAME with ACTION and DETAIL.
+expiry() {
+    printf '%s\t%s\t%s\t%s\n' expire "$1" "$Q/$2" "$3"
+}
+
+# Have stat show the path PATH under ROOT with KIND: owner, another user as its owner, or dev,
+# another device.
+foreign() {
+    printf '%s\n' "$ROOT$2" >> "$BATS_TEST_TMPDIR/foreign.$1"
 }
 
 @test "cleanup --help prints its usage, and an unknown option or an argument exits 64" {
@@ -622,8 +701,9 @@ kept() {
 }
 
 @test "A plan line goes to stderr at any verbosity, and with --porcelain its records to stdout" {
+    # The records wait until the run prints them, which it does only once it ends with 0.
     # shellcheck disable=SC2016 # the code run_ku_lib runs expands its own variables
-    run_ku_lib 'KU_VERBOSITY=0
+    run_ku_lib 'KU_VERBOSITY=0 KU_PORCELAIN=1
         _ku_cl_plan_line "keep A (running, vmlinuz) and B (vmlinuz.old)" \
             protect keep A "running, vmlinuz" protect keep B vmlinuz.old'
     [ "$status" -eq 0 ]
@@ -635,7 +715,8 @@ kept() {
         _ku_cl_plan_line "keep A (running, vmlinuz) and B (vmlinuz.old)" \
             protect keep A "running, vmlinuz" protect keep B vmlinuz.old
         _ku_cl_plan_line "then sync"
-        _ku_cl_plan_line "" rc list "$(printf "odd\tname")" "$(printf "two\nlines")" rc skip x ""'
+        _ku_cl_plan_line "" rc list "$(printf "odd\tname")" "$(printf "two\nlines")" rc skip x ""
+        _ku_cl_print_records'
     [ "$status" -eq 0 ]
     [ "$output" = "$(printf '%s\t%s\t%s\t%s\n' protect keep A 'running, vmlinuz' protect keep B \
         vmlinuz.old rc list 'odd name' 'two lines' rc skip x -)" ]
@@ -1347,9 +1428,11 @@ are: run cleanup again"* ]]
     export MV_KILL=""
     run_ku cleanup -n --porcelain
     [ "$status" -eq 0 ]
+    # The half-made entry stays as it is until it expires like any other.
     [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules quarantine "$tree" \
-        'no package owns it')" ]
-    # The half-made entry stays as it is until it expires.
+        'no package owns it'
+        expiry keep "$entry" "0 days old by its stamp; no run has marked it seen yet \
+(quarantine_days 30)")" ]
     [ "$(entries)" = "$entry" ]
     [ ! -e "$base/$entry/tree" ]
 }
@@ -1449,23 +1532,379 @@ it"* ]]
         modules rmdir /lib/modules/9.0.9+kali-amd64 'empty, and no package owns it')" ]
 }
 
-@test "--no-modules leaves the module trees alone, and a dry run removes and moves nothing" {
+@test "--no-modules leaves module trees alone, quarantined ones too; a dry run changes nothing" {
+    local a b
+    a=9.0.6+kali-amd64.$(ago 100) b=9.0.7+kali-amd64.$(ago 100)
     module_tree /usr/lib/modules 9.0.8+kali-amd64
     module_tree /usr/lib/modules 9.0.9+kali-amd64 kernel/a.ko
+    quarantined 9.0.6+kali-amd64 "${a##*.}" "$(ago 40)"
+    quarantined 9.0.7+kali-amd64 "${b##*.}"
     find "$ROOT" | sort > "$BATS_TEST_TMPDIR/tree.before"
     run_ku cleanup -n --porcelain
     [ "$status" -eq 0 ]
     [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' \
         modules rmdir /usr/lib/modules/9.0.8+kali-amd64 'empty, and no package owns it' \
-        modules quarantine /usr/lib/modules/9.0.9+kali-amd64 'no package owns it')" ]
+        modules quarantine /usr/lib/modules/9.0.9+kali-amd64 'no package owns it'
+        expiry delete "$a" '40 days old (quarantine_days 30)'
+        expiry keep "$b" "100 days old by its stamp; no run has marked it seen yet \
+(quarantine_days 30)")" ]
     [[ "$stderr" == *"plan: then sync"*"dry run: nothing was changed"* ]]
     find "$ROOT" | sort | cmp - "$BATS_TEST_TMPDIR/tree.before"
-    refute_line_match '^(mkdir|rmdir|sync)( |$)|^mv --no-copy' "$STUB_LOG"
+    refute_line_match '^(mkdir|rmdir|rm|sync)( |$)|^mv --no-copy' "$STUB_LOG"
     : > "$STUB_LOG"
     run_ku cleanup --yes --no-modules --porcelain
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     [[ "$stderr" == *"cleanup: nothing to do"* ]]
     find "$ROOT" | sort | cmp - "$BATS_TEST_TMPDIR/tree.before"
-    refute_line_match '^(dpkg-query -S|dkms|mv|mkdir|rmdir)( |$)' "$STUB_LOG"
+    refute_line_match '^(dpkg-query -S|dkms|mv|mkdir|rmdir|rm)( |$)' "$STUB_LOG"
+}
+
+@test "A real run marks a quarantine entry seen, and it stays in that run however old its stamp" {
+    local name before="$BATS_TEST_TMPDIR/tree.before"
+    name=9.0.4+kali-amd64.$(ago 400)
+    quarantined 9.0.4+kali-amd64 "${name##*.}"
+    find "$ROOT" | sort > "$before"
+    # A dry run writes nothing, not even seen.
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$name" "400 days old by its stamp; no run has marked it \
+seen yet (quarantine_days 30)")" ]
+    [[ "$stderr" == *"plan: keep quarantine entry $name: 400 days old by its stamp; no run has \
+marked it seen yet (quarantine_days 30)"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    find "$ROOT" | sort | cmp - "$before"
+    # A real run writes seen as it plans, without a question, and the entry stays.
+    run_ku cleanup --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$name" "400 days old by its stamp; this run marks it \
+seen (quarantine_days 30)")" ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    [ "$(< "$ROOT$Q/$name/seen")" = 20261114T120000Z ]
+    [ "$(< "$ROOT$Q/$name/tree/kernel/a.ko")" = module ]
+    [ -f "$ROOT$Q/$name/origin" ]
+    # Git Bash on Windows keeps no such modes.
+    if [[ $OSTYPE == linux* ]]; then
+        [ "$(stat -c %a "$ROOT$Q/$name/seen")" = 600 ]
+    fi
+    # Its age counts from seen now, and once more than 30 whole days passed, it expires.
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$name" '0 days old (quarantine_days 30)')" ]
+    export DATE_NOW=$(( DATE_NOW + 31 * 86400 ))
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry delete "$name" '31 days old (quarantine_days 30)')" ]
+    refute_line_match '^(rm|rmdir)( |$)' "$STUB_LOG"
+    private_output
+}
+
+@test "An entry expires once more whole days than quarantine_days passed since its stamp and seen" {
+    local a b c name
+    a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago 31) c=9.0.6+kali-amd64.$(ago 31)
+    # a was seen 31 days ago, b was made 31 days ago, after an older seen, and c was seen 30
+    # days and 23 hours ago, which makes 30 whole days.
+    quarantined 9.0.4+kali-amd64 "${a##*.}" "$(ago 31)"
+    quarantined 9.0.5+kali-amd64 "${b##*.}" "$(ago 45)"
+    quarantined 9.0.6+kali-amd64 "${c##*.}" "$(ago 30 82800)"
+    export SYNC_SAYS=1
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry delete "$a" '31 days old (quarantine_days 30)'
+        expiry delete "$b" '31 days old (quarantine_days 30)'
+        expiry keep "$c" '30 days old (quarantine_days 30)')" ]
+    [[ "$stderr" == *"plan: delete quarantine entry $a: 31 days old (quarantine_days 30)"* ]]
+    [[ "$stderr" == *"plan: keep quarantine entry $c: 30 days old (quarantine_days 30)"*"plan: \
+then sync"* ]]
+    # Each entry's tree goes, then origin, then seen, then the entry; sync runs before the line
+    # that says what the run did, which comes last.
+    [ "$(grep -E '^(rm|rmdir|sync)( |$)' "$STUB_LOG")" = "$(for name in "$a" "$b"; do
+            logged rm -r --one-file-system -- "$ROOT$Q/$name/tree"
+            logged rm -- "$ROOT$Q/$name/origin"
+            logged rm -- "$ROOT$Q/$name/seen"
+            logged rmdir -- "$ROOT$Q/$name"
+        done; printf 'sync\n')" ]
+    [[ "$stderr" == *"info: deleted the expired quarantine entry $b"$'\nsync ran\n'"kernel-\
+updater: info: cleanup: deleted 2 expired quarantine entries" ]]
+    [ "$(entries)" = "$c" ]
+    private_output
+}
+
+@test "Expiry skips the parts an entry lacks, as after a kill before the move, and deletes it" {
+    local a b
+    a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago 100)
+    # a lacks its tree, as a kill after origin leaves an entry, and b holds only seen, as a kill
+    # right after mkdir leaves one, once a later run saw it.
+    quarantined 9.0.4+kali-amd64 "${a##*.}" "$(ago 40)"
+    quarantined 9.0.5+kali-amd64 "${b##*.}" "$(ago 40)"
+    rm -r "${ROOT:?}$Q/$a/tree" "${ROOT:?}$Q/$b/tree"
+    rm "$ROOT$Q/$b/origin"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry delete "$a" '40 days old (quarantine_days 30)'
+        expiry delete "$b" '40 days old (quarantine_days 30)')" ]
+    [ "$(grep -E '^(rm|rmdir)( |$)' "$STUB_LOG")" = "$(logged rm -- "$ROOT$Q/$a/origin"
+        logged rm -- "$ROOT$Q/$a/seen"
+        logged rmdir -- "$ROOT$Q/$a"
+        logged rm -- "$ROOT$Q/$b/seen"
+        logged rmdir -- "$ROOT$Q/$b")" ]
+    [[ "$stderr" == *"cleanup: deleted 2 expired quarantine entries"* ]]
+    [ -z "$(entries)" ]
+}
+
+@test "A younger quarantine entry stays, and quarantine_days 0 keeps every entry" {
+    local a b before="$BATS_TEST_TMPDIR/tree.before"
+    a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago 100)
+    quarantined 9.0.4+kali-amd64 "${a##*.}" "$(ago 10)"
+    quarantined 9.0.5+kali-amd64 "${b##*.}" "$(ago 90)"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$a" '10 days old (quarantine_days 30)'
+        expiry delete "$b" '90 days old (quarantine_days 30)')" ]
+    printf 'quarantine_days = 7\n' >> "$ROOT$CONF"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry delete "$a" '10 days old (quarantine_days 7)'
+        expiry delete "$b" '90 days old (quarantine_days 7)')" ]
+    configure 5ca1ab1e-0000-4000-8000-000000000b01 5ca1ab1e-0000-4000-8000-000000000c01
+    printf 'quarantine_days = 0\n' >> "$ROOT$CONF"
+    find "$ROOT" | sort > "$before"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$a" '10 days old (quarantine_days 0 keeps it)'
+        expiry keep "$b" '90 days old (quarantine_days 0 keeps it)')" ]
+    [[ "$stderr" == *"plan: keep quarantine entry $b: 90 days old (quarantine_days 0 keeps \
+it)"*"cleanup: nothing to do"* ]]
+    find "$ROOT" | sort | cmp - "$before"
+    refute_line_match '^(rm|rmdir)( |$)' "$STUB_LOG"
+}
+
+@test "A clock behind an entry's stamp or seen expires nothing and warns; the plan shows ages" {
+    local a b c
+    a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago -2) c=9.0.6+kali-amd64.$(ago 10)
+    quarantined 9.0.4+kali-amd64 "${a##*.}" "$(ago 60)"
+    # b was made two days after the time the clock reads, and no run saw it yet.
+    quarantined 9.0.5+kali-amd64 "${b##*.}"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept
+        expiry skip "$a" '60 days old, but the clock is behind (quarantine_days 30)'
+        expiry keep "$b" "2 days ahead of the clock by its stamp; no run marks it seen while \
+the clock is behind (quarantine_days 30)")" ]
+    [[ "$stderr" == *"warning: the clock is behind: it reads 20261114T120000Z, earlier than a \
+quarantine entry was made or seen, so no entry expires in this run"* ]]
+    [[ "$stderr" == *"plan: leave quarantine entry $a: 60 days old, but the clock is behind \
+(quarantine_days 30)"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    [ ! -e "$ROOT$Q/$b/seen" ]
+    # A seen after the time the clock reads does the same.
+    rm -r "${ROOT:?}$Q/$b"
+    quarantined 9.0.6+kali-amd64 "${c##*.}" "$(ago -1)"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept
+        expiry skip "$a" '60 days old, but the clock is behind (quarantine_days 30)'
+        expiry keep "$c" '1 day ahead of the clock (quarantine_days 30)')" ]
+    [[ "$stderr" == *"warning: the clock is behind"* ]]
+    [ "$(< "$ROOT$Q/$a/tree/kernel/a.ko")" = module ]
+    refute_line_match '^(rm|rmdir)( |$)' "$STUB_LOG"
+    private_output
+    # Without a time from date, the ages cannot be told, and cleanup refuses.
+    export DATE_NOW=never
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"date prints no time to tell the age of the quarantine entries by; nothing \
+was changed"* ]]
+    [ -z "$output" ]
+}
+
+@test "Entries of another name, kind, owner or filesystem, or behind a symlink, are only listed" {
+    local s seen e name expected
+    s=$(ago 100) seen=$(ago 60)
+    quarantined 9.0.4+kali-amd64 "$s" "$seen"
+    quarantined not-a-release "$s" "$seen"
+    mkdir "$ROOT$Q/9.0.5+kali-amd64.2026"
+    # 30 November is the last day of the month.
+    quarantined 9.0.5+kali-amd64 20261131T120000Z "$seen"
+    ln -s "9.0.4+kali-amd64.$s" "$ROOT$Q/9.0.6+kali-amd64.$s"
+    printf 'no entry\n' > "$ROOT$Q/9.0.7+kali-amd64.$s"
+    for name in 9.0.8 9.0.9 9.0.10 9.0.11 9.0.12 9.0.13; do
+        quarantined "$name+kali-amd64" "$s" "$seen"
+    done
+    foreign owner "$Q/9.0.8+kali-amd64.$s"
+    foreign dev "$Q/9.0.9+kali-amd64.$s"
+    foreign dev "$Q/9.0.10+kali-amd64.$s/tree"
+    printf 'note\n' > "$ROOT$Q/9.0.11+kali-amd64.$s/note"
+    printf 'yesterday\n' > "$ROOT$Q/9.0.12+kali-amd64.$s/seen"
+    rm "$ROOT$Q/9.0.13+kali-amd64.$s/origin"
+    mkdir "$ROOT$Q/9.0.13+kali-amd64.$s/origin"
+    e='its name is not RELEASE.YYYYmmddTHHMMSSZ'
+    expected=$(kept
+        expiry delete "9.0.4+kali-amd64.$s" '60 days old (quarantine_days 30)'
+        expiry list "not-a-release.$s" "$e"
+        expiry list 9.0.5+kali-amd64.2026 "$e"
+        expiry list 9.0.5+kali-amd64.20261131T120000Z "$e"
+        expiry list "9.0.6+kali-amd64.$s" 'it is a symlink'
+        expiry list "9.0.7+kali-amd64.$s" 'it is no directory'
+        expiry list "9.0.8+kali-amd64.$s" 'it belongs to another user than root'
+        expiry list "9.0.9+kali-amd64.$s" 'it lies on another filesystem than the quarantine'
+        expiry list "9.0.10+kali-amd64.$s" \
+            'its tree lies on another filesystem than the quarantine'
+        expiry list "9.0.11+kali-amd64.$s" 'it holds more than tree, origin and seen'
+        expiry list "9.0.12+kali-amd64.$s" 'its seen holds no time as YYYYmmddTHHMMSSZ'
+        expiry list "9.0.13+kali-amd64.$s" 'its origin is no regular file')
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$(sort <<< "$output")" = "$(sort <<< "$expected")" ]
+    [[ "$stderr" == *"plan: leave quarantine entry 9.0.6+kali-amd64.$s: it is a symlink"* ]]
+    [[ "$stderr" == *"cleanup: deleted 1 expired quarantine entry"* ]]
+    # Only the entry expiry may judge went.
+    [ "$(grep -E '^(rm|rmdir)( |$)' "$STUB_LOG")" = "$(
+        logged rm -r --one-file-system -- "$ROOT$Q/9.0.4+kali-amd64.$s/tree"
+        logged rm -- "$ROOT$Q/9.0.4+kali-amd64.$s/origin"
+        logged rm -- "$ROOT$Q/9.0.4+kali-amd64.$s/seen"
+        logged rmdir -- "$ROOT$Q/9.0.4+kali-amd64.$s")" ]
+    [ "$(entries | wc -l)" -eq 11 ]
+    # Nothing in a quarantine that a symlink leads to is judged, and no seen is written there.
+    rm "$ROOT$Q/9.0.12+kali-amd64.$s/seen"
+    mv "$ROOT/var/lib/kernel-updater" "$ROOT/var/lib/elsewhere"
+    ln -s elsewhere "$ROOT/var/lib/kernel-updater"
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' expire skip "$Q" \
+        "a symlink leads to the quarantine $Q")" ]
+    [[ "$stderr" == *"plan: expire nothing: a symlink leads to the quarantine $Q"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    [ ! -e "$ROOT/var/lib/elsewhere/quarantine/9.0.12+kali-amd64.$s/seen" ]
+    private_output
+}
+
+@test "Nothing expires in a dry run or before the answer, and a dry run writes no seen" {
+    local a b before="$BATS_TEST_TMPDIR/tree.before"
+    a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago 100)
+    quarantined 9.0.4+kali-amd64 "${a##*.}" "$(ago 40)"
+    quarantined 9.0.5+kali-amd64 "${b##*.}"
+    find "$ROOT" | sort > "$before"
+    run_ku cleanup -n
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"plan: delete quarantine entry $a: 40 days old (quarantine_days 30)"*"plan: \
+then sync"*"dry run: nothing was changed"* ]]
+    find "$ROOT" | sort | cmp - "$before"
+    # Without a terminal to ask on, or with a no, nothing expires either; a run that may change
+    # things writes seen as it plans, as its own bookkeeping.
+    run_ku cleanup
+    [ "$status" -eq 10 ]
+    [[ "$stderr" == *"no terminal to confirm on"* ]]
+    [ "$(< "$ROOT$Q/$b/seen")" = 20261114T120000Z ]
+    printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku cleanup
+    [ "$status" -eq 10 ]
+    [[ "$stderr" == *"declined; nothing was changed"* ]]
+    [ "$(< "$ROOT$Q/$a/tree/kernel/a.ko")" = module ]
+    [ -f "$ROOT$Q/$a/origin" ]
+    [ -f "$ROOT$Q/$a/seen" ]
+    refute_line_match '^(rm|rmdir|sync)( |$)' "$STUB_LOG"
+}
+
+@test "A quarantine entry that changed or went once the question was answered is left alone" {
+    local a b c d
+    a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago 100) c=9.0.6+kali-amd64.$(ago 100)
+    d=9.0.7+kali-amd64.$(ago 100)
+    quarantined 9.0.4+kali-amd64 "${a##*.}" "$(ago 40)"
+    quarantined 9.0.5+kali-amd64 "${b##*.}" "$(ago 40)"
+    # While apt simulates its autoremove again, a gets a newer seen and b goes.
+    on_recheck "printf '%s\n' '$(ago 1)' > '$ROOT$Q/$a/seen'
+        \"\$REAL_RM\" -r '$ROOT$Q/$b'" autoremove
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: left the quarantine entry $a: it changed while cleanup ran"* ]]
+    [[ "$stderr" == *"warning: the quarantine entry $b went while cleanup ran, so there is \
+nothing left to do for it"* ]]
+    [[ "$stderr" == *"cleanup: left 1 quarantine entry a re-check kept"* ]]
+    [ "$(< "$ROOT$Q/$a/tree/kernel/a.ko")" = module ]
+    refute_line_match '^(rm|rmdir)( |$)' "$STUB_LOG"
+    # A run whose only change went meanwhile says that nothing was left to change.
+    quarantined 9.0.6+kali-amd64 "${c##*.}" "$(ago 40)"
+    on_recheck "\"\$REAL_RM\" -r '$ROOT$Q/$c'" autoremove
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: the quarantine entry $c went while cleanup ran"* ]]
+    [[ "$stderr" == *"cleanup: nothing was left to change" ]]
+    # Every planned entry stays when the quarantine changed, as when a symlink took its place.
+    quarantined 9.0.7+kali-amd64 "${d##*.}" "$(ago 40)"
+    on_recheck "mv '$ROOT/var/lib/kernel-updater' '$ROOT/var/lib/elsewhere'
+        ln -s elsewhere '$ROOT/var/lib/kernel-updater'" autoremove
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: left the quarantine entry $d: the quarantine changed while \
+cleanup ran"* ]]
+    [[ "$stderr" == *"cleanup: left 1 quarantine entry a re-check kept" ]]
+    [ "$(< "$ROOT/var/lib/elsewhere/quarantine/$d/tree/kernel/a.ko")" = module ]
+    refute_line_match '^(rm|rmdir)( |$)' "$STUB_LOG"
+    private_output
+}
+
+@test "--porcelain prints only the plan's records, once the run ends with 0, and none on an error" {
+    local a line re
+    a=9.0.7+kali-amd64.$(ago 100)
+    re=$'^(protect|rc|autoremove|modules|expire)\t(keep|purge|list|skip|rmdir|quarantine|delete)'
+    re+=$'\t[^\t]+\t[^\t]+$'
+    listed "linux-image-$V0" rc
+    module_tree /usr/lib/modules 9.0.8+kali-amd64
+    quarantined 9.0.7+kali-amd64 "${a##*.}" "$(ago 40)"
+    on_purge ''
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' rc purge "linux-image-$V0" "$V0" \
+        modules rmdir /usr/lib/modules/9.0.8+kali-amd64 'empty, and no package owns it'
+        expiry delete "$a" '40 days old (quarantine_days 30)')" ]
+    while IFS= read -r line; do
+        [[ $line =~ $re ]] || { printf 'no record: %s\n' "$line" >&2; return 1; }
+    done <<< "$output"
+    [[ "$stderr" == *"cleanup: purged 1 package, removed 1 empty module tree and deleted 1 \
+expired quarantine entry"* ]]
+    # These end otherwise once the plan is on stderr, and leave stdout empty: a no, a change
+    # while the question waited, and a part of an entry that cannot be deleted after the purge
+    # and the removal of a tree.
+    module_tree /usr/lib/modules 9.0.8+kali-amd64
+    quarantined 9.0.7+kali-amd64 "${a##*.}" "$(ago 40)"
+    printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku cleanup --porcelain
+    [ "$status" -eq 10 ]
+    [[ "$stderr" == *"plan: then sync"* ]]
+    [ -z "$output" ]
+    # shellcheck disable=SC2016 # the stub expands the variable
+    on_recheck 'printf "Package: x\n" >> "$KU_ROOT/var/lib/dpkg/status"'
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 75 ]
+    [ -z "$output" ]
+    export RM_FAIL=/origin
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"rm cannot delete $Q/$a/origin; the purge ran and 1 module tree was removed \
+or moved, and what is left of the quarantine entry $a and the entries after it stay: run cleanup \
+again"* ]]
+    [ -z "$output" ]
+    [ ! -e "$ROOT/usr/lib/modules/9.0.8+kali-amd64" ]
+    [ ! -e "$ROOT$Q/$a/tree" ]
+    [ -f "$ROOT$Q/$a/origin" ]
+    [ "$(apt_calls | tail -n 1)" = sync ]
+    private_output
+}
+
+@test "sync runs before the last line, which says what was done, and a failed sync only warns" {
+    local last
+    listed "linux-image-$V0" rc
+    on_purge ''
+    export SYNC_SAYS=1
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *$'\nsync ran\nkernel-updater: info: cleanup: purged 1 package' ]]
+    export SYNC_STATUS=1
+    last=$'sync ran\nkernel-updater: warning: sync failed: run it before the stick is unplugged'
+    last+=$'\nkernel-updater: info: cleanup: purged 1 package'
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *$'\n'"$last" ]]
 }

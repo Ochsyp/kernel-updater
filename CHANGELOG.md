@@ -282,9 +282,18 @@ with the owner's original script.
   an `mv` older than coreutils 9.2, is only listed. The plan shows why it keeps a tree, but
   leaves out installed kernels' trees, and lists the tree of a release this run purges for the
   next run. Right before it removes or moves a tree it checks the locks and every reason again,
-  and leaves the tree with a warning when one holds now. `--no-rc`, `--no-autoremove` and
-  `--no-modules` leave their step out. First it checks, as root, under the tool's lock and in a
-  dry run too, that it may run: it refuses with 3 until `migrate --stage detect` set
+  and leaves the tree with a warning when one holds now. The first run that finds a quarantine
+  entry, unless it is a dry run, notes the time in a `seen` file there. Once more than
+  `quarantine_days` whole days have passed since the move and since that run, the entry
+  expires: after the question, its tree is deleted with `rm -r --one-file-system`, then
+  `origin` and `seen`, then the entry with `rmdir`, and a part it lacks is skipped. Nothing
+  expires while the clock reads earlier than an entry was made or seen, which it warns about,
+  and the plan shows each entry's age. An entry of another name, kind, owner or filesystem, or
+  one that holds anything else, is only listed, and so is the whole quarantine when a symlink
+  leads to it or it is no directory of root's with mode 0700; an entry that changed after the
+  question stays, with a warning. `--no-rc`, `--no-autoremove` and `--no-modules` leave their
+  step out, and `--no-modules` the quarantine too. First it checks, as root, under the tool's
+  lock and in a dry run too, that it may run: it refuses with 3 until `migrate --stage detect` set
   `boot_fs_uuid` and `boot_luks_uuid`, exits 66 while `/boot` is not mounted and 78 on another
   `/boot` or LUKS container, and refuses with 3 while `apt-get`, `apt-mark` or `dpkg-query` is
   missing, while the links in `/boot` are not kept there or do not reach a kernel, naming
@@ -298,22 +307,25 @@ with the owner's original script.
   a signal cuts short says the same and exits 128+N. After the purge, `check`'s `boot-links`
   and `kernels` items must pass, or it exits 4, which leaves the module trees alone. When
   `dpkg-query` fails on a module tree, it refuses with 3 before anything changed and exits 4
-  after, and a tree it cannot remove or move exits 4; each says what is done and what is left.
-  `sync` runs last. Its plan lines go to stderr, and with `--porcelain` also to stdout as
-  `STEP`, `ACTION`, `OBJECT` and `DETAIL` fields. The tools it runs inherit no `DPKG_ROOT`,
+  after, and a tree it cannot remove or move, or an entry it cannot delete, exits 4; each says
+  what is done and what is left. `sync` runs before the last line, which says what the run
+  did. Its plan lines go to stderr, and with `--porcelain` its records go to stdout as `STEP`,
+  `ACTION`, `OBJECT` and `DETAIL` fields once the run ends with 0, so that a run that fails, is
+  declined or is cut short leaves stdout empty. The tools it runs inherit no `DPKG_ROOT`,
   `DPKG_ADMINDIR`, `DPKG_FORCE`, `APT_CONFIG`, `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`,
   and run with `LC_ALL=C.UTF-8`.
-- `quarantine_days` in `/etc/kernel-updater.conf`: how many days a module tree `cleanup` moved
-  into its quarantine stays there, 0 to 999 without a leading zero, 30 by default, 0 for ever.
-  `cleanup` does not expire trees yet.
+- `quarantine_days` in `/etc/kernel-updater.conf`: how many whole days a module tree `cleanup`
+  moved into its quarantine stays there once a later run saw it, 0 to 999 without a leading
+  zero, 30 by default, 0 for ever.
 - `tests/cleanup.bats`, which runs `cleanup` on a migrated system with stub tools, and
   `tests/container/cleanup.bats`, which purges dummy kernels with the real apt-get and dpkg,
   among them the old kernel apt's autoremove names once the dummies are marked auto, keeps the
   kernel `vmlinuz.old` points at when apt keeps another, refuses a purge that would take along
   a package that depends on an old kernel's headers, removes the empty module tree a kernel
   install that the `/boot` guard refused leaves, moves a tree into the quarantine once a dkms
-  stub lists no modules for it, and finds a real fcntl lock on dpkg's frontend lock in
-  `/proc/locks`.
+  stub lists no modules for it, deletes a back-dated quarantine entry a run saw long ago but
+  keeps a fresh one and one no run saw yet, and finds a real fcntl lock on dpkg's frontend lock
+  in `/proc/locks`.
 
 ### Changed
 

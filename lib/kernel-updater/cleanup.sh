@@ -56,7 +56,9 @@ KU_CL_SET=() KU_CL_SIM=() KU_CL_SIM_OTHER=() KU_CL_WHY=""
 KU_CL_PURGING=0 KU_CL_SYNCED=0
 
 # Where cleanup moves the module trees no package owns: one entry RELEASE.STAMP per tree, STAMP
-# the UTC time it was made, holding origin, which says where the tree came from, and the tree.
+# the UTC time it was made, holding origin, which says where the tree came from, the tree, and,
+# once a later run found the entry, seen, which holds the UTC time of that run. quarantine_days
+# count from the newer of the two times.
 KU_CL_QUARANTINE=/var/lib/kernel-updater/quarantine
 
 # The module trees step: the modules directories it scans (KU_CL_MODULES); the trees the plan
@@ -66,6 +68,22 @@ KU_CL_QUARANTINE=/var/lib/kernel-updater/quarantine
 # many planned trees were removed, moved and left (KU_CL_REMOVED, KU_CL_MOVED, KU_CL_LEFT).
 KU_CL_MODULES=() KU_CL_TREE=() KU_CL_TREE_ACTION=() KU_CL_TREE_WHY=() KU_CL_MV=""
 KU_CL_MOVE_WHY="" KU_CL_REMOVED=0 KU_CL_MOVED=0 KU_CL_LEFT=0
+
+# The device the quarantine is on, or will be, as _ku_cl_base_safe found it (KU_CL_BASE_DEV),
+# and why cleanup may not act in the quarantine (KU_CL_BASE_WHY).
+KU_CL_BASE_DEV="" KU_CL_BASE_WHY=""
+
+# The expiry step: the quarantine entries the plan shows, or the quarantine itself
+# (KU_CL_ENTRY), each with the plan's action, delete, keep, list or skip (KU_CL_ENTRY_ACTION),
+# why (KU_CL_ENTRY_WHY) and, for an entry expiry may judge, its times as _ku_cl_entry_times
+# printed them (KU_CL_ENTRY_TIMES); the time the plan was made, in seconds since the epoch
+# (KU_CL_NOW), and the quarantine's device then (KU_CL_EXPIRY_DEV); and how many planned
+# entries were deleted and left (KU_CL_EXPIRED, KU_CL_ENTRY_LEFT).
+KU_CL_ENTRY=() KU_CL_ENTRY_ACTION=() KU_CL_ENTRY_WHY=() KU_CL_ENTRY_TIMES=() KU_CL_NOW=""
+KU_CL_EXPIRY_DEV="" KU_CL_EXPIRED=0 KU_CL_ENTRY_LEFT=0
+
+# The plan's records, with --porcelain, which go to stdout only once the run ends with 0.
+KU_CL_RECORDS=""
 
 # Print the cleanup command's usage on stdout.
 ku_cleanup_usage() {
@@ -77,17 +95,18 @@ autoremove names, once a simulation shows that apt would remove exactly those. I
 the running kernel or a kernel the links in /boot point at, and purges nothing while a reboot
 into the kernel /boot/vmlinuz points at is pending. A module tree that no package owns is
 removed when it is empty, and otherwise moved to /var/lib/kernel-updater/quarantine, from
-where it can be moved back until it expires: quarantine_days after a later run first saw it.
+where it can be moved back until it expires: once more than quarantine_days whole days have
+passed since the move and since a later run first saw it there, unless the clock is behind.
 The plan comes first, then one question. Purged packages cannot be rolled back, so read the
 plan with -n first.
 
   --no-rc          leave the config files of removed kernels alone
   --no-autoremove  leave the old kernels apt's autoremove names alone
-  --no-modules     leave the module trees alone
+  --no-modules     leave the module trees alone, those in the quarantine too
   -n, --dry-run    print the plan, change nothing
   -y, --yes        answer yes to the question
   --porcelain      also print the plan on stdout as STEP, ACTION, OBJECT and DETAIL,
-                   tab-separated
+                   tab-separated, once the run ends with 0
 
 Runs as root under the tool's lock, with /boot unlocked and mounted. Exits 0 when done, when
 nothing was left to do and after a dry run, 3 when a check refuses, 4 when a purge, a move or
@@ -99,17 +118,20 @@ EOF
 }
 
 # Parse the options, then, as root and under the tool's lock, check that cleanup may run, in a
-# dry run too, take the snapshot, plan the purge and the module trees and print the plan. With
-# something to purge, remove or move and no dry run, ask once, check the plan again, run the one
-# apt-get purge, check the links and kernels again, check each planned module tree again and
-# remove or move it, and sync. Exits 0 when done, also when a re-check left a planned tree, when
-# nothing was left to do and after a dry run; 3 when a check or a simulation refuses, apt
-# refused the purge, or dpkg-query fails before anything was changed; 4 when the purge stopped
-# after dpkg began to change its database, the check after it fails, or a module tree cannot be
-# removed or moved, or checked once something was changed; 10 when declined; 64 on a usage
-# error; 66 when /boot is not mounted or its LUKS header cannot be read; 75 while another run,
-# apt or dpkg holds a lock, or when the system changed while the question waited; 77 when not
-# root; 78 on a bad configuration or another /boot; and 128+N when signal N cut it short.
+# dry run too, take the snapshot, plan the purge, the module trees and the expiry of the
+# quarantine's entries, which writes seen, unless this is a dry run, and print the plan. With
+# something to purge, remove, move or delete and no dry run, ask once, check the plan again, run
+# the one apt-get purge, check the links and kernels again, check each planned module tree
+# again and remove or move it, check each expired entry again and delete it, sync, and with
+# --porcelain print the plan's records. Exits 0 when done, also when a re-check left a planned
+# tree or entry, when nothing was left to do and after a dry run; 3 when a check or a simulation
+# refuses, apt refused the purge, date prints no time or dpkg-query fails before anything was
+# changed; 4 when the purge stopped after dpkg began to change its database, the check after it
+# fails, a module tree cannot be removed or moved, or checked once something was changed, or a
+# quarantine entry cannot be deleted; 10 when declined; 64 on a usage error; 66 when /boot is
+# not mounted or its LUKS header cannot be read; 75 while another run, apt or dpkg holds a lock,
+# or when the system changed while the question waited; 77 when not root; 78 on a bad
+# configuration or another /boot; and 128+N when signal N cut it short.
 ku_cmd_cleanup() {
     while (( $# )); do
         case $1 in
@@ -143,15 +165,20 @@ ku_cmd_cleanup() {
     if (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; then
         ku_die "$KU_EX_REFUSED" "the purge cannot run as planned: $KU_CL_WHY; nothing was changed"
     fi
-    if _ku_cl_wanted modules && ! _ku_cl_plan_trees; then
-        ku_die "$KU_EX_REFUSED" "$KU_CL_WHY; nothing was changed"
+    # The quarantine's entries are module trees too, and --no-modules leaves them alone.
+    if _ku_cl_wanted modules; then
+        if ! _ku_cl_plan_trees || ! _ku_cl_plan_expiry; then
+            ku_die "$KU_EX_REFUSED" "$KU_CL_WHY; nothing was changed"
+        fi
     fi
     _ku_cl_plan_print
-    if (( ! ${#KU_CL_SET[@]} )) && ! _ku_cl_tree_acts; then
+    if (( ! ${#KU_CL_SET[@]} )) && ! _ku_cl_tree_acts && ! _ku_cl_expiry_acts; then
+        _ku_cl_print_records
         ku_log info "cleanup: nothing to do"
         return 0
     fi
     if (( KU_DRY_RUN )); then
+        _ku_cl_print_records
         ku_log info "dry run: nothing was changed"
         return 0
     fi
@@ -164,15 +191,19 @@ ku_cmd_cleanup() {
         _ku_cl_purge
     fi
     _ku_cl_trees
+    _ku_cl_expire
     if ! sync; then
         ku_log warning "sync failed: run it before the stick is unplugged"
     fi
     KU_CL_SYNCED=1
+    _ku_cl_print_records
     _ku_cl_summary
 }
 
-# Print the summary on stderr: how many packages the run purged, and how many planned module
-# trees it removed, moved into the quarantine and left because a re-check kept them.
+# Print the summary on stderr, the run's last line: how many packages it purged, how many
+# planned module trees it removed, moved into the quarantine and left because a re-check kept
+# them, and how many expired quarantine entries it deleted and left so; or that nothing was
+# left to change, when all that the plan named went meanwhile.
 _ku_cl_summary() {
     local -a parts=()
     if (( ${#KU_CL_SET[@]} )); then
@@ -186,6 +217,17 @@ _ku_cl_summary() {
     fi
     if (( KU_CL_LEFT )); then
         parts+=("left $(_ku_cl_count "$KU_CL_LEFT" "module tree") a re-check kept")
+    fi
+    if (( KU_CL_EXPIRED )); then
+        parts+=("deleted $(_ku_cl_count "$KU_CL_EXPIRED" "expired quarantine entry" \
+            "expired quarantine entries")")
+    fi
+    if (( KU_CL_ENTRY_LEFT )); then
+        parts+=("left $(_ku_cl_count "$KU_CL_ENTRY_LEFT" "quarantine entry" \
+            "quarantine entries") a re-check kept")
+    fi
+    if (( ! ${#parts[@]} )); then
+        parts=("nothing was left to change")
     fi
     ku_log info "cleanup: $(ku_join "${parts[@]}")"
 }
@@ -713,10 +755,11 @@ _ku_cl_exact_set() {
 # the purges a pending reboot puts off, the packages the rc step purges and those it leaves,
 # those the autoremove step purges and those it leaves, the packages of old kernels marked
 # manual, each with the hint 'apt-mark auto', the module trees the plan removes, moves, keeps or
-# lists, then the sync. Prints nothing when there is nothing to purge, leave, put off or show
-# of the module trees.
+# lists, the quarantine entries it deletes, keeps, lists or skips, each with its age unless it
+# is listed, or why it judges none, then the sync. Prints nothing when there is nothing to
+# purge, leave, put off or show of the module trees and the quarantine.
 _ku_cl_plan_print() {
-    local release i name step text pending=""
+    local release i name step text entry pending=""
     local -a parts=() records=() steps=()
     for step in rc autoremove; do
         if _ku_cl_wanted "$step"; then
@@ -727,7 +770,8 @@ _ku_cl_plan_print() {
         pending=$KU_CL_PENDING
     fi
     if (( ! ${#KU_CL_SET[@]} && ! ${#KU_CL_RC_LEFT[@]} && ! ${#KU_CL_AR_LEFT[@]} &&
-        ! ${#KU_CL_MANUAL[@]} && ! ${#KU_CL_TREE[@]} )) && [[ -z $pending ]]; then
+        ! ${#KU_CL_MANUAL[@]} && ! ${#KU_CL_TREE[@]} && ! ${#KU_CL_ENTRY[@]} )) &&
+        [[ -z $pending ]]; then
         return 0
     fi
     for release in "${KU_CL_KEEP_ORDER[@]}"; do
@@ -793,17 +837,32 @@ _ku_cl_plan_print() {
         _ku_cl_plan_line "$text" modules "${KU_CL_TREE_ACTION[i]}" "${KU_CL_TREE[i]}" \
             "${KU_CL_TREE_WHY[i]}"
     done
-    if (( ${#KU_CL_SET[@]} )) || _ku_cl_tree_acts; then
+    for i in "${!KU_CL_ENTRY[@]}"; do
+        entry=${KU_CL_ENTRY[i]}
+        case ${KU_CL_ENTRY_ACTION[i]} in
+            delete) text="delete quarantine entry ${entry##*/}" ;;
+            keep) text="keep quarantine entry ${entry##*/}" ;;
+            *)
+                text="leave quarantine entry ${entry##*/}"
+                if [[ $entry == "$KU_CL_QUARANTINE" ]]; then
+                    text="expire nothing"
+                fi
+                ;;
+        esac
+        _ku_cl_plan_line "$text: ${KU_CL_ENTRY_WHY[i]}" expire "${KU_CL_ENTRY_ACTION[i]}" \
+            "$entry" "${KU_CL_ENTRY_WHY[i]}"
+    done
+    if (( ${#KU_CL_SET[@]} )) || _ku_cl_tree_acts || _ku_cl_expiry_acts; then
         _ku_cl_plan_line "then sync"
     fi
 }
 
 # Print one line of the plan: TEXT, unless it is empty, on stderr through ku_plan, whatever the
-# verbosity, and with --porcelain each RECORD after it, the four fields STEP, ACTION, OBJECT and
-# DETAIL, as a tab-separated line on stdout. STEP is protect, rc, autoremove, modules or
-# expire, and ACTION keep, purge, list, skip, rmdir, quarantine or delete. A field's control
-# characters become blanks, so that no tab or line break shifts the fields, and an empty field
-# shows as -.
+# verbosity, and with --porcelain keep each RECORD after it, the four fields STEP, ACTION,
+# OBJECT and DETAIL, as a tab-separated line in KU_CL_RECORDS, which _ku_cl_print_records prints
+# once the run ends with 0. STEP is protect, rc, autoremove, modules or expire, and ACTION
+# keep, purge, list, skip, rmdir, quarantine or delete. A field's control characters become
+# blanks, so that no tab or line break shifts the fields, and an empty field shows as -.
 _ku_cl_plan_line() {
     local field line tab=$'\t'
     if [[ -n $1 ]]; then
@@ -817,17 +876,25 @@ _ku_cl_plan_line() {
             field=${field//[[:cntrl:]]/ }
             line+="${line:+$tab}${field:--}"
         done
-        printf '%s\n' "$line"
+        KU_CL_RECORDS+=$line$'\n'
         shift 4
     done
 }
 
-# Print COUNT and NOUN, the noun with an s unless COUNT is 1: "1 package", "2 packages".
+# Print on stdout the plan's records that _ku_cl_plan_line kept with --porcelain. The run calls
+# it only when it ends with 0, so that one which fails, is declined or is cut short leaves
+# stdout empty.
+_ku_cl_print_records() {
+    printf '%s' "$KU_CL_RECORDS"
+}
+
+# Print COUNT and NOUN, the noun in the plural PLURAL, or with an s, unless COUNT is 1:
+# "1 package", "2 packages", "2 quarantine entries".
 _ku_cl_count() {
     if (( $1 == 1 )); then
         printf '%s %s' "$1" "$2"
     else
-        printf '%s %ss' "$1" "$2"
+        printf '%s %s' "$1" "${3:-$2s}"
     fi
 }
 
@@ -1152,13 +1219,11 @@ _ku_cl_empty() {
 }
 
 # Return 0 when the module tree TREE may move into the quarantine: mv can refuse to copy, as
-# --no-copy from coreutils 9.2 on does; no symlink leads to the quarantine, which lies in no
-# modules directory; the quarantine, when it is there, is a directory of root's with mode 0700;
-# only root can change the directory that holds it, or the nearest one there is while it is not;
+# --no-copy from coreutils 9.2 on does; cleanup may act in the quarantine (_ku_cl_base_safe);
 # and TREE and its directory lie on the device the quarantine is on, or will be, so that the
 # move is one rename. Returns 1 otherwise, with KU_CL_MOVE_WHY saying why.
 _ku_cl_movable() {
-    local real base root resolved dir info owner mode dev out
+    local real out
     KU_CL_MOVE_WHY=""
     if [[ -z $KU_CL_MV ]]; then
         KU_CL_MV=0
@@ -1170,18 +1235,37 @@ _ku_cl_movable() {
         KU_CL_MOVE_WHY="mv cannot refuse to copy: --no-copy needs coreutils 9.2"
         return 1
     fi
+    if ! _ku_cl_base_safe; then
+        KU_CL_MOVE_WHY=$KU_CL_BASE_WHY
+        return 1
+    fi
     real=$(ku_path "$1")
+    out=$(stat -c %d -- "${real%/*}" "$real" 2> /dev/null) || out=""
+    if [[ -z $KU_CL_BASE_DEV || $out != "$KU_CL_BASE_DEV"$'\n'"$KU_CL_BASE_DEV" ]]; then
+        KU_CL_MOVE_WHY="it lies on another filesystem than the quarantine"
+        return 1
+    fi
+}
+
+# Return 0 when cleanup may act in the quarantine: no symlink leads to it, it lies in no modules
+# directory, it is, when it is there, a directory of root's with mode 0700, and only root can
+# change the directory that holds it, or the nearest one there is while it is not. Sets
+# KU_CL_BASE_DEV to the device the quarantine is on, or will be, or empty when stat cannot tell.
+# Returns 1 otherwise, with KU_CL_BASE_WHY saying why.
+_ku_cl_base_safe() {
+    local base root resolved dir info owner mode dev="" out
+    KU_CL_BASE_DEV="" KU_CL_BASE_WHY=""
     base=$(ku_path "$KU_CL_QUARANTINE")
     root=$(readlink -m -- "$(ku_path /)") || root=""
     resolved=$(readlink -m -- "$base") || resolved=""
     if [[ -z $root || $resolved != "${root%/}$KU_CL_QUARANTINE" ]]; then
-        KU_CL_MOVE_WHY="a symlink leads to the quarantine $KU_CL_QUARANTINE"
+        KU_CL_BASE_WHY="a symlink leads to the quarantine $KU_CL_QUARANTINE"
         return 1
     fi
     for dir in "${KU_CL_MODULES[@]}"; do
         out=$(readlink -m -- "$(ku_path "$dir")") || out=""
         if [[ -z $out || $resolved/ == "${out%/}"/* ]]; then
-            KU_CL_MOVE_WHY="the quarantine $KU_CL_QUARANTINE lies in $dir"
+            KU_CL_BASE_WHY="the quarantine $KU_CL_QUARANTINE lies in $dir"
             return 1
         fi
     done
@@ -1193,8 +1277,8 @@ _ku_cl_movable() {
         fi
         read -r owner mode dev <<< "$info"
         if [[ $owner != 0 || $mode != 700 ]]; then
-            KU_CL_MOVE_WHY="the quarantine $KU_CL_QUARANTINE is no directory of root's with mode"
-            KU_CL_MOVE_WHY+=" 0700"
+            KU_CL_BASE_WHY="the quarantine $KU_CL_QUARANTINE is no directory of root's with mode"
+            KU_CL_BASE_WHY+=" 0700"
             return 1
         fi
     else
@@ -1206,15 +1290,11 @@ _ku_cl_movable() {
         dev=$(stat -c %d -- "$dir" 2> /dev/null) || dev=""
     fi
     if ! ku_root_only_dir "$dir"; then
-        KU_CL_MOVE_WHY="a user other than root can change the directory that holds the"
-        KU_CL_MOVE_WHY+=" quarantine $KU_CL_QUARANTINE"
+        KU_CL_BASE_WHY="a user other than root can change the directory that holds the"
+        KU_CL_BASE_WHY+=" quarantine $KU_CL_QUARANTINE"
         return 1
     fi
-    out=$(stat -c %d -- "${real%/*}" "$real" 2> /dev/null) || out=""
-    if [[ -z $dev || $out != "$dev"$'\n'"$dev" ]]; then
-        KU_CL_MOVE_WHY="it lies on another filesystem than the quarantine"
-        return 1
-    fi
+    KU_CL_BASE_DEV=$dev
 }
 
 # Remove or move the module trees the confirmed plan names, in its order. Right before each,
@@ -1288,7 +1368,24 @@ _ku_cl_leave() {
 # removed or moved, or with KIND write, when the step itself failed to change something; and 3
 # while nothing was changed.
 _ku_cl_stopped() {
-    local text=$1 tree=$2 kind=${3:-check} count=$(( KU_CL_REMOVED + KU_CL_MOVED ))
+    local text=$1 tree=$2 kind=${3:-check} finished
+    finished=$(_ku_cl_finished)
+    if [[ -z $finished && $kind != write ]]; then
+        ku_die "$KU_EX_REFUSED" "$text; nothing was changed"
+    fi
+    text+="; "
+    if [[ -n $finished ]]; then
+        text+="$finished, and "
+    fi
+    ku_die "$KU_EX_WRITE" "$text$tree and the module trees after it stay where they are: run" \
+        "cleanup again"
+}
+
+# Print what the run changed so far, as a list: that the purge ran, how many module trees it
+# removed or moved, and how many quarantine entries it deleted. Prints nothing while it changed
+# nothing.
+_ku_cl_finished() {
+    local count=$(( KU_CL_REMOVED + KU_CL_MOVED ))
     local -a finished=()
     if (( ${#KU_CL_SET[@]} )); then
         finished+=("the purge ran")
@@ -1298,15 +1395,14 @@ _ku_cl_stopped() {
     elif (( count )); then
         finished+=("$count module trees were removed or moved")
     fi
-    if (( ! ${#finished[@]} )) && [[ $kind != write ]]; then
-        ku_die "$KU_EX_REFUSED" "$text; nothing was changed"
+    if (( KU_CL_EXPIRED == 1 )); then
+        finished+=("1 quarantine entry was deleted")
+    elif (( KU_CL_EXPIRED )); then
+        finished+=("$KU_CL_EXPIRED quarantine entries were deleted")
     fi
-    text+="; "
     if (( ${#finished[@]} )); then
-        text+="$(ku_join "${finished[@]}"), and "
+        ku_join "${finished[@]}"
     fi
-    ku_die "$KU_EX_WRITE" "$text$tree and the module trees after it stay where they are: run" \
-        "cleanup again"
 }
 
 # Make the quarantine, and the directories that hold it, with mode 0700, as baseline makes
@@ -1363,4 +1459,314 @@ _ku_cl_quarantine() {
         _ku_cl_stopped "$text other" "$tree" write
     fi
     ku_log info "moved $tree to $entry/tree; 'mv -T $entry/tree $tree' moves it back"
+}
+
+# =======================================================
+#                        EXPIRY
+# =======================================================
+
+# Plan the expiry of the quarantine's entries, when the quarantine is there. When cleanup may
+# not act in it (_ku_cl_base_safe), the plan skips it whole and says why. An entry that
+# _ku_cl_entry_times refuses is listed. An entry no run saw yet stays, and gets seen
+# (_ku_cl_seen) unless this is a dry run or the clock is behind. Any other is deleted once more
+# whole days than quarantine_days have passed since the newer of its stamp and seen, unless
+# quarantine_days is 0, which keeps it, or the clock reads earlier than any entry's stamp or
+# seen, which skips it and warns; it stays otherwise. The plan shows each entry's age. Returns
+# 1, with KU_CL_WHY saying why, when date prints no time.
+_ku_cl_plan_expiry() {
+    local base name out status stamp seen newer days keeps text i behind=0
+    local -a names=() outs=() statuses=()
+    KU_CL_ENTRY=() KU_CL_ENTRY_ACTION=() KU_CL_ENTRY_WHY=() KU_CL_ENTRY_TIMES=()
+    base=$(ku_path "$KU_CL_QUARANTINE")
+    [[ -e $base || -L $base ]] || return 0
+    if ! _ku_cl_base_safe; then
+        _ku_cl_entry_add skip "$KU_CL_QUARANTINE" "$KU_CL_BASE_WHY" ""
+        return 0
+    fi
+    KU_CL_EXPIRY_DEV=$KU_CL_BASE_DEV
+    KU_CL_NOW=$(date -u +%s) || KU_CL_NOW=""
+    if [[ ! $KU_CL_NOW =~ ^[0-9]+$ ]]; then
+        KU_CL_WHY="date prints no time to tell the age of the quarantine entries by"
+        return 1
+    fi
+    mapfile -d '' -t names < <(shopt -s nullglob dotglob
+        set -- "$base"/*
+        (( ! $# )) || printf '%s\0' "${@##*/}")
+    # Every entry's times come first: a clock behind any of them keeps them all.
+    for name in "${names[@]}"; do
+        status=0
+        out=$(_ku_cl_entry_times "$KU_CL_QUARANTINE/$name" "$KU_CL_EXPIRY_DEV") || status=$?
+        outs+=("$out") statuses+=("$status")
+        if (( status )); then
+            continue
+        fi
+        read -r stamp seen <<< "$out"
+        newer=$stamp
+        if [[ $seen != - ]] && (( seen > newer )); then
+            newer=$seen
+        fi
+        if (( newer > KU_CL_NOW )); then
+            behind=1
+        fi
+    done
+    if (( behind )); then
+        TZ=UTC0 printf -v text '%(%Y%m%dT%H%M%SZ)T' "$KU_CL_NOW"
+        ku_log warning "the clock is behind: it reads $text, earlier than a quarantine entry was" \
+            "made or seen, so no entry expires in this run"
+    fi
+    days=${KU_CONF[quarantine_days]}
+    keeps=" (quarantine_days $days)"
+    if (( days == 0 )); then
+        keeps=" (quarantine_days 0 keeps it)"
+    fi
+    for i in "${!names[@]}"; do
+        # A process can give an entry any name, so only plain characters are shown.
+        name=$KU_CL_QUARANTINE/${names[i]//[^A-Za-z0-9._+~:@-]/?}
+        if (( statuses[i] )); then
+            _ku_cl_entry_add list "$name" "${outs[i]}" ""
+            continue
+        fi
+        read -r stamp seen <<< "${outs[i]}"
+        if [[ $seen == - ]]; then
+            text="$(_ku_cl_age "$stamp" "$KU_CL_NOW") by its stamp; "
+            if (( behind )); then
+                text+="no run marks it seen while the clock is behind"
+            elif (( KU_DRY_RUN )); then
+                text+="no run has marked it seen yet"
+            elif _ku_cl_seen "$name"; then
+                text+="this run marks it seen"
+            else
+                text+="its seen cannot be written"
+            fi
+            _ku_cl_entry_add keep "$name" "$text$keeps" "${outs[i]}"
+            continue
+        fi
+        newer=$(( stamp > seen ? stamp : seen ))
+        text=$(_ku_cl_age "$newer" "$KU_CL_NOW")
+        if (( days == 0 || newer > KU_CL_NOW || (KU_CL_NOW - newer) / 86400 <= days )); then
+            _ku_cl_entry_add keep "$name" "$text$keeps" "${outs[i]}"
+        elif (( behind )); then
+            _ku_cl_entry_add skip "$name" "$text, but the clock is behind$keeps" "${outs[i]}"
+        else
+            _ku_cl_entry_add delete "$name" "$text$keeps" "${outs[i]}"
+        fi
+    done
+}
+
+# Add the quarantine entry ENTRY, or the quarantine itself, to the plan with ACTION, delete,
+# keep, list or skip, WHY, and TIMES, the entry's times as _ku_cl_entry_times printed them, or
+# empty.
+_ku_cl_entry_add() {
+    KU_CL_ENTRY_ACTION+=("$1")
+    KU_CL_ENTRY+=("$2")
+    KU_CL_ENTRY_WHY+=("$3")
+    KU_CL_ENTRY_TIMES+=("$4")
+}
+
+# Return 0 when the plan deletes a quarantine entry, and 1 otherwise.
+_ku_cl_expiry_acts() {
+    local action
+    for action in "${KU_CL_ENTRY_ACTION[@]}"; do
+        if [[ $action == delete ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Print the times of the quarantine entry ENTRY, a path such as
+# /var/lib/kernel-updater/quarantine/RELEASE.STAMP, as "STAMP SEEN" in seconds since the epoch,
+# SEEN - while the entry holds no seen, and return 0 when expiry may judge the entry: it is a
+# directory and no symlink; its name is RELEASE.STAMP, RELEASE a kernel release and STAMP a UTC
+# time as YYYYmmddTHHMMSSZ; it holds nothing but its tree, a directory, and origin and seen,
+# each a regular file; it belongs to root and lies, and its tree with it, on DEV, the
+# quarantine's device; and its seen holds a UTC time of that form. Prints why not and returns 1
+# otherwise.
+_ku_cl_entry_times() {
+    local entry=$1 dev=$2 real name stamp seen=- part line out owner device
+    local -a parts=() paths=() infos=()
+    real=$(ku_path "$entry")
+    name=${entry##*/}
+    if [[ -L $real ]]; then
+        printf 'it is a symlink'
+        return 1
+    elif [[ ! -d $real ]]; then
+        printf 'it is no directory'
+        return 1
+    elif [[ $name != *.* ]] || ! ku_valid_release "${name%.*}" ||
+        ! _ku_cl_epoch "${name##*.}" stamp; then
+        printf 'its name is not RELEASE.YYYYmmddTHHMMSSZ'
+        return 1
+    fi
+    mapfile -d '' -t parts < <(shopt -s nullglob dotglob
+        set -- "$real"/*
+        (( ! $# )) || printf '%s\0' "$@")
+    paths=("$real")
+    for part in "${parts[@]}"; do
+        case ${part##*/} in
+            tree)
+                if [[ -L $part || ! -d $part ]]; then
+                    printf 'its tree is no directory'
+                    return 1
+                fi
+                paths+=("$part")
+                ;;
+            origin | seen)
+                if [[ -L $part || ! -f $part ]]; then
+                    printf 'its %s is no regular file' "${part##*/}"
+                    return 1
+                fi
+                ;;
+            *)
+                printf 'it holds more than tree, origin and seen'
+                return 1
+                ;;
+        esac
+    done
+    out=$(stat -c '%u %d' -- "${paths[@]}" 2> /dev/null) || out=""
+    mapfile -t infos <<< "$out"
+    if [[ -z $out ]] || (( ${#infos[@]} != ${#paths[@]} )); then
+        printf 'stat cannot tell its owner and device'
+        return 1
+    fi
+    read -r owner device <<< "${infos[0]}"
+    if [[ $owner != 0 ]]; then
+        printf 'it belongs to another user than root'
+        return 1
+    elif [[ $device != "$dev" ]]; then
+        printf 'it lies on another filesystem than the quarantine'
+        return 1
+    elif (( ${#infos[@]} > 1 )) && [[ ${infos[1]#* } != "$dev" ]]; then
+        printf 'its tree lies on another filesystem than the quarantine'
+        return 1
+    fi
+    if [[ -e $real/seen ]]; then
+        line=""
+        { IFS= read -r line < "$real/seen"; } 2> /dev/null || :
+        if ! _ku_cl_epoch "$line" seen; then
+            printf 'its seen holds no time as YYYYmmddTHHMMSSZ'
+            return 1
+        fi
+    fi
+    printf '%s %s' "$stamp" "$seen"
+}
+
+# Set the variable named VAR to the UTC time STAMP, written as YYYYmmddTHHMMSSZ, in seconds
+# since the epoch, and return 0. Returns 1 when STAMP has not that form or names no time there
+# is, such as 31 November, or one before 1970.
+_ku_cl_epoch() {
+    local cl_y cl_m cl_d cl_era cl_yoe cl_doy cl_days cl_secs cl_back
+    [[ $1 =~ ^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$ ]] || return 1
+    cl_y=$(( 10#${BASH_REMATCH[1]} )) cl_m=$(( 10#${BASH_REMATCH[2]} ))
+    cl_d=$(( 10#${BASH_REMATCH[3]} ))
+    (( cl_y >= 1970 && cl_m >= 1 && cl_m <= 12 && cl_d >= 1 )) || return 1
+    # The days since 1970-01-01 in the Gregorian calendar, its years counted from 1 March so
+    # that a leap day ends one, as Howard Hinnant's days_from_civil counts them.
+    cl_y=$(( cl_y - (cl_m <= 2) ))
+    cl_era=$(( cl_y / 400 ))
+    cl_yoe=$(( cl_y - cl_era * 400 ))
+    cl_doy=$(( (153 * ((cl_m + 9) % 12) + 2) / 5 + cl_d - 1 ))
+    cl_days=$(( cl_era * 146097 + cl_yoe * 365 + cl_yoe / 4 - cl_yoe / 100 + cl_doy - 719468 ))
+    cl_secs=$(( cl_days * 86400 + 10#${BASH_REMATCH[4]} * 3600 + 10#${BASH_REMATCH[5]} * 60
+        + 10#${BASH_REMATCH[6]} ))
+    # A stamp that names no real time, such as 31 November or hour 25, comes back as another.
+    TZ=UTC0 printf -v cl_back '%(%Y%m%dT%H%M%SZ)T' "$cl_secs"
+    [[ $cl_back == "$1" ]] || return 1
+    printf -v "$2" '%s' "$cl_secs"
+}
+
+# Print how old a quarantine entry whose newer time is THEN is at NOW, both in seconds since
+# the epoch: "N days old", in whole days, or "N days ahead of the clock", rounded up, when THEN
+# lies after NOW.
+_ku_cl_age() {
+    if (( $1 > $2 )); then
+        printf '%s ahead of the clock' "$(_ku_cl_count $(( ($1 - $2 + 86399) / 86400 )) day)"
+    else
+        printf '%s old' "$(_ku_cl_count $(( ($2 - $1) / 86400 )) day)"
+    fi
+}
+
+# Write seen into the quarantine entry ENTRY: the time of the plan, KU_CL_NOW, as
+# YYYYmmddTHHMMSSZ, in a new file of mode 0600, which noclobber keeps any file or symlink there
+# from standing in for. Returns 1, with a warning, when that fails.
+_ku_cl_seen() {
+    local stamp file
+    TZ=UTC0 printf -v stamp '%(%Y%m%dT%H%M%SZ)T' "$KU_CL_NOW"
+    file=$(ku_path "$1")/seen
+    if ! (set -C && umask 077 && printf '%s\n' "$stamp" > "$file") 2> /dev/null; then
+        ku_log warning "cannot write seen into the quarantine entry ${1##*/}, which cannot" \
+            "expire until a run writes it"
+        return 1
+    fi
+}
+
+# Delete the quarantine entries the confirmed plan deletes, in its order, each once a re-check
+# finds the quarantine and the entry as the plan saw them: an entry that changed stays, with a
+# warning, and one that went is only reported. Deletes, without -f, each part the entry holds:
+# its tree with 'rm -r --one-file-system', which keeps rm on the quarantine's filesystem, then
+# origin and seen, then the entry with rmdir. Exits as _ku_cl_expire_stopped says when a
+# deletion fails.
+_ku_cl_expire() {
+    local i entry real part out status
+    _ku_cl_expiry_acts || return 0
+    if ! _ku_cl_base_safe || [[ $KU_CL_BASE_DEV != "$KU_CL_EXPIRY_DEV" ]]; then
+        for i in "${!KU_CL_ENTRY[@]}"; do
+            if [[ ${KU_CL_ENTRY_ACTION[i]} == delete ]]; then
+                _ku_cl_entry_left "${KU_CL_ENTRY[i]}" "the quarantine changed while cleanup ran"
+            fi
+        done
+        return 0
+    fi
+    for i in "${!KU_CL_ENTRY[@]}"; do
+        [[ ${KU_CL_ENTRY_ACTION[i]} == delete ]] || continue
+        entry=${KU_CL_ENTRY[i]}
+        real=$(ku_path "$entry")
+        if [[ ! -e $real && ! -L $real ]]; then
+            ku_log warning "the quarantine entry ${entry##*/} went while cleanup ran, so there" \
+                "is nothing left to do for it"
+            continue
+        fi
+        status=0
+        out=$(_ku_cl_entry_times "$entry" "$KU_CL_EXPIRY_DEV") || status=$?
+        if (( status )); then
+            _ku_cl_entry_left "$entry" "$out"
+            continue
+        elif [[ $out != "${KU_CL_ENTRY_TIMES[i]}" ]]; then
+            _ku_cl_entry_left "$entry" "it changed while cleanup ran"
+            continue
+        fi
+        if [[ -e $real/tree || -L $real/tree ]] &&
+            ! ku_run rm -r --one-file-system -- "$real/tree" < /dev/null; then
+            _ku_cl_expire_stopped "rm cannot delete all of $entry/tree" "${entry##*/}"
+        fi
+        for part in origin seen; do
+            if [[ -e $real/$part || -L $real/$part ]] &&
+                ! ku_run rm -- "$real/$part" < /dev/null; then
+                _ku_cl_expire_stopped "rm cannot delete $entry/$part" "${entry##*/}"
+            fi
+        done
+        if ! ku_run rmdir -- "$real"; then
+            _ku_cl_expire_stopped "rmdir cannot remove $entry" "${entry##*/}"
+        fi
+        ku_log info "deleted the expired quarantine entry ${entry##*/}"
+        KU_CL_EXPIRED=$(( KU_CL_EXPIRED + 1 ))
+    done
+}
+
+# Leave the planned quarantine entry ENTRY as it is, warning why: WHY.
+_ku_cl_entry_left() {
+    ku_log warning "left the quarantine entry ${1##*/}: $2"
+    KU_CL_ENTRY_LEFT=$(( KU_CL_ENTRY_LEFT + 1 ))
+}
+
+# Exit 4 after the deletion of the quarantine entry NAME stopped with TEXT, saying what the run
+# changed and that what is left of NAME and the entries after it stay in the quarantine.
+_ku_cl_expire_stopped() {
+    local text="$1; " finished
+    finished=$(_ku_cl_finished)
+    if [[ -n $finished ]]; then
+        text+="$finished, and "
+    fi
+    ku_die "$KU_EX_WRITE" "${text}what is left of the quarantine entry $2 and the entries after" \
+        "it stay: run cleanup again"
 }
