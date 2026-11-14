@@ -3,7 +3,7 @@
 # Files that do not exist are not recorded. The baseline also holds the MBR boot code
 # (mbr:boot-code) and partition 1's boot sector (p1:boot-sector), where syslinux keeps its own.
 
-# The boot menus: MultiBootUSB's, the Kali entries phase 6 writes, Windows' and the ISO loader's.
+# The boot menus: MultiBootUSB's, the Kali entries migrate writes, Windows' and the ISO loader's.
 multibootusb/grub/grub.cfg
 multibootusb/grub/kali.cfg
 multibootusb/grub/win.cfg

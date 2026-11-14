@@ -899,7 +899,7 @@ _ku_check_deployed() {
     fi
 }
 
-# kali-cfg: once phase 6 wrote multibootusb/grub/kali.cfg, it must pass lint with the stick's
+# kali-cfg: once migrate wrote multibootusb/grub/kali.cfg, it must pass lint with the stick's
 # own command and module lists, as lint --grub-dir takes them: fails on errors and warns on
 # warnings, and fails when kali.cfg or a directory on its way is a symlink, which it does not
 # follow. Skips while the file does not exist.

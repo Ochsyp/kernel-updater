@@ -201,7 +201,7 @@ _ku_deploy_replace() {
 }
 
 # Write several files to partition 1's ROOT with ku_deploy_write, in the order given as
-# RELPATH SOURCE EXPECTED triples: phase 6 writes kali.cfg before the grub.cfg that sources
+# RELPATH SOURCE EXPECTED triples: migrate writes kali.cfg before the grub.cfg that sources
 # it. First it runs the checks of every triple, so that a refusal (3) or a source that cannot be
 # read (66) leaves the stick as it was. Then it writes them in turn and stops at the first
 # failure, which exits as ku_deploy_write says while no file was written yet, and else exits 4,
