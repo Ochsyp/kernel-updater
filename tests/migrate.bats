@@ -566,14 +566,16 @@ backups() {
     private_output
 }
 
-@test "A kernel install while system asks refuses, and links it moves later stay in /" {
+@test "A kernel install while system asks exits 75, and links it moves later stay in /" {
     kernels "$V1" "$V2" "$V3"
     detected
-    # An install while the question waits moved /vmlinuz: the plan no longer holds.
+    # An install while the question waits moved /vmlinuz: the plan no longer holds, and the
+    # stage exits 75, as cleanup does, since a run once apt is done can succeed.
     export SHOW_MOVES=$V3
     run_ku migrate --stage system --yes
-    [ "$status" -eq 3 ]
+    [ "$status" -eq 75 ]
     [[ "$stderr" == *"the kernels or their links changed while the question waited"* ]]
+    [[ "$stderr" == *"run the system stage again; nothing was changed"* ]]
     cmp "$BATS_TEST_TMPDIR/kernel-img.before" "$ROOT/etc/kernel-img.conf"
     [ -z "$(backups)" ]
     refute_line_match '^linux-update-symlinks' "$STUB_LOG"
@@ -1216,4 +1218,8 @@ EOF
     run_ku migrate --help
     [ "$status" -eq 0 ]
     [[ "$output" == "Usage: kernel-updater migrate "* ]]
+    # 75 also means that the system changed while the question waited, as for cleanup.
+    local usage=${output//$'\n'/ }
+    [[ "$usage" == *" 75 when another run holds the lock or the kernels or their links changed"* ]]
+    [[ "$usage" == *"changed while the question waited, 77 when not run as root"* ]]
 }

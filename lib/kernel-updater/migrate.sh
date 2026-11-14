@@ -119,14 +119,16 @@ keeps none:
 Runs as root under the tool's lock. docs/migration.md walks through the stages. Exits 0 when
 done or nothing was left to do, 3 when a check refuses or another stage must run first, 4
 when a write fails, 10 when declined, 64 on a usage error, 66 when /boot, partition 1 or a
-backup cannot be found or read, 75 when another run holds the lock, 77 when not run as root
-and 78 when the configuration names another /boot, container or stick.
+backup cannot be found or read, 75 when another run holds the lock or the kernels or their
+links changed while the question waited, 77 when not run as root and 78 when the
+configuration names another /boot, container or stick.
 EOF
 }
 
 # Parse the options, then run the stage, or roll a stage run back, as root and under the lock.
 # Exits as the stage does: 0 when done or nothing was left to do, 3 refused, 4 write failed,
-# 10 declined, 64 usage, 66 missing input, 75 busy, 77 not root, 78 another /boot or stick.
+# 10 declined, 64 usage, 66 missing input, 75 busy, also when the system stage's plan no longer
+# holds after its question, 77 not root, 78 another /boot or stick.
 ku_cmd_migrate() {
     local stage=all staged=0 rollback=0 stamp="" deploy="" output=""
     while (( $# )); do
@@ -438,10 +440,11 @@ _ku_mg_conf_append() {
 # kernel-img.conf are not as they should be. Needs detect done (3), /boot mounted (66) and the
 # one boot_fs_uuid and boot_luks_uuid name (78), and refuses (3) when check's boot-luks,
 # boot-ext or kernels item fails, no kernel would boot, or a name the links take in /boot is no
-# symlink; when only one kernel would boot while /boot holds the image of another, since
+# symlink; and when only one kernel would boot while /boot holds the image of another, since
 # linux-update-symlinks takes the .old links from the images in /boot and would point them at
-# that one; and when the kernels or the links changed while its question waited, as when apt
-# installed a kernel meanwhile.
+# that one. Exits 75, changing nothing, when the kernels or the links changed while its
+# question waited, as when apt installed a kernel meanwhile, so that a run once apt is done can
+# succeed.
 _ku_mg_stage_system() {
     local i version name path problem target need_keys=0 newest="" previous="" edit=1
     local relink=1 devices="" img grub_read=1 others state old
@@ -568,7 +571,7 @@ _ku_mg_stage_system() {
     fi
     _ku_mg_ask system "Configure the kernel links as planned?"
     if [[ $(_ku_mg_system_state) != "$state" ]]; then
-        ku_die "$KU_EX_REFUSED" "the kernels or their links changed while the question waited," \
+        ku_die "$KU_EX_BUSY" "the kernels or their links changed while the question waited," \
             "as when apt installs a kernel meanwhile, so the plan no longer holds: run the system" \
             "stage again; nothing was changed"
     fi
