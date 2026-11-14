@@ -13,8 +13,6 @@ into issues, pull requests or commits.
 - The tool runs as root on a stick's Kali install, removes kernel packages and edits the boot
   menu. Review every change before it reaches a stick, and copy the stick's
   `multibootusb/grub` folder somewhere safe before running a release that changes the menu.
-- The legacy `update_kernel.sh` purges packages and deletes module directories without
-  asking. Do not run it.
 - The tool reads no secrets. A real `grub.cfg` holds the stick's partition and
   encryption-container identifiers, which tie it to one physical device, so it stays out of
   the repository.

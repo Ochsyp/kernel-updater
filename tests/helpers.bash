@@ -3,8 +3,8 @@
 # kernel-updater test helpers
 #
 # Sourced by the .bats files under tests/ through `load`: repository paths, PATH and system
-# stubs, runners for both scripts and for library code, a library loader, disk images, check
-# result readers and ShellCheck runners.
+# stubs, runners for bin/kernel-updater and for library code, a library loader, disk images,
+# check result readers and ShellCheck runners.
 # -------------------------------------------------------
 
 bats_require_minimum_version 1.5.0
@@ -47,12 +47,6 @@ stub_refuse() {
 printf '%s: refused under test\n' "$STUB_NAME" >&2
 exit 100
 EOF
-}
-
-# Run update_kernel.sh with the stubs first on PATH, through bats' run with separate
-# stderr. Only the script sees the stubs; the test's own commands stay real.
-run_legacy() {
-    run --separate-stderr env PATH="$STUB_BIN:$PATH" bash "$REPO_DIR/update_kernel.sh" "$@"
 }
 
 # Run bin/kernel-updater with the stubs first on PATH and the KU_ROOT, KU_TTY and KU_LOCKFILE

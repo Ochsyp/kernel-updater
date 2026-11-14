@@ -9,7 +9,7 @@
 
 load helpers
 
-SCRIPTS=(update_kernel.sh install.sh bin/kernel-updater lib/kernel-updater/common.sh
+SCRIPTS=(install.sh bin/kernel-updater lib/kernel-updater/common.sh
     lib/kernel-updater/config.sh lib/kernel-updater/lint.sh lib/kernel-updater/probe.sh
     lib/kernel-updater/check.sh lib/kernel-updater/hook.sh lib/kernel-updater/disk.sh
     lib/kernel-updater/deploy.sh lib/kernel-updater/baseline.sh lib/kernel-updater/migrate.sh
