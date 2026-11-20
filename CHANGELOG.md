@@ -270,8 +270,9 @@ with the owner's original script.
   apt-get run, the config files removed kernels left and the old kernels apt's autoremove
   names, once a simulation shows apt would remove exactly those. It never purges the running
   kernel or a kernel the links in `/boot` point at, and purges nothing while a reboot into a
-  new kernel is pending. Held packages, debug builds and what is no versioned kernel package,
-  metapackages included, stay, and the plan says why; an old kernel marked manual stays with
+  new kernel is pending. Held packages, debug builds, what is no versioned kernel package,
+  metapackages included, and the config files of a kernel still installed through another
+  package, as `linux-image-V-unsigned`, stay, and the plan says why; an old kernel marked manual stays with
   an `apt-mark auto` hint. Purges cannot be rolled back, so run it with `-n` first. A module
   tree no package owns is removed when empty and otherwise moved to
   `/var/lib/kernel-updater/quarantine`, where it can be moved back until it expires,

@@ -791,6 +791,23 @@ linux-image-9.0.3+kali-amd64-unsigned")" ]
     private_output
 }
 
+@test "An rc package whose kernel is still installed through its twin is skipped, not purged" {
+    # linux-image-V0-unsigned replaced linux-image-V0: V0 is installed, though no link names it.
+    # Purging the rc twin would run its postrm, which deletes V0's module index.
+    : > "$DPKG_QUERY_OUT"
+    listed "linux-image-$V1" ii "linux-image-$V2" ii "linux-image-$V0" rc \
+        "linux-image-$V0-unsigned" ii
+    on_purge ''
+    run_ku cleanup --yes --porcelain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(printf 'rc\tskip\t%s\t%s' "linux-image-$V0" \
+        'its kernel is still installed')"* ]]
+    [[ "$output" != *"rc"$'\t'"purge"* ]]
+    [[ "$(apt_calls)" != *"apt-get -y"* ]]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    private_output
+}
+
 @test "While a reboot into the kernel vmlinuz points at is pending, cleanup purges nothing" {
     listed "linux-image-$V0" rc
     export UNAME_R=$V1

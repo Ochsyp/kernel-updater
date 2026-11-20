@@ -532,12 +532,22 @@ _ku_cl_keep() {
 
 # Plan the rc step from the kernel packages dpkg lists (KU_CL_PACKAGES): a package removed with
 # its config files left, status c with any want but hold, of kind image, binary, modules, base
-# or headers, is purged unless cleanup keeps its release. A held one and one of a kept release
-# are skipped, and a debug build and the headers and build tools an ABI's kernels share are
-# listed; the plan shows each.
+# or headers, is purged unless cleanup keeps its release. A held one, one of a kept release and
+# one whose release is still installed through another package are skipped, and a debug build
+# and the headers and build tools an ABI's kernels share are listed; the plan shows each. The
+# last skip matters when linux-image-V-unsigned replaced linux-image-V: purging the rc twin
+# runs its postrm, which deletes the module index of the kernel V that is still installed.
 _ku_cl_plan_rc() {
     local name state kind release
+    local -A installed=()
     KU_CL_RC=() KU_CL_RC_REL=() KU_CL_RC_LEFT=() KU_CL_RC_ACTION=() KU_CL_RC_WHY=()
+    while IFS=$'\t' read -r name state _ kind release; do
+        if [[ -n $name && $state == ?i ]]; then
+            case $kind in
+                image | binary | modules) installed[$release]=1 ;;
+            esac
+        fi
+    done <<< "$KU_CL_PACKAGES"
     while IFS=$'\t' read -r name state _ kind release; do
         [[ -n $name && $state == ?c ]] || continue
         case $kind in
@@ -549,6 +559,8 @@ _ku_cl_plan_rc() {
                     _ku_cl_rc_leave "$name" skip held
                 elif [[ -n ${KU_CL_KEEP[$release]+set} ]]; then
                     _ku_cl_rc_leave "$name" skip "its kernel is kept"
+                elif [[ -n ${installed[$release]+set} ]]; then
+                    _ku_cl_rc_leave "$name" skip "its kernel is still installed"
                 else
                     KU_CL_RC+=("$name")
                     KU_CL_RC_REL+=("$release")

@@ -302,14 +302,16 @@ installed (3); and no interrupted dpkg run may wait for `dpkg --configure -a` (3
 
 - **What it keeps.** The running kernel's release and the releases the four links in `/boot`
   point at: no package named for them is purged and no module tree of theirs is touched,
-  whatever apt says, and neither is a package that shares its version with an installed package
-  of theirs, as the headers the kernels of one ABI share do. While a reboot is pending, as after
+  whatever apt says. Of what apt's autoremove names, neither is a package that shares its
+  version with an installed package of theirs, as the headers the kernels of one ABI share do.
+  While a reboot is pending, as after
   a kernel install, when the kernel `/boot/vmlinuz` points at is not the one running, it purges
   nothing and says to reboot first; the module trees and the quarantine are still looked after.
 - **What it purges.** Of the kernel packages removed with their config files left (`rc` in
   `dpkg -l`), the images, binaries, modules, bases and headers of releases it does not keep;
-  held ones and those of kept releases are skipped, and debug builds and the headers and build
-  tools an ABI's kernels share are only listed. Of what apt's autoremove names, as its
+  held ones, those of kept releases and those whose release is still installed through another
+  package, as when `linux-image-V-unsigned` replaced `linux-image-V`, are skipped, and debug
+  builds and the headers and build tools an ABI's kernels share are only listed. Of what apt's autoremove names, as its
   simulation of `apt-get autoremove --purge` shows, the versioned kernel packages of releases it
   does not keep, shared headers and build tools included; held ones are skipped, and debug
   builds and anything else, metapackages included, are only listed. apt never names an old
