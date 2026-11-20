@@ -21,6 +21,11 @@ KU_DEPLOY_NOFOLLOW=""
 # first, and the files it wrote so far, which a later failure names.
 KU_DEPLOY_CHECKING=0 KU_DEPLOY_DONE=()
 
+# A command ku_deploy_files runs once every file passed its checks and before it writes the
+# first, outside a dry run; empty for none. migrate seals its backup there, so that a run the
+# checks stop leaves no backup a rollback would take for one that wrote something.
+KU_DEPLOY_BEFORE_WRITE=""
+
 # While a write has moved its target aside on NTFS: the target and the name it waits under,
 # which the exit trap puts back when the run is cut short before the new file took its place.
 KU_DEPLOY_ASIDE=()
@@ -208,7 +213,8 @@ _ku_deploy_replace() {
 # RELPATH SOURCE EXPECTED triples: migrate writes kali.cfg before the grub.cfg that sources
 # it. First it runs the checks of every triple, so that a refusal (3), a file that changed since
 # the plan read it (75) or a source that cannot be read (66) leaves the stick as it was. Then it
-# writes them in turn and stops at the first failure, which exits as ku_deploy_write says while
+# runs KU_DEPLOY_BEFORE_WRITE, when set and not in a dry run, writes them in turn and stops at
+# the first failure, which exits as ku_deploy_write says while
 # no file was written yet, and else exits 4, naming the files written before it, since the
 # stick then changed. A RELPATH given twice is an error of the caller (1).
 ku_deploy_files() {
@@ -230,6 +236,9 @@ ku_deploy_files() {
         ku_deploy_write "$root" "${@:i:3}"
     done
     KU_DEPLOY_CHECKING=0
+    if [[ -n $KU_DEPLOY_BEFORE_WRITE ]] && (( ! KU_DRY_RUN )); then
+        "$KU_DEPLOY_BEFORE_WRITE"
+    fi
     while (( $# )); do
         ku_deploy_write "$root" "$1" "$2" "$3"
         if (( ! KU_DRY_RUN )); then

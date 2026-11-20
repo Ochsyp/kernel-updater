@@ -697,6 +697,7 @@ EOF
 @test "A grub.cfg changed while menu asks exits 75 and writes nothing, and a new run writes it" {
     local other=$'menuentry "Other" {\r\n\ttrue\r\n}\r\n'
     system_done
+    legacy_kernel
     # grub-script-check, which checks the new files once the plan read the stick's, adds
     # GSC_CHANGES to the stick's grub.cfg, as another program writing the stick while the
     # question waits would.
@@ -712,12 +713,22 @@ read it; nothing was changed"* ]]
     [[ "$stderr" != *"info: wrote"* ]]
     [ ! -e "$GRUB/kali.cfg" ]
     cmp <(cat "$BATS_TEST_TMPDIR/grub.before"; printf '%s' "$other") "$GRUB/grub.cfg"
+    # The run wrote nothing, so it leaves no backup that a rollback would undo.
+    [ -z "$(backups)" ]
     # Run again, the stage plans anew from the grub.cfg it finds, and writes both files.
     export GSC_CHANGES=""
     run_ku migrate --stage menu --yes
     [ "$status" -eq 0 ]
     cmp "$FIXTURES/kali.expected.cfg" "$GRUB/kali.cfg"
     grep -q -F 'menuentry "Other"' "$GRUB/grub.cfg"
+    local stamp
+    stamp=$(backups)
+    [[ $stamp =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
+    [ -f "$ROOT$BACKUPS/$stamp/MANIFEST" ]
+    # Its rollback picks that run, the only one.
+    run_ku migrate --rollback --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"rollback of the menu stage run $stamp"* ]]
     private_output
 }
 

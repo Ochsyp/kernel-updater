@@ -36,6 +36,10 @@ KU_MG_CHANGED=0
 # recorded, by their names there: a write of migrate leaves their baseline entries as they were.
 KU_MG_DRIFTED=()
 
+# ku_deploy_files seals the stage's backup only once its checks passed (_ku_mg_seal).
+# shellcheck disable=SC2034 # read by ku_deploy_files in deploy.sh
+KU_DEPLOY_BEFORE_WRITE=_ku_mg_seal
+
 # The root= of the running kernel's command line, once _ku_mg_cmdline_root read it; the title
 # of the Kali submenu, once _ku_mg_title read it; --deploy and --output-dir, which hold for this
 # run even after detect loads the configuration anew; and the output_dir the configuration
@@ -940,7 +944,7 @@ _ku_mg_stage_menu() {
     fi
     printf '%s\n' "$KU_DK_DEPLOY" > "$KU_MG_BACKUP/deploy" || _ku_mg_backup_fail
     _ku_mg_written kali.cfg "$sumk" grub.cfg "$sumg"
-    _ku_mg_manifest
+    _ku_mg_seal_export
     _ku_mg_deploy "$tmp" "$expk" "$expg" "$sumk" "$sumg"
     if [[ $KU_DK_DEPLOY != export ]]; then
         if ! _ku_mg_baseline_set "$KU_MG_KALI" "$expk" "$sumk" "$KU_MG_GRUB" "$expg" "$sumg"
@@ -1038,7 +1042,7 @@ _ku_mg_menu_again() {
     fi
     printf '%s\n' "$KU_DK_DEPLOY" > "$KU_MG_BACKUP/deploy" || _ku_mg_backup_fail
     _ku_mg_written kali.cfg "$sumk"
-    _ku_mg_manifest
+    _ku_mg_seal_export
     _ku_mg_kali_deploy "$tmp/kali.cfg" "$expk" "$sumk"
     _ku_mg_menu_done
 }
@@ -1615,7 +1619,7 @@ _ku_mg_stage_finalize() {
     cp -- "$tmp/grub.cfg.old" "$KU_MG_BACKUP/grub.cfg" || _ku_mg_backup_fail
     printf '%s\n' "$KU_DK_DEPLOY" > "$KU_MG_BACKUP/deploy" || _ku_mg_backup_fail
     _ku_mg_written grub.cfg "$sum"
-    _ku_mg_manifest
+    _ku_mg_seal_export
     _ku_mg_finalize_deploy "$tmp" "$expg" "$sum"
     ku_log info "migrate finalize: done; the backup is $KU_MG_BACKUPS/$KU_MG_STAMP"
 }
@@ -2619,6 +2623,24 @@ _ku_mg_backup_drop() {
         return 1
     fi
     KU_MG_BACKUP=""
+}
+
+# Seal the backup before an export, which writes nothing on the stick. A write to partition 1
+# leaves sealing to ku_deploy_files, which calls _ku_mg_seal once its checks passed: a stage the
+# writer stops (75 or 3) then leaves an unsealed backup, which the exit trap removes, instead of
+# one a later --rollback would undo although the stage wrote nothing.
+_ku_mg_seal_export() {
+    if [[ $KU_DK_DEPLOY == export ]]; then
+        _ku_mg_manifest
+    fi
+}
+
+# KU_DEPLOY_BEFORE_WRITE of ku_deploy_files: seal this run's backup when it has one that is not
+# sealed yet. A rollback, which makes no backup, passes through.
+_ku_mg_seal() {
+    if [[ -n $KU_MG_BACKUP ]] && (( ! KU_MG_SEALED )); then
+        _ku_mg_manifest
+    fi
 }
 
 # Write the MANIFEST of the backup directory: "SHA256  NAME" for each file the stage put in
