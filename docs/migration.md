@@ -191,8 +191,9 @@ removes an export it makes stale.
 
 ## Routine use afterwards
 
-Update as usual with `/boot` unlocked and mounted, `sudo apt full-upgrade`: nothing on the stick
-changes. [runbook.md](runbook.md#routine-use) covers routine use, `cleanup` and recovery.
+Update as usual with `/boot` unlocked and mounted, `sudo apt full-upgrade`: nothing on the
+stick's partition 1 changes, so there is nothing to copy or deploy.
+[runbook.md](runbook.md#routine-use) covers routine use, `cleanup` and recovery.
 
 ## Rolling back
 
