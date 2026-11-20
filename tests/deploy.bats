@@ -133,7 +133,7 @@ EOF
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$GRUB/grub.cfg.ku-20261110T120002Z.bak"
 }
 
-@test "A target that changed or appeared since the plan read it exits 75, others 3; nothing changes" {
+@test "A target changed or appeared since the plan read it exits 75, others 3; nothing changes" {
     # A run that plans anew can succeed, so the exit is 75, as for a change while a question
     # waits.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" "$(sha256 "$BATS_TEST_TMPDIR/kali.cfg")"

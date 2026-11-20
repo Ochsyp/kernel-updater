@@ -1643,7 +1643,7 @@ seen (quarantine_days 30)")" ]
     private_output
 }
 
-@test "An empty seen, as a crash right after its write leaves one, counts as none and is rewritten" {
+@test "An empty seen, as a crash right after its write leaves, counts as none and is rewritten" {
     local name
     name=9.0.4+kali-amd64.$(ago 400)
     quarantined 9.0.4+kali-amd64 "${name##*.}"

@@ -227,10 +227,10 @@ with the owner's original script.
   initrd their entries boot. `finalize`
   removes the legacy entries, sets `grub.cfg`'s entry in the stored baseline, as `menu` does,
   and names the files that still differ from it, which `kernel-updater baseline` records once
-  checked, or records the whole baseline when none is stored. A write of `menu`, `finalize` or a rollback
-  removes an export in `output_dir` that it makes stale. `--deploy` and `--output-dir` hold for
-  one run, and an export `--output-dir` takes elsewhere gets a warning, since `check` reads only
-  the configured `output_dir`.
+  checked, or records the whole baseline when none is stored. A write of `menu`, `finalize` or a
+  rollback removes an export in `output_dir` that it makes stale. `--deploy` and `--output-dir`
+  hold for one run, and an export `--output-dir` takes elsewhere gets a warning, since `check`
+  reads only the configured `output_dir`.
 - Backups of every `system`, `menu` and `finalize` run in `/var/backups/kernel-updater`, with a
   `MANIFEST` of SHA-256 sums, named by the UTC time of the run, or one second after the newest
   backup when the clock reads no later, so that the names keep the order of the runs, synced to
@@ -272,9 +272,9 @@ with the owner's original script.
   kernel or a kernel the links in `/boot` point at, and purges nothing while a reboot into a
   new kernel is pending. Held packages, debug builds, what is no versioned kernel package,
   metapackages included, and the config files of a kernel still installed through another
-  package, as `linux-image-V-unsigned`, stay, and the plan says why; an old kernel marked manual stays with
-  an `apt-mark auto` hint. Purges cannot be rolled back, so run it with `-n` first. A module
-  tree no package owns is removed when empty and otherwise moved to
+  package, as `linux-image-V-unsigned`, stay, and the plan says why; an old kernel marked manual
+  stays with an `apt-mark auto` hint. Purges cannot be rolled back, so run it with `-n` first. A
+  module tree no package owns is removed when empty and otherwise moved to
   `/var/lib/kernel-updater/quarantine`, where it can be moved back until it expires,
   `quarantine_days` after a later run first saw it there; an empty `seen` mark, as a crash can
   leave, counts as none and is written anew. It exits 75 while apt or dpkg holds
@@ -359,9 +359,10 @@ with the owner's original script.
 - `migrate` exits 75 instead of 3 when the kernels or their links changed while the question of
   its system stage waited, as `cleanup` does when the system changes while its question waits.
 - The safe writer exits 75 instead of 3 when a file on partition 1 changed since the plan read
-  it, or appeared where the plan read none, before it wrote anything, so that a `migrate` stage or rollback then exits 75, as
-  `cleanup` does when the system changes while its question waits; once it wrote an earlier
-  file of the same run, it still exits 4 and names the files written.
+  it, or appeared where the plan read none, before it wrote anything, so that a `migrate` stage
+  or rollback then exits 75, as `cleanup` does when the system changes while its question
+  waits; once it wrote an earlier file of the same run, it still exits 4 and names the files
+  written.
 
 ### Removed
 

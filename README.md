@@ -311,11 +311,12 @@ installed (3); and no interrupted dpkg run may wait for `dpkg --configure -a` (3
   `dpkg -l`), the images, binaries, modules, bases and headers of releases it does not keep;
   held ones, those of kept releases and those whose release is still installed through another
   package, as when `linux-image-V-unsigned` replaced `linux-image-V`, are skipped, and debug
-  builds and the headers and build tools an ABI's kernels share are only listed. Of what apt's autoremove names, as its
-  simulation of `apt-get autoremove --purge` shows, the versioned kernel packages of releases it
-  does not keep, shared headers and build tools included; held ones are skipped, and debug
-  builds and anything else, metapackages included, are only listed. apt never names an old
-  kernel marked manual, which the plan lists with the hint `apt-mark auto PACKAGE`.
+  builds and the headers and build tools an ABI's kernels share are only listed. Of what apt's
+  autoremove names, as its simulation of `apt-get autoremove --purge` shows, the versioned
+  kernel packages of releases it does not keep, shared headers and build tools included; held
+  ones are skipped, and debug builds and anything else, metapackages included, are only
+  listed. apt never names an old kernel marked manual, which the plan lists with the hint
+  `apt-mark auto PACKAGE`.
 - **Only the planned set.** A simulation of the purge, with the options of the real one, must
   remove exactly the planned packages and install or configure none. Otherwise it refuses with
   3 and names what apt would also remove, or would not, such as a metapackage or a DKMS package
