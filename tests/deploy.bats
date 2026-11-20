@@ -133,7 +133,7 @@ EOF
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$GRUB/grub.cfg.ku-20261110T120002Z.bak"
 }
 
-@test "A target that changed since the plan read it exits 75, other refusals 3; nothing changes" {
+@test "A target that changed or appeared since the plan read it exits 75, others 3; nothing changes" {
     # A run that plans anew can succeed, so the exit is 75, as for a change while a question
     # waits.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" "$(sha256 "$BATS_TEST_TMPDIR/kali.cfg")"
@@ -142,10 +142,11 @@ EOF
     [[ "$stderr" == *"nothing was changed"* ]]
     grub_unchanged
     [ -z "$(backups)" ]
-    # A plan that expected no file at all is refused.
+    # A file that appeared where the plan read none changed since the plan read it too.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" -
-    [ "$status" -eq 3 ]
+    [ "$status" -eq 75 ]
     [[ "$stderr" == *"refusing to write $REL: it exists, but the plan expected none;"* ]]
+    grub_unchanged
     # A plan without a SHA-256, and a path that leaves partition 1.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" "${OLD:0:63}"
     [ "$status" -eq 3 ]

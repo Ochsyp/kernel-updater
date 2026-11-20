@@ -88,12 +88,12 @@ messages to stderr.
 | 0 | Success |
 | 1 | Unexpected error |
 | 2 | Findings: `lint` found an error or a `check` item failed, or either warned with `--strict`; the postinst hook found a kernel that may not boot |
-| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 where the plan found none, reached through a symlink, or on a path other users can change, a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST`, or `cleanup` refused: a check before its plan failed, apt's simulation failed, would install or configure a package or would remove other packages than planned, `dpkg-query` failed before anything changed, or apt or apt-guard refused the purge before dpkg changed anything |
+| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 reached through a symlink, or on a path other users can change, a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST`, or `cleanup` refused: a check before its plan failed, apt's simulation failed, would install or configure a package or would remove other packages than planned, `dpkg-query` failed before anything changed, or apt or apt-guard refused the purge before dpkg changed anything |
 | 4 | A write failed. The message says what that left: nothing changed, the previous state put back, a backup to copy back or a file to remove by hand, the files written before it, or an `output_dir` that holds no complete export, so that the export must run again. For `cleanup`, a purge that stopped after dpkg began to change its database, a check of the links and kernels that fails after the purge, or a module tree or quarantine entry that could not be removed, moved or deleted: the message says what is done and what is left |
 | 10 | Declined, or no terminal to confirm on without `--yes` |
 | 64 | Usage error |
 | 66 | An input file cannot be read, `/boot` is not mounted for `migrate` or `cleanup` or the LUKS header of its container cannot be read, the stick's partition 1 cannot be found or read, or `migrate --rollback` finds no backup |
-| 75 | Busy: another run holds the lock, or, for `cleanup`, apt or dpkg holds its lock, named by PID and command; or the system changed while the question of `cleanup` or of `migrate`'s system stage waited, as when apt ran meanwhile, so that its plan no longer holds; or a file on partition 1 changed after the plan of a `migrate` stage or rollback read it and before the writer wrote anything. Nothing was changed: run it again once the other run is done |
+| 75 | Busy: another run holds the lock, or, for `cleanup`, apt or dpkg holds its lock, named by PID and command; or the system changed while the question of `cleanup` or of `migrate`'s system stage waited, as when apt ran meanwhile, so that its plan no longer holds; or a file on partition 1 changed, or appeared where there was none, after the plan of a `migrate` stage or rollback read it and before the writer wrote anything. Nothing was changed: run it again once the other run is done |
 | 77 | Not run as root |
 | 78 | Bad configuration, a stick other than the one `disk_ptuuid` and `p1_fs_uuid` name, or for `migrate` and `cleanup` a `/boot` or LUKS container other than the configuration names |
 | 128+N | Interrupted by signal N |
@@ -426,9 +426,9 @@ MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` 
   an export too: while a desktop has partition 1 mounted for its user there is none, and the
   tool asks you to unmount it there and run again.
 - **The safe writer** replaces one file at a time: it exits 75 when the file changed since the
-  plan read it, as a run that plans anew can then succeed, and refuses with exit 3 when a file
-  exists where the plan found none, a symlink lies on its way, or a user other than root could
-  change a directory on its path; copies it to `NAME.ku-<UTC stamp>.bak` beside it and keeps
+  plan read it, or exists where the plan found none, as a run that plans anew can then
+  succeed, and refuses with exit 3 when a symlink lies on its way, or a user other than root
+  could change a directory on its path; copies it to `NAME.ku-<UTC stamp>.bak` beside it and keeps
   that backup and the newest others, `backups_keep` in all, so that a clock that went back
   never costs the backup a restore needs; writes the new bytes, CRLF line endings and all, to
   a synced temporary file and puts that in the file's place without ever renaming over it,

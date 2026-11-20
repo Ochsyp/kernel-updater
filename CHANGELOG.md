@@ -357,7 +357,7 @@ with the owner's original script.
 - `migrate` exits 75 instead of 3 when the kernels or their links changed while the question of
   its system stage waited, as `cleanup` does when the system changes while its question waits.
 - The safe writer exits 75 instead of 3 when a file on partition 1 changed since the plan read
-  it, before it wrote anything, so that a `migrate` stage or rollback then exits 75, as
+  it, or appeared where the plan read none, before it wrote anything, so that a `migrate` stage or rollback then exits 75, as
   `cleanup` does when the system changes while its question waits; once it wrote an earlier
   file of the same run, it still exits 4 and names the files written.
 

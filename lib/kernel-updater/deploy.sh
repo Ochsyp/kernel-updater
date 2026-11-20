@@ -38,9 +38,9 @@ KU_DEPLOY_WINDOWS_DIR="BOOT:\\multibootusb\\grub\\"
 
 # Replace RELPATH under partition 1's ROOT with the bytes of the local file SOURCE, CRLF line
 # endings and all. EXPECTED is the SHA-256 the plan read from the target, or - for a target
-# that must not exist yet. In this order: exit 3, nothing changed, when the target exists
-# although the plan expected none, and re-hash it and exit 75, nothing changed, when it changed
-# since the plan read it, as a run that plans anew can then succeed; exit 3 when the target or
+# that must not exist yet. In this order: exit 75, nothing changed, when the target exists
+# although the plan expected none, or, re-hashed, changed since the plan read it, as a run that
+# plans anew can then succeed; exit 3 when the target or
 # a directory between ROOT and it is a symlink, or when a user other than root could change the
 # path to it (ku_p1_root_only), which KU_P1_DIR needs not pass, as it stands in for a private
 # mount; copy the target to
@@ -74,16 +74,16 @@ ku_deploy_write() {
     dir=${target%/*}
     name=${target##*/}
     # a. The target must hold what the plan read: nothing, or the bytes it hashed. A symlink
-    # is left to step b, and -f never lets a device or a pipe be read.
+    # is left to step b, and -f never lets a device or a pipe be read. Either way a mismatch is
+    # busy rather than refused: a run that plans anew from what the target holds now can
+    # succeed, as when the system changed while a question waited.
     if [[ $expected == - ]]; then
         if [[ -e $target || -L $target ]]; then
-            _ku_deploy_die "$KU_EX_REFUSED" 1 \
+            _ku_deploy_die "$KU_EX_BUSY" 1 \
                 "refusing to write $rel: it exists, but the plan expected none"
         fi
     elif [[ ! -L $target ]] && { [[ ! -f $target ]] || ! got=$(_ku_deploy_hash "$target") ||
         [[ $got != "$expected" ]]; }; then
-        # Busy rather than refused: a run that plans anew from what the target holds now can
-        # succeed, as when the system changed while a question waited.
         _ku_deploy_die "$KU_EX_BUSY" 1 \
             "refusing to write $rel: it changed since the plan read it"
     fi
