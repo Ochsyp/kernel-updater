@@ -4,7 +4,7 @@
 #
 # Runs install.sh into a KU_ROOT tree with stubs for id, flock and sync: what it installs and
 # with which modes, the manifest, updates, refusals of files in the way or changed since,
-# --uninstall, --dry-run and the root check.
+# --uninstall, which leaves cleanup's quarantine whole, --dry-run and the root check.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -230,6 +230,22 @@ EOF
     run_install --uninstall
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"kernel-updater is not installed"* ]]
+}
+
+@test "--uninstall leaves the quarantine whole, the empty directories in its trees included" {
+    local entry="$ROOT/var/lib/kernel-updater/quarantine/9.0.4+kali-amd64.20261101T101500Z"
+    run_install
+    mkdir -p "$entry/tree/kernel/drivers" "$entry/tree/updates"
+    printf 'path: /usr/lib/modules/9.0.4+kali-amd64\n' > "$entry/origin"
+    run_install --uninstall
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOT$MANIFEST" ]
+    [ ! -e "$ROOT/usr/local/bin/kernel-updater" ]
+    [ -f "$entry/origin" ]
+    [ -d "$entry/tree/kernel/drivers" ]
+    [ -d "$entry/tree/updates" ]
+    [[ "$stderr" == *"kernel-updater is uninstalled; /etc/kernel-updater.conf stays"* ]]
+    [[ "$stderr" == *"/var/lib/kernel-updater stays, with what kernel-updater keeps there"* ]]
 }
 
 @test "--dry-run changes nothing, when installing and when uninstalling" {

@@ -35,6 +35,8 @@ KU_SHAREDIR=${KU_SELF%/*}/../share/kernel-updater
 . "$KU_LIBDIR/baseline.sh"
 # shellcheck source=lib/kernel-updater/migrate.sh
 . "$KU_LIBDIR/migrate.sh"
+# shellcheck source=lib/kernel-updater/cleanup.sh
+. "$KU_LIBDIR/cleanup.sh"
 
 # Print the usage on stdout.
 ku_usage() {
@@ -54,6 +56,9 @@ Commands:
   migrate            move, once and as root, the Kali entries onto the links linux-base
                      keeps in /boot, in stages that back up what they change
                      (kernel-updater migrate --help lists the stages)
+  cleanup            purge, as root and after one question, what old kernels leave behind,
+                     never the running kernel or one the links in /boot point at
+                     (kernel-updater cleanup --help lists its options)
   lint FILE...       check GRUB configs for errors GRUB reports only at boot
                      (kernel-updater lint --help lists its options)
   hook NAME ARGS...  run by the kernel and apt hooks install.sh installs, not by hand
@@ -116,7 +121,7 @@ ku_main() {
     case $cmd in
         help) ku_usage; exit 0 ;;
         version) ku_print_version; exit 0 ;;
-        baseline | check | hook | lint | migrate) ;;
+        baseline | check | cleanup | hook | lint | migrate) ;;
         *) ku_usage_error "unknown command '$cmd'" ;;
     esac
     ku_install_traps

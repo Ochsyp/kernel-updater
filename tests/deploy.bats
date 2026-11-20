@@ -133,17 +133,20 @@ EOF
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$GRUB/grub.cfg.ku-20261110T120002Z.bak"
 }
 
-@test "A target that changed since the plan read it is refused with exit 3, changing nothing" {
+@test "A target changed or appeared since the plan read it exits 75, others 3; nothing changes" {
+    # A run that plans anew can succeed, so the exit is 75, as for a change while a question
+    # waits.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" "$(sha256 "$BATS_TEST_TMPDIR/kali.cfg")"
-    [ "$status" -eq 3 ]
+    [ "$status" -eq 75 ]
     [[ "$stderr" == *"error: refusing to write $REL: it changed since the plan read it;"* ]]
     [[ "$stderr" == *"nothing was changed"* ]]
     grub_unchanged
     [ -z "$(backups)" ]
-    # A plan that expected no file at all.
+    # A file that appeared where the plan read none changed since the plan read it too.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" -
-    [ "$status" -eq 3 ]
+    [ "$status" -eq 75 ]
     [[ "$stderr" == *"refusing to write $REL: it exists, but the plan expected none;"* ]]
+    grub_unchanged
     # A plan without a SHA-256, and a path that leaves partition 1.
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" "${OLD:0:63}"
     [ "$status" -eq 3 ]
@@ -424,10 +427,10 @@ EOF
     [[ "$stderr" == *"info: wrote multibootusb/grub/kali.cfg"*"info: wrote $REL"* ]]
     rm "$GRUB/kali.cfg" "$GRUB"/grub.cfg.ku-*.bak
     cp "$BATS_TEST_TMPDIR/old.cfg" "$GRUB/grub.cfg"
-    # The second file changed since the plan read it, or its source cannot be read: refused
-    # before the first is written, so nothing changed.
+    # The second file changed since the plan read it (75), or its source cannot be read (66):
+    # refused before the first is written, so nothing changed.
     run_ku_lib "$files" "$P1" "${kali[@]}" "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "${OLD//?/0}"
-    [ "$status" -eq 3 ]
+    [ "$status" -eq 75 ]
     [[ "$stderr" == *"error: refusing to write $REL: it changed since the plan read it; nothing"* ]]
     run_ku_lib "$files" "$P1" "${kali[@]}" "$REL" "$BATS_TEST_TMPDIR/none.cfg" "$OLD"
     [ "$status" -eq 66 ]
@@ -475,6 +478,24 @@ EOF
     [[ "$stderr" == *"exists already, so try again in a second; it was not changed, but \
 multibootusb/grub/kali.cfg was written before it"* ]]
     grub_unchanged
+    # So does a grub.cfg that changes while kali.cfg is written: 4, not 75, as the stick changed.
+    rm "$GRUB/kali.cfg"
+    mkstub mv <<'EOF'
+"$REAL_MV" "$@" || exit
+target=${*: -1}
+[[ $target != */kali.cfg ]] || printf 'x' >> "${target%/*}/grub.cfg"
+EOF
+    # shellcheck disable=SC2016 # the code expands its own arguments
+    run_ku_lib 'ku_deploy_files "$@"' "$P1" multibootusb/grub/kali.cfg \
+        "$BATS_TEST_TMPDIR/kali.cfg" - "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "$OLD"
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"error: refusing to write $REL: it changed since the plan read it; it was \
+not changed, but multibootusb/grub/kali.cfg was written before it"* ]]
+    cmp "$BATS_TEST_TMPDIR/kali.cfg" "$GRUB/kali.cfg"
+    cmp <(cat "$BATS_TEST_TMPDIR/old.cfg"; printf 'x') "$GRUB/grub.cfg"
+    # No backup of grub.cfg was made for it, and no temporary file is left.
+    [ "$(backups)" = "$(printf 'grub.cfg.ku-%s.bak\n' 20261110T120001Z 20261110T120002Z)" ]
+    [ -z "$(find "$P1" -name '.*.ku-*')" ]
 }
 
 @test "A source or an export file that is a symlink exits 66 before anything changes" {

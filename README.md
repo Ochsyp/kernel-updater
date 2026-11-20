@@ -2,8 +2,8 @@
 
 Keeps the Kali entries of a multiboot USB stick bootable across kernel updates.
 
-> **Status:** under redesign, one phase per pull request. [CONTRIBUTING.md](CONTRIBUTING.md)
-> describes the workflow, and [CHANGELOG.md](CHANGELOG.md) lists what changed.
+[docs/runbook.md](docs/runbook.md) covers routine use and recovery, [CHANGELOG.md](CHANGELOG.md)
+lists what changed, and [CONTRIBUTING.md](CONTRIBUTING.md) describes how changes are made.
 
 ## The setup it serves
 
@@ -13,53 +13,38 @@ on the same stick, with an encrypted `/boot` that GRUB unlocks and an encrypted 
 it. The same install also runs as a virtual machine straight from the stick, booting through
 the same menu.
 
-The Kali entries name a kernel version (`/vmlinuz-<version>`, `/initrd.img-<version>`). Once
-apt installs a new kernel and removes the old one, they point at files that no longer exist.
+Until `migrate` has run, the Kali entries name a kernel version (`/vmlinuz-<version>`,
+`/initrd.img-<version>`). Once apt installs a new kernel and removes the old one, they point at
+files that no longer exist. That is the problem `migrate` solves.
 
-## Current state: `update_kernel.sh` (legacy)
-
-`update_kernel.sh` is the script this project starts from. It stays for reference while the
-phases below replace it, and the last phase removes it. **Do not run it.** It:
-
-- rewrites every kernel version in the given `grub.cfg` to the running kernel, so the menu
-  never moves to a newly installed kernel and has no entry for the previous one;
-- purges kernel packages with `apt-get purge -y` and runs a system-wide
-  `apt-get autoremove -y`, with no dry run and no confirmation;
-- deletes the `/lib/modules` directory of a kernel it wrongly takes for removed, a held one
-  for example;
-- rebuilds every initramfs, the known-good fallback's included.
-
-For reference, it is called as:
-
-```text
-sudo ./update_kernel.sh GRUB_CFG
-```
-
-## The redesign
+## How it works
 
 Debian's own tooling can keep the menu stable. With `link_in_boot = yes` in
 `/etc/kernel-img.conf`, every kernel install and removal updates relative links in `/boot`:
 `vmlinuz` and `initrd.img` point at the newest kernel, `vmlinuz.old` and `initrd.img.old` at
-the previous one. The redesign moves the Kali entries into a file of their own that boots
-those links, writes it to the stick once, and leaves kernel housekeeping to apt from then on.
-Guard hooks refuse a kernel install while the encrypted `/boot` is not mounted, and a `check`
-command reports the state of the stick.
+the previous one. `migrate` moves the Kali entries into a file of their own that boots those
+links and changes the stick's menu once, through a safe writer that keeps backups, or exports
+the files for Windows to copy. From then on apt does the kernel housekeeping, and a kernel
+install or removal changes nothing on the stick's partition 1.
+[docs/migration.md](docs/migration.md) walks through the switch.
 
-The phases, one pull request each:
+The rest of the tool:
 
-1. Repository scaffolding and the imported script
-2. Command-line framework, safety rails and an offline `lint` for GRUB configs
-3. A read-only `check` of the system and the stick, with a Kali container in CI
-4. Guard hooks for kernel installs, and an installer
-5. Finding and safely writing the stick's boot partition, an export mode, and a boot-file
-   tripwire
-6. `migrate`: the one-time switch to the link-based menu, with rollback
-7. `cleanup` of leftover kernel packages and module trees, removal of the legacy script, and
-   release 1.0.0
+- Once `boot_fs_uuid` is set, guard hooks refuse a kernel install or removal while the
+  encrypted `/boot` is not mounted, and apt-guard refuses such an apt run before dpkg starts.
+- `check` reports the state of the system and the stick. Its tripwire compares the stick's
+  boot code with the baseline that `baseline` records.
+- `lint` finds errors in GRUB configs that GRUB reports only at boot.
+- `cleanup` purges the old kernels apt's autoremove names and the config files removed kernels
+  left, and removes or quarantines the module trees no package owns. See [cleanup](#cleanup).
+
+The commands that change the system, `baseline`, `migrate` and `cleanup`, run as root under the
+tool's lock, print a plan and ask before they carry it out, and change nothing with
+`--dry-run`.
 
 ## Usage
 
-The redesigned tool is `bin/kernel-updater`. Run it from a checkout, or install it, together
+The tool is `bin/kernel-updater`. Run it from a checkout, or install it, together
 with its hooks, with `install.sh` (see [Installing](#installing)). It needs Bash 4.4 or later,
 GNU coreutils and awk; `grub-script-check` (Debian package `grub-common`) adds a syntax check
 to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk` and `blkid`
@@ -69,7 +54,10 @@ has. `check` and `baseline` mount the stick's NTFS partition read-only with the 
 driver, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it, which `migrate` does, needs
 `ntfs3` and `ntfs-3g.probe`, from the same package, and `systemd-detect-virt` tells the
 writer whether it runs in a VM. `migrate` also runs `linux-update-symlinks` (linux-base),
-`debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs.
+`debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs. `cleanup`
+runs `apt-get` and `apt-mark` (apt), `dpkg-query`, and `dkms` when it is installed; it moves a
+module tree into its quarantine only with GNU `mv` from coreutils 9.2 on, whose `--no-copy`
+keeps a move from turning into a copy, and with an older `mv` only lists such a tree.
 
 ```text
 kernel-updater [OPTIONS] COMMAND [ARGS]
@@ -80,6 +68,7 @@ kernel-updater [OPTIONS] COMMAND [ARGS]
 | `check` | Reports, as root and without changing anything, whether the system keeps the Kali entries bootable: `/boot`, its links and LUKS container, the kernel packages and their initrds, fstab, crypttab and grub-pc, then the stick's partition 1. See [check](#check) |
 | `baseline` | Records, as root, the SHA-256 of the stick's boot code, which check's tripwire compares with; `--show` compares without recording. See [baseline](#baseline) |
 | `migrate` | Moves, once and as root, the Kali entries onto the links linux-base keeps in `/boot`, in stages that each back up what they change; `--rollback` undoes them. See [migrate](#migrate) and [docs/migration.md](docs/migration.md) |
+| `cleanup` | Purges, as root and after one question, what old kernels leave behind, never the running kernel or one the links in `/boot` point at: in one `apt-get purge`, the config files removed kernels left and the old kernels apt's autoremove names; then removes or moves into a quarantine the module trees no package owns, and deletes quarantined trees once they expire. See [cleanup](#cleanup) and [docs/runbook.md](docs/runbook.md) |
 | `lint FILE...` | Checks GRUB configs for errors GRUB reports only at boot: syntax errors, unknown commands and modules, malformed or misused LUKS and filesystem UUIDs, kernel parameters that do nothing, drives named as `(hdN,...)`, and encrypted entries between MultiBootUSB's `#start` and `#end` markers. Findings name the kind of identifier, never its value |
 | `hook NAME ARGS...` | Runs a hook for the files `install.sh` puts in `/etc/kernel` and `/etc/apt`, not by hand. See [Hooks](#hooks) |
 | `help`, `version` | Print the usage or the version |
@@ -99,14 +88,14 @@ messages to stderr.
 | 0 | Success |
 | 1 | Unexpected error |
 | 2 | Findings: `lint` found an error or a `check` item failed, or either warned with `--strict`; the postinst hook found a kernel that may not boot |
-| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 changed since it was read, reached through a symlink, or on a path other users can change, or a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST` |
-| 4 | A write failed. The message says what that left: nothing changed, the previous state put back, a backup to copy back or a file to remove by hand, the files written before it, or an `output_dir` that holds no complete export, so that the export must run again |
+| 3 | Refused before a change: a check failed, apt-guard refused an apt run, a guard hook refused a kernel install, removal or configure (by the time a configure is refused, the kernel's postinst has moved the links), the writer found a file on partition 1 reached through a symlink, or on a path other users can change, a `migrate` stage refused, needs another stage first, or found a backup that does not match its `MANIFEST`, or `cleanup` refused: a check before its plan failed, apt's simulation failed, would install or configure a package or would remove other packages than planned, `dpkg-query` failed before anything changed, or apt or apt-guard refused the purge before dpkg changed anything |
+| 4 | A write failed. The message says what that left: nothing changed, the previous state put back, a backup to copy back or a file to remove by hand, the files written before it, or an `output_dir` that holds no complete export, so that the export must run again. For `cleanup`, a purge that stopped after dpkg began to change its database, a check of the links and kernels that fails after the purge, or a module tree or quarantine entry that could not be removed, moved or deleted: the message says what is done and what is left |
 | 10 | Declined, or no terminal to confirm on without `--yes` |
 | 64 | Usage error |
-| 66 | An input file cannot be read, `/boot` is not mounted for `migrate`, the stick's partition 1 cannot be found or read, or `migrate --rollback` finds no backup |
-| 75 | Busy: another run holds the lock |
+| 66 | An input file cannot be read, `/boot` is not mounted for `migrate` or `cleanup` or the LUKS header of its container cannot be read, the stick's partition 1 cannot be found or read, or `migrate --rollback` finds no backup |
+| 75 | Busy: another run holds the lock, or, for `cleanup`, apt or dpkg holds its lock, named by PID and command; or the system changed while the question of `cleanup` or of `migrate`'s system stage waited, as when apt ran meanwhile, so that its plan no longer holds; or a file on partition 1 changed, or appeared where there was none, after the plan of a `migrate` stage or rollback read it and before the writer wrote anything. Nothing was changed: run it again once the other run is done |
 | 77 | Not run as root |
-| 78 | Bad configuration, a stick other than the one `disk_ptuuid` and `p1_fs_uuid` name, or for `migrate` a `/boot` or LUKS container other than the configuration names |
+| 78 | Bad configuration, a stick other than the one `disk_ptuuid` and `p1_fs_uuid` name, or for `migrate` and `cleanup` a `/boot` or LUKS container other than the configuration names |
 | 128+N | Interrupted by signal N |
 
 ### Installing
@@ -125,8 +114,10 @@ file, the manifest lists both its old and its new contents, so a run cut short c
 again or undone with `--uninstall`. It refuses with exit 3, before changing anything, when a
 file in its way was not installed by it or has changed since; move that file away and run it
 again. `--dry-run` (`-n`) prints what would change, and
-`--uninstall` removes every file the manifest lists, the APT configuration first, and leaves
-`/etc/kernel-updater.conf` alone. It needs root (exit 77 otherwise) and takes the tool's lock
+`--uninstall` removes every file the manifest lists, the APT configuration first. It leaves
+alone `/etc/kernel-updater.conf`, `migrate`'s backups in `/var/backups/kernel-updater` and what
+`/var/lib/kernel-updater` holds besides the manifest: the baseline and `cleanup`'s quarantine,
+whose module trees stay whole. It needs root (exit 77 otherwise) and takes the tool's lock
 (exit 75 while another run holds it).
 
 The hooks only warn until `boot_fs_uuid` is set, and `install.sh` says so while it is not. To
@@ -234,7 +225,7 @@ kernel-updater migrate [--stage STAGE] [--deploy MODE] [--output-dir DIR] [-n] [
 kernel-updater migrate --rollback [STAMP] [-n] [-y]
 ```
 
-`migrate` makes the one-time switch the redesign is about: afterwards a kernel install or
+`migrate` makes the one-time switch to the link-based menu: afterwards a kernel install or
 removal changes nothing on partition 1, since the Kali entries boot `/vmlinuz` and
 `/initrd.img`, which linux-base points at the newest kernel, and `/vmlinuz.old` and
 `/initrd.img.old`, at the previous one. [docs/migration.md](docs/migration.md) walks through
@@ -249,7 +240,7 @@ file as `NAME=<value>`.
 | Stage | Does |
 |---|---|
 | `detect` | Appends to `/etc/kernel-updater.conf`, under a comment line, what it lacks of `boot_fs_uuid`, `boot_luks_uuid`, `disk_ptuuid`, `p1_fs_uuid` and `root_device`, read from the mount of `/boot`, its LUKS container, the stick found from `/boot` and the running kernel's command line, and `grub_floor` from the stick's GRUB when the file sets none. A key the file sets to another value exits 78, naming the key. The file is written through a temporary file renamed over it and keeps every other line. Setting `boot_fs_uuid` arms the hooks |
-| `system` | Needs the identity in place (78 otherwise) and refuses (3) while check's `boot-luks`, `boot-ext` or `kernels` item fails, no installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check), only one would while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links, or one of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`, sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line, has `linux-update-symlinks` point the links in `/boot` at the newest kernel and the `.old` ones at the previous one (the running kernel when it is an older one), moves the old links out of `/` into the backup, asks on its own whether to empty grub-pc's install devices, and exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. When the kernels or the links change while its question waits, as when apt installs a kernel meanwhile, it refuses (3) before changing anything, since its plan no longer holds |
+| `system` | Needs the identity in place (78 otherwise) and refuses (3) while check's `boot-luks`, `boot-ext` or `kernels` item fails, no installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check), only one would while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links, or one of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`, sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line, has `linux-update-symlinks` point the links in `/boot` at the newest kernel and the `.old` ones at the previous one (the running kernel when it is an older one), moves the old links out of `/` into the backup, asks on its own whether to empty grub-pc's install devices, and exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. When the kernels or the links change while its question waits, as when apt installs a kernel meanwhile, it exits 75 before changing anything, since its plan no longer holds; run it again once apt is done |
 | `menu` | Needs `system` done, `grub-script-check` and a partition 1 it may reach (66). It finds the one top-level submenu of `grub.cfg` whose quoted title holds Kali (3 for none, several, one between MultiBootUSB's `#start` and `#end` markers, or one that shares a line with other commands), takes each variant's kernel parameters from its entries (dropping `root=`, `cryptdevice=`, `BOOT_IMAGE=` and `initrd=`, turning `noswap` into `systemd.swap=0` and overlayroot's `resurce=` into `recurse=`), renders `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`, and replaces the submenu in `grub.cfg` with a block that sources `kali.cfg`, the submenu following as "... (legacy entries)". Every byte outside the submenu must come through (3 otherwise), both files must pass `grub-script-check` and `kali.cfg` `lint` with the stick's own command and module lists, or GRUB 2.02's when those cannot be read; then it backs up both, writes `kali.cfg` before `grub.cfg` with the safe writer and updates their baseline entries, or exports both. A file that differed from a stored baseline before the write keeps its old entry, so that check's tripwire keeps reporting a change made outside the tool, as from Windows, until `kernel-updater baseline` records it; the plan and a warning name it. Run again while the legacy entries remain, it leaves `grub.cfg` as it is and writes `kali.cfg` alone anew from them when it is missing or differs, as after `menu_variants` changed, with a backup of its own |
 | `finalize` | Needs `menu` done. Removes the legacy submenu from `grub.cfg` and nothing else, after a question that asks for the boot tests first, and writes it or exports it. After a write it sets `grub.cfg`'s entry in the stored baseline, unless `grub.cfg` differed from it before, and names, in a warning, the files that still differ from it, which `kernel-updater baseline` then shows and records once checked; it records the whole baseline only when none is stored. A rollback that writes `grub.cfg` or `kali.cfg` treats their entries as `menu` does |
 | `all` | The default: `detect`, `system` and `menu` in turn. A dry run stops after the first stage that would change something, as the later plans build on it. `finalize` never runs with them |
@@ -280,9 +271,118 @@ entries boot, and that of a `system` run whose `kernel-img.conf` put back would 
 from keeping the links in `/boot` refuses while partition 1's `grub.cfg` still sources
 `kali.cfg`, as before Windows copied the `grub.cfg` a rollback of `menu` exported.
 
+### cleanup
+
+```text
+kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules] [-n] [-y] [--porcelain]
+```
+
+`cleanup` purges what old kernels leave behind, in one `apt-get purge` run after one question:
+the config files of kernel packages that were removed but not purged, and the old kernels apt's
+autoremove names. Then it removes or moves aside the module trees no package owns, and deletes
+the quarantined trees that expired. Purged packages cannot be rolled back, so read the plan with
+`-n` first. Run it once `migrate --stage finalize` is done: until then the legacy entries, and a
+rollback of the menu stage, boot kernels by their versions. [docs/runbook.md](docs/runbook.md)
+says when to run it and what to do when it refuses.
+
+`--no-rc` leaves the config files of removed kernels alone, `--no-autoremove` the old kernels
+apt's autoremove names, and `--no-modules` the module trees and the quarantine. `-n` prints the
+plan and changes nothing, not even a quarantine entry's `seen`, and `-y` answers the question.
+
+It runs as root (77) under the tool's lock (75), a dry run too, and first checks that it may
+run: `boot_fs_uuid` and `boot_luks_uuid` must be set (3 otherwise, naming
+`migrate --stage detect`); `/boot` must be mounted with a LUKS header that can be read (66),
+and be the filesystem and container they name (78); `apt-get`, `apt-mark` and `dpkg-query` must
+be installed (3); neither apt nor dpkg may hold its lock (75, naming the process by its PID and
+command, which it finds in `/proc/locks`, since apt and dpkg lock with `fcntl`, which `flock`
+cannot test); `/etc/kernel-img.conf` must have linux-base keep the links in `/boot`, relative
+and reaching the kernels' files (3, naming `migrate --stage system`); check's `kernels` item
+must pass, so that no kernel package is stuck between states and the running kernel is
+installed (3); and no interrupted dpkg run may wait for `dpkg --configure -a` (3).
+
+- **What it keeps.** The running kernel's release and the releases the four links in `/boot`
+  point at: no package named for them is purged and no module tree of theirs is touched,
+  whatever apt says. Of what apt's autoremove names, neither is a package that shares its
+  version with an installed package of theirs, as the headers the kernels of one ABI share do.
+  While a reboot is pending, as after
+  a kernel install, when the kernel `/boot/vmlinuz` points at is not the one running, it purges
+  nothing and says to reboot first; the module trees and the quarantine are still looked after.
+- **What it purges.** Of the kernel packages removed with their config files left (`rc` in
+  `dpkg -l`), the images, binaries, modules, bases and headers of releases it does not keep;
+  held ones, those of kept releases and those whose release is still installed through another
+  package, as when `linux-image-V-unsigned` replaced `linux-image-V`, are skipped, and debug
+  builds and the headers and build tools an ABI's kernels share are only listed. Of what apt's
+  autoremove names, as its simulation of `apt-get autoremove --purge` shows, the versioned
+  kernel packages of releases it does not keep, shared headers and build tools included; held
+  ones are skipped, and debug builds and anything else, metapackages included, are only
+  listed. apt never names an old kernel marked manual, which the plan lists with the hint
+  `apt-mark auto PACKAGE`.
+- **Only the planned set.** A simulation of the purge, with the options of the real one, must
+  remove exactly the planned packages and install or configure none. Otherwise it refuses with
+  3 and names what apt would also remove, or would not, such as a metapackage or a DKMS package
+  that depends on an old kernel's headers. After the question it plans and simulates again and
+  checks the locks, dpkg's status, apt's auto marks and the links anew: when any of them
+  changed, as when apt ran meanwhile, it exits 75 and changes nothing. The purge runs as
+  `apt-get -y -q -o DPkg::Lock::Timeout=0 -o APT::Get::AutomaticRemove=false
+  -o APT::Get::AutomaticRemove::Kernels=false purge PACKAGE...`, with apt's output on stderr,
+  and the tools cleanup runs inherit no `DPKG_ROOT`, `DPKG_ADMINDIR`, `DPKG_FORCE`,
+  `APT_CONFIG`, `DPKG_FRONTEND_LOCKED` or `SOURCE_DATE_EPOCH`. It runs no `apt-get autoremove`,
+  force option, `dkms remove`, `update-initramfs` or `update-grub` of its own; the purged
+  packages' own scripts run as in any apt run.
+- **A purge that fails** exits 4 once dpkg began to change its database, naming
+  `dpkg --configure -a` and `kernel-updater check`; 75 while apt or dpkg holds its lock; and 3
+  otherwise, as when apt-guard refused it. One that a signal cuts short, as Ctrl-C or a closed
+  terminal does, says "the purge was cut short after dpkg began to change its database: run
+  'dpkg --configure -a', then 'kernel-updater check'", or that nothing was purged, and exits
+  128+N. After the purge, check's `boot-links` and `kernels` items must pass, or it exits 4 and
+  leaves the module trees alone.
+- **Module trees.** A tree in `/usr/lib/modules`, and in `/lib/modules` when `/usr` is not
+  merged, that belongs to no installed kernel stays, and the plan says why, while `dpkg-query -S`
+  finds a package that owns it or files in it under either path, dpkg lists a package named for
+  its release in any state but not installed, its release is kept, `/boot` holds a file of that
+  release, it holds `.fresh-install`, or `dkms status` lists modules for it, for which the plan
+  names the `dkms remove` command. Any other tree is removed with `rmdir` when it is empty, and
+  otherwise moved into the quarantine. The tree of a release this run purges packages of waits
+  for the next run. Right before it removes or moves a tree, cleanup checks the locks and each
+  reason again, and leaves the tree, with a warning, when one holds now.
+- **The quarantine.** A tree moves to `/var/lib/kernel-updater/quarantine/RELEASE.STAMP/tree`,
+  `STAMP` being the UTC time as `YYYYmmddTHHMMSSZ`, in one rename with `mv --no-copy -T`,
+  beside an `origin` file written first, which names the path it came from, the release, the
+  stamp, why it moved, the SHA-256 of dpkg's status file and the tool's version. The quarantine
+  and each entry are directories of root's with mode 0700. A tree is only listed, so that no
+  tree is ever copied, when it lies on another filesystem than the quarantine, when `mv` is
+  older than coreutils 9.2, or when a symlink leads to the quarantine, it is no directory of
+  root's with mode 0700, or a user other than root can change the directory that holds it.
+  `sudo mv -T ENTRY/tree PATH`, `PATH` being the path `origin` names, moves a tree back while
+  nothing is there; one that no package owns then goes into the quarantine again on the next
+  run. [docs/runbook.md](docs/runbook.md) has the steps.
+- **Expiry.** The first run that finds an entry, unless it is a dry run, writes its own time
+  into a `seen` file there. Once more than `quarantine_days` whole days, 30 by default, have
+  passed since the newer of the entry's stamp and its `seen`, a run deletes it after the
+  question: its tree with `rm -r --one-file-system`, then `origin` and `seen`, then the entry
+  with `rmdir`, skipping a part it lacks. So no entry expires in the run that made it or in the
+  first run that finds it, and none expires while the clock reads earlier than any entry was
+  made or seen, which the run warns about; the plan shows each entry's age. An entry of another
+  name, kind, owner or filesystem, or one that holds anything else, is only listed, and so is
+  the whole quarantine when a symlink leads to it or it is no directory of root's with mode
+  0700. `quarantine_days = 0` keeps every entry. Expiry is the only step that deletes a module
+  tree.
+- **The plan** goes to stderr before the question, whatever the verbosity: the releases kept,
+  then each package, module tree and quarantine entry with what happens to it and why, then
+  `sync`. With `--porcelain` its records also go to stdout as
+  `STEP<TAB>ACTION<TAB>OBJECT<TAB>DETAIL` lines, `STEP` being `protect`, `rc`, `autoremove`,
+  `modules` or `expire` and `ACTION` `keep`, `purge`, `list`, `skip`, `rmdir`, `quarantine` or
+  `delete`, but only once the run ends with 0, so that a run that fails, is declined or is cut
+  short leaves stdout empty.
+
+A step that stops partway exits 4 and says what is done and what is left; a re-check that keeps
+a planned tree or entry only warns, and the run exits 0. `sync` runs before the last line, which
+says what the run did, and on any other exit once the run began to change the system. Messages
+and records name packages, releases and paths, never a disk identifier.
+
 ### Partition 1
 
-Phase 5 finds and reaches the stick's partition 1, the NTFS partition labelled BOOT that holds
+The tool finds and reaches the stick's partition 1, the NTFS partition labelled BOOT that holds
 MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` writes it.
 
 - **Finding it.** The tool never trusts a `/dev/sdX` or `/dev/disk/by-id` name, which change
@@ -328,9 +428,10 @@ MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` 
   partition 1 to build the new files comes only from a root no user but root can change, for
   an export too: while a desktop has partition 1 mounted for its user there is none, and the
   tool asks you to unmount it there and run again.
-- **The safe writer** replaces one file at a time: it refuses with exit 3 when the file
-  changed since the plan read it, a symlink lies on its way, or a user other than root could
-  change a directory on its path; copies it to `NAME.ku-<UTC stamp>.bak` beside it and keeps
+- **The safe writer** replaces one file at a time: it exits 75 when the file changed since the
+  plan read it, or exists where the plan found none, as a run that plans anew can then
+  succeed, and refuses with exit 3 when a symlink lies on its way, or a user other than root
+  could change a directory on its path; copies it to `NAME.ku-<UTC stamp>.bak` beside it and keeps
   that backup and the newest others, `backups_keep` in all, so that a clock that went back
   never costs the backup a restore needs; writes the new bytes, CRLF line endings and all, to
   a synced temporary file and puts that in the file's place without ever renaming over it,
@@ -348,9 +449,10 @@ MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` 
   leaves the new file in place and says that the old one waits beside it under its aside
   name. When moving it back fails, the message names the backup to copy by hand, and the old
   file waits beside it under its aside name. Given several files, it runs the checks of every
-  file before it writes the first, so that a file that changed, a symlink or a path other
-  users can change refuses before anything is written; a backup name taken within the same
-  second shows only when its file's turn comes, and a later failure names the files it wrote.
+  file before it writes the first, so that a file that changed (75), a symlink or a path other
+  users can change (3) stops it before anything is written; a backup name taken within the same
+  second shows only when its file's turn comes, and a later failure, a file that changed
+  meanwhile included, exits 4 and names the files it wrote.
   `migrate` reads what it builds on with `ku_deploy_read`, which follows no symlink either,
   since one on partition 1 could lead root to a file such as the LUKS key, and records in the
   tripwire's baseline just the files it wrote, with `ku_baseline_update`.
@@ -418,6 +520,7 @@ file must be owned by root and not writable by group or others. `examples/kernel
 | `root_device` | What the entries of `kali.cfg` pass the kernel as `root=`: an absolute device path, such as `/dev/mapper/kali--vg-root`, or `UUID=` and a UUID. `migrate --stage detect` sets it from the running kernel's command line |
 | `menu_variants` | The entries `kali.cfg` gets, comma-separated, in order: `default`, which comes first and must be there, then any of `failsafe`, `live` and `forensic`; `default,failsafe` by default. `live` and `forensic` boot through overlayroot, so the menu stage refuses them while the initrd `/boot/initrd.img` points at lacks it, or the one `/boot/initrd.img.old` points at when `previous_variants` holds them |
 | `previous_variants` | The variants that also get an entry for the previous kernel, which boots `/vmlinuz.old` and `/initrd.img.old`: a comma-separated part of `menu_variants`; `default,failsafe` by default, of which a variant `menu_variants` lacks is left out unless this key is set |
+| `quarantine_days` | How many whole days a module tree `cleanup` moved into its quarantine stays there, counted from the later of the move and the first `cleanup` run after it that saw the tree there: 0 to 999, without a leading zero, 30 by default. A `cleanup` run after that deletes it, unless the clock reads earlier than an entry there was moved or seen. 0 keeps every tree until you delete it. See [cleanup](#cleanup) |
 
 The UUIDs of `/boot` are optional, are written in the 8-4-4-4-12 hex form in either case, and
 are kept lower case. Paths lose their trailing slashes, and lists of variants the blanks
@@ -427,8 +530,8 @@ later stages run.
 
 ## Examples
 
-`examples/grub.cfg` is a synthetic MultiBootUSB config with the versioned Kali entries the
-legacy script edits. Every identifier in it is made up and starts with `5ca1ab1e`. Keep real
+`examples/grub.cfg` is a synthetic MultiBootUSB config with versioned Kali entries of the kind
+`migrate` replaces. Every identifier in it is made up and starts with `5ca1ab1e`. Keep real
 configs out of the repository: `.gitignore` excludes a `grub.cfg` in the repository root,
 any `*.real.cfg` and `*.bak` copies.
 
@@ -472,14 +575,29 @@ bats tests/
   bootable kernel beside another image, the order of its `linux-update-symlinks` calls, its edit
   of `kernel-img.conf` and a write of it that fails, the links left in `/`, grub-pc's question,
   results that fail its check, links kept on another kernel that boots and a kernel install
-  while it asks; menu and finalize written and exported, their refusals, the stick's own GRUB
-  lists, the parameters a plan hides, the initrds `live` needs, `kali.cfg` written anew, the
-  export a write makes stale, the baseline finalize leaves to `baseline`, and the baseline
-  entries every write keeps for files changed outside the tool; byte-exact
+  while it asks; menu and finalize written and exported, their refusals, a `grub.cfg` that
+  changes while menu asks, the stick's own GRUB lists, the parameters a plan hides, the initrds
+  `live` needs, `kali.cfg` written anew, the export a write makes stale, the baseline finalize
+  leaves to `baseline`, and the baseline entries every write keeps for files changed outside
+  the tool; byte-exact
   rollbacks, written and exported, and their refusals: a backup that does not match its
   `MANIFEST`, a menu whose kernels are gone, and a stick that still sources `kali.cfg`, and the
   changes to `grub.cfg` a rollback drops; backups named in the order of the runs, removed while
   unfinished and passed over without a `MANIFEST`; and the exit codes.
+- `cleanup.bats` runs `cleanup` on a `KU_ROOT` tree of a migrated system with stub tools, its
+  `apt-get` answering the simulations and logging every call: the checks before the plan, apt's
+  and dpkg's locks as `/proc/locks` under `KU_ROOT` shows them, the releases it keeps and a
+  pending reboot;
+  what the purge of the config files removed kernels left and that of the old kernels apt's
+  autoremove names take, keep and only list, kernels marked manual, the one purge with its exact
+  options, a simulation that differs from the plan, changes while the question waits, a purge
+  that fails or that a signal cuts short, and the check after it; each reason that keeps a
+  module tree, an owner each of `dpkg-query -S`'s four patterns finds alone, an empty tree
+  removed with `rmdir` and another moved into the quarantine, a kill before the move, trees
+  that are only listed, and merged and separate modules directories; the quarantine's `seen`,
+  expiry and its order, `quarantine_days`, a clock that is behind and the entries that are only
+  listed; the dry run, the question, the records `--porcelain` prints, and the tools'
+  environment.
 - `KU_AWK`, the awk the lint tests run `lint.awk` under, is also taken only with `KU_TEST=1`,
   since `check` lints `kali.cfg` as root.
 - ShellCheck must report nothing for any shell file. That test is skipped when `shellcheck`
@@ -499,7 +617,14 @@ bats tests/
   synthetic UUID loop-mounted on `/boot`. `migrate.bats` runs migrate's system stage with the
   real `linux-update-symlinks`, then has kernel installs and removals move the links without
   the tool, rolls the stage back, and has the real `grub-script-check` take the files the menu
-  stage writes. They run only with `KU_CONTAINER=1` inside a
+  stage writes. `cleanup.bats` purges dummy kernels with the real `apt-get` and `dpkg`: one
+  removed with its config files left, and the old kernel apt's autoremove names once the dummies
+  are marked auto, in one run, while the kernel `vmlinuz.old` points at stays when apt keeps
+  another; it purges nothing while a reboot is pending, refuses a purge that would take along a
+  package that depends on an old kernel's headers, removes the empty module tree a kernel
+  install the `/boot` guard refused leaves, quarantines a tree once a `dkms` stub lists no
+  modules for it, expires a back-dated quarantine entry, and finds a real `fcntl` lock on dpkg's
+  frontend lock in `/proc/locks`. They run only with `KU_CONTAINER=1` inside a
   container, fail with it set anywhere else, and skip without it; `bats tests/` leaves the
   subdirectory out.
   The `kali` job of the tests workflow builds the Kali rolling image of `ci/kali/Dockerfile`,

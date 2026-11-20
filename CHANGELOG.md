@@ -9,6 +9,11 @@ All notable changes to this project are listed here. The format follows
 The script is being redesigned in phases, one pull request each. These entries compare it
 with the owner's original script.
 
+### Migration
+
+- `update_kernel.sh` is gone: use `kernel-updater` as `docs/migration.md` describes, and
+  `docs/runbook.md` for routine use and recovery.
+
 ### Added
 
 - `update_kernel.sh`, imported from the owner's machine. It is legacy: the README says not to
@@ -222,10 +227,10 @@ with the owner's original script.
   initrd their entries boot. `finalize`
   removes the legacy entries, sets `grub.cfg`'s entry in the stored baseline, as `menu` does,
   and names the files that still differ from it, which `kernel-updater baseline` records once
-  checked, or records the whole baseline when none is stored. A write of `menu`, `finalize` or a rollback
-  removes an export in `output_dir` that it makes stale. `--deploy` and `--output-dir` hold for
-  one run, and an export `--output-dir` takes elsewhere gets a warning, since `check` reads only
-  the configured `output_dir`.
+  checked, or records the whole baseline when none is stored. A write of `menu`, `finalize` or a
+  rollback removes an export in `output_dir` that it makes stale. `--deploy` and `--output-dir`
+  hold for one run, and an export `--output-dir` takes elsewhere gets a warning, since `check`
+  reads only the configured `output_dir`.
 - Backups of every `system`, `menu` and `finalize` run in `/var/backups/kernel-updater`, with a
   `MANIFEST` of SHA-256 sums, named by the UTC time of the run, or one second after the newest
   backup when the clock reads no later, so that the names keep the order of the runs, synced to
@@ -261,6 +266,28 @@ with the owner's original script.
   with the real `linux-update-symlinks`, `debconf` and `grub-script-check`; and
   `tests/ntfs/migrate.bats`, which lints with the stick's own GRUB lists, writes the new menu to
   real NTFS and rolls it back. The `ntfs` job installs `dmsetup` for it.
+- `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules]`, which purges, in one
+  apt-get run, the config files removed kernels left and the old kernels apt's autoremove
+  names, once a simulation shows apt would remove exactly those. It never purges the running
+  kernel or a kernel the links in `/boot` point at, and purges nothing while a reboot into a
+  new kernel is pending. Held packages, debug builds, what is no versioned kernel package,
+  metapackages included, and the config files of a kernel still installed through another
+  package, as `linux-image-V-unsigned`, stay, and the plan says why; an old kernel marked manual
+  stays with an `apt-mark auto` hint. Purges cannot be rolled back, so run it with `-n` first. A
+  module tree no package owns is removed when empty and otherwise moved to
+  `/var/lib/kernel-updater/quarantine`, where it can be moved back until it expires,
+  `quarantine_days` after a later run first saw it there; an empty `seen` mark, as a crash can
+  leave, counts as none and is written anew. It exits 75 while apt or dpkg holds
+  its lock, which it finds in `/proc/locks`, or when the system changed while its question
+  waited, and `--porcelain` prints its plan as tab-separated records.
+- `quarantine_days` in `/etc/kernel-updater.conf`: 0 to 999 whole days, 30 by default; 0 keeps
+  the quarantined module trees until you delete them.
+- `docs/runbook.md`: routine use, what the plan of `cleanup` says and what to do when it
+  refuses, how to restore or delete a quarantined tree, recovery when a new kernel fails, a
+  rebuild of one kernel's initrd, and an optional GRUB default entry.
+- Tests for `cleanup`: `tests/cleanup.bats` with stub tools, and `tests/container/cleanup.bats`
+  with real apt-get and dpkg runs on dummy kernels, module trees and quarantine entries, and a
+  real fcntl lock on dpkg's frontend lock.
 
 ### Changed
 
@@ -312,5 +339,35 @@ with the owner's original script.
   whole baseline for `migrate`'s `finalize` while none is stored.
 - `tests/static.bats` also covers `migrate.sh` and runs `menu.awk`, and `tests/helpers.bash`
   loads `migrate.sh`.
+- `migrate` and `cleanup` share `ku_plan` and `ku_join`, now in `common.sh`, and
+  `ku_boot_identity`, now in `check.sh`.
+- `tests/static.bats` also covers `cleanup.sh`, `tests/helpers.bash` loads it, and
+  `tests/cli.bats` expects `cleanup` among the commands.
+- `ku_probe_kernels` shares its reading of kernel package names with the new
+  `ku_probe_kernel_packages`, which lists every versioned kernel package, headers, `-common`,
+  kbuild and debug builds included, with its kind and release for `cleanup`; what `check`
+  reports does not change.
+- The container suite's `reset_system` also purges the split, modules, base and headers
+  dummies and the dummy that depends on headers, removes the module trees of the dummies'
+  releases and empties `cleanup`'s quarantine, and `run_container_cleanup` runs `cleanup` there
+  with `KU_TEST=1`, which lets `SOURCE_DATE_EPOCH` through to apt.
+- `install.sh --uninstall` removes `/var/lib/kernel-updater` only when it is empty, and leaves
+  every directory inside it, such as one in a quarantined module tree, as it is.
+- The README describes the finished tool and links the runbook, which `docs/migration.md` now
+  points to for routine use and for a kernel that fails. `SECURITY.md` drops its warning about
+  the original script.
+- `migrate` exits 75 instead of 3 when the kernels or their links changed while the question of
+  its system stage waited, as `cleanup` does when the system changes while its question waits.
+- The safe writer exits 75 instead of 3 when a file on partition 1 changed since the plan read
+  it, or appeared where the plan read none, before it wrote anything, so that a `migrate` stage
+  or rollback then exits 75, as `cleanup` does when the system changes while its question
+  waits; once it wrote an earlier file of the same run, it still exits 4 and names the files
+  written.
+
+### Removed
+
+- `update_kernel.sh`, the original script, with its tests in `tests/legacy.bats` and their
+  runner `run_legacy` in `tests/helpers.bash`; `tests/static.bats` and `tests/repo.bats` no
+  longer list it.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

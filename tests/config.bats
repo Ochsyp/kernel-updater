@@ -31,7 +31,24 @@ setup() {
     [ -z "${KU_CONF[root_device]}" ]
     [ "${KU_CONF[menu_variants]}" = default,failsafe ]
     [ "${KU_CONF[previous_variants]}" = default,failsafe ]
+    [ "${KU_CONF[quarantine_days]}" = 30 ]
     [ "${#KU_CONF_SET[@]}" -eq 0 ]
+}
+
+@test "quarantine_days takes 0 to 999 days, without a leading zero" {
+    local value
+    for value in 0 7 30 999; do
+        printf 'quarantine_days = %s\n' "$value" > "$CONF"
+        ku_config_load "$CONF"
+        [ "${KU_CONF[quarantine_days]}" = "$value" ]
+    done
+    # Bash arithmetic would read 030 as octal, and 08 as no number at all.
+    for value in -1 1000 x 030 08 00 "3 0" 1e3 +5; do
+        printf 'quarantine_days = %s\n' "$value" > "$CONF"
+        run ku_config_load "$CONF"
+        [ "$status" -eq 78 ] || { printf 'accepted: %s\n' "$value" >&2; return 1; }
+        [[ "$output" == *"$CONF:1: invalid value for 'quarantine_days'"* ]]
+    done
 }
 
 @test "root_device takes an absolute device path or UUID=, and the variant lists their names" {

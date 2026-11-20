@@ -3,8 +3,8 @@
 # kernel-updater test helpers
 #
 # Sourced by the .bats files under tests/ through `load`: repository paths, PATH and system
-# stubs, runners for both scripts and for library code, a library loader, disk images, check
-# result readers and ShellCheck runners.
+# stubs, runners for bin/kernel-updater and for library code, a library loader, disk images,
+# check result readers and ShellCheck runners.
 # -------------------------------------------------------
 
 bats_require_minimum_version 1.5.0
@@ -49,12 +49,6 @@ exit 100
 EOF
 }
 
-# Run update_kernel.sh with the stubs first on PATH, through bats' run with separate
-# stderr. Only the script sees the stubs; the test's own commands stay real.
-run_legacy() {
-    run --separate-stderr env PATH="$STUB_BIN:$PATH" bash "$REPO_DIR/update_kernel.sh" "$@"
-}
-
 # Run bin/kernel-updater with the stubs first on PATH and the KU_ROOT, KU_TTY and KU_LOCKFILE
 # seams inside the test's temp directory, which KU_TEST=1 lets it take from the environment,
 # through bats' run with separate stderr.
@@ -91,6 +85,8 @@ load_ku_libs() {
     . "$KU_LIBDIR/baseline.sh"
     # shellcheck source=lib/kernel-updater/migrate.sh
     . "$KU_LIBDIR/migrate.sh"
+    # shellcheck source=lib/kernel-updater/cleanup.sh
+    . "$KU_LIBDIR/cleanup.sh"
 }
 
 # Run the shell CODE as a command of bin/kernel-updater runs: in a bash with its strict mode,
@@ -104,7 +100,7 @@ run_ku_lib() {
             set -Eeuo pipefail
             shopt -s inherit_errexit
             KU_LIBDIR=$0/lib/kernel-updater KU_SHAREDIR=$0/share/kernel-updater
-            for lib in common config lint probe check hook disk deploy baseline migrate; do
+            for lib in common config lint probe check hook disk deploy baseline migrate cleanup; do
                 . "$KU_LIBDIR/$lib.sh"
             done
             ku_install_traps

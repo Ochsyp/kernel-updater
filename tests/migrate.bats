@@ -8,12 +8,12 @@
 # a write of it that fails, the links left in /, grub-pc's question of its own, a result that
 # fails its check, links kept on another kernel that boots, and a kernel install while it runs;
 # menu and finalize on a partition-1 tree that KU_P1_DIR names, written and exported, with
-# their refusals, the parameters a plan hides, the initrds live needs, kali.cfg written anew,
-# the export a write makes stale and the baseline, whose entries a write keeps for files changed
-# outside the tool; --rollback of each stage, byte for byte, written and exported, with its
-# refusals and the changes to grub.cfg it drops; backups named in the order of the runs,
-# removed while unfinished and passed over without a MANIFEST; and root, the lock, declining
-# and usage errors. No value is printed.
+# their refusals and a grub.cfg that changes while menu asks, the parameters a plan hides, the
+# initrds live needs, kali.cfg written anew, the export a write makes stale and the baseline,
+# whose entries a write keeps for files changed outside the tool; --rollback of each stage,
+# byte for byte, written and exported, with its refusals and the changes to grub.cfg it drops;
+# backups named in the order of the runs, removed while unfinished and passed over without a
+# MANIFEST; and root, the lock, declining and usage errors. No value is printed.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
@@ -566,14 +566,16 @@ backups() {
     private_output
 }
 
-@test "A kernel install while system asks refuses, and links it moves later stay in /" {
+@test "A kernel install while system asks exits 75, and links it moves later stay in /" {
     kernels "$V1" "$V2" "$V3"
     detected
-    # An install while the question waits moved /vmlinuz: the plan no longer holds.
+    # An install while the question waits moved /vmlinuz: the plan no longer holds, and the
+    # stage exits 75, as cleanup does, since a run once apt is done can succeed.
     export SHOW_MOVES=$V3
     run_ku migrate --stage system --yes
-    [ "$status" -eq 3 ]
+    [ "$status" -eq 75 ]
     [[ "$stderr" == *"the kernels or their links changed while the question waited"* ]]
+    [[ "$stderr" == *"run the system stage again; nothing was changed"* ]]
     cmp "$BATS_TEST_TMPDIR/kernel-img.before" "$ROOT/etc/kernel-img.conf"
     [ -z "$(backups)" ]
     refute_line_match '^linux-update-symlinks' "$STUB_LOG"
@@ -690,6 +692,44 @@ EOF
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"which the initrd of $V1 lacks, the one /boot/initrd.img.old points at"* ]]
     [[ "$stderr" == *"or leave them out of previous_variants; nothing was changed"* ]]
+}
+
+@test "A grub.cfg changed while menu asks exits 75 and writes nothing, and a new run writes it" {
+    local other=$'menuentry "Other" {\r\n\ttrue\r\n}\r\n'
+    system_done
+    legacy_kernel
+    # grub-script-check, which checks the new files once the plan read the stick's, adds
+    # GSC_CHANGES to the stick's grub.cfg, as another program writing the stick while the
+    # question waits would.
+    mkstub grub-script-check <<'EOF'
+[[ -z ${GSC_CHANGES:-} || ${*: -1} != */grub.cfg ]] ||
+    printf '%s' "$GSC_CHANGES" >> "$KU_P1_DIR/multibootusb/grub/grub.cfg"
+EOF
+    export GSC_CHANGES=$other
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"refusing to write multibootusb/grub/grub.cfg: it changed since the plan \
+read it; nothing was changed"* ]]
+    [[ "$stderr" != *"info: wrote"* ]]
+    [ ! -e "$GRUB/kali.cfg" ]
+    cmp <(cat "$BATS_TEST_TMPDIR/grub.before"; printf '%s' "$other") "$GRUB/grub.cfg"
+    # The run wrote nothing, so it leaves no backup that a rollback would undo.
+    [ -z "$(backups)" ]
+    # Run again, the stage plans anew from the grub.cfg it finds, and writes both files.
+    export GSC_CHANGES=""
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 0 ]
+    cmp "$FIXTURES/kali.expected.cfg" "$GRUB/kali.cfg"
+    grep -q -F 'menuentry "Other"' "$GRUB/grub.cfg"
+    local stamp
+    stamp=$(backups)
+    [[ $stamp =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
+    [ -f "$ROOT$BACKUPS/$stamp/MANIFEST" ]
+    # Its rollback picks that run, the only one.
+    run_ku migrate --rollback --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"rollback of the menu stage run $stamp"* ]]
+    private_output
 }
 
 @test "finalize removes the legacy entries, records the baseline, and rolls back" {
@@ -1216,4 +1256,9 @@ EOF
     run_ku migrate --help
     [ "$status" -eq 0 ]
     [[ "$output" == "Usage: kernel-updater migrate "* ]]
+    # 75 also means that the system, or a file on partition 1 a stage writes, changed while the
+    # question waited, as for cleanup.
+    local usage=${output//$'\n'/ }
+    [[ "$usage" == *" 75 when another run holds the lock or the kernels, their links or a file"* ]]
+    [[ "$usage" == *"on partition 1 changed while the question waited, 77 when not run"* ]]
 }
