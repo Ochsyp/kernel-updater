@@ -941,6 +941,8 @@ cleanup again; nothing was changed"* ]]
     [ "$status" -eq 4 ]
     [[ "$stderr" == *"apt-get purge failed with status 100 after dpkg began to change its \
 database: run 'dpkg --configure -a', then 'kernel-updater check'"* ]]
+    # The failure is reported once, without the interrupt's "cut short" line.
+    [[ "$stderr" != *"cut short"* ]]
     [ "$(apt_calls | tail -n 1)" = sync ]
     # shellcheck disable=SC2016 # the stub expands the variables
     on_purge 'printf "Package: y\n" >> "$KU_ROOT/var/lib/dpkg/status"
@@ -993,6 +995,31 @@ changed"* ]]
     [ "$status" -eq 130 ]
     [[ "$stderr" == *"the purge was cut short before dpkg changed its database; nothing was \
 purged"* ]]
+    private_output
+}
+
+@test "An interrupt while a failed purge is classified still says how to settle dpkg" {
+    listed "linux-image-$V0" rc
+    # apt-get changes dpkg's status and fails with 100, leaving the tool's PID; the first
+    # sha256sum after that, the one that compares dpkg's status, sends SIGINT to the tool.
+    # shellcheck disable=SC2016 # the stub expands the variables
+    on_purge 'printf "Package: x\n" >> "$KU_ROOT/var/lib/dpkg/status"
+        printf "%s\n" "$PPID" > "$KU_ROOT/tool.pid"' 100
+    REAL_SHA256SUM=$(type -P sha256sum)
+    export REAL_SHA256SUM
+    mkstub sha256sum <<'EOF'
+if [[ -f $KU_ROOT/tool.pid ]]; then
+    pid=$(< "$KU_ROOT/tool.pid")
+    rm -f "$KU_ROOT/tool.pid"
+    kill -INT "$pid"
+fi
+exec "$REAL_SHA256SUM" "$@"
+EOF
+    run_ku cleanup --yes
+    [ "$status" -eq 130 ]
+    [[ "$stderr" == *"interrupted by SIGINT"* ]]
+    [[ "$stderr" == *"the purge was cut short after dpkg began to change its database: run \
+'dpkg --configure -a', then 'kernel-updater check'"* ]]
     private_output
 }
 

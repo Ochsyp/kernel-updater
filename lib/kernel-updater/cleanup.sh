@@ -948,10 +948,12 @@ _ku_cl_purge() {
     ku_run _ku_cl_child apt-get -y -q -o DPkg::Lock::Timeout=0 \
         -o APT::Get::AutomaticRemove=false -o APT::Get::AutomaticRemove::Kernels=false purge \
         "${KU_CL_SET[@]}" >&2 || status=$?
-    KU_CL_PURGING=0
+    # The exit handler stays armed until a failure is reported, so that a signal while it is
+    # classified still names 'dpkg --configure -a'; _ku_cl_failed disarms it just before.
     if (( status )); then
         _ku_cl_failed "$status"
     fi
+    KU_CL_PURGING=0
     ku_check_items boot-links kernels
     for i in "${!KU_CHECK_ITEM[@]}"; do
         if [[ ${KU_CHECK_STATUS[i]} == fail || ${KU_CHECK_STATUS[i]} == skip ]]; then
@@ -972,14 +974,17 @@ _ku_cl_purge() {
 _ku_cl_failed() {
     local holder busy=0
     if _ku_cl_dpkg_changed; then
+        KU_CL_PURGING=0
         ku_die "$KU_EX_WRITE" "apt-get purge failed with status $1 after dpkg began to change its" \
             "database: run 'dpkg --configure -a', then 'kernel-updater check'"
     fi
     holder=$(_ku_cl_dpkg_busy) || busy=$?
     if (( busy == 0 )); then
+        KU_CL_PURGING=0
         ku_die "$KU_EX_BUSY" "apt-get purge failed with status $1 while apt or dpkg runs:" \
             "$holder; run cleanup again once it is done; nothing was changed"
     fi
+    KU_CL_PURGING=0
     ku_die "$KU_EX_REFUSED" "apt-get purge failed with status $1 before dpkg changed anything," \
         "as when apt or apt-guard refuses it, which its messages above explain; nothing was" \
         "changed"
