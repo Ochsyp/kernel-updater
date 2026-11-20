@@ -1643,6 +1643,24 @@ seen (quarantine_days 30)")" ]
     private_output
 }
 
+@test "An empty seen, as a crash right after its write leaves one, counts as none and is rewritten" {
+    local name
+    name=9.0.4+kali-amd64.$(ago 400)
+    quarantined 9.0.4+kali-amd64 "${name##*.}"
+    : > "$ROOT$Q/$name/seen"
+    run_ku cleanup -n --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$name" "400 days old by its stamp; no run has marked it \
+seen yet (quarantine_days 30)")" ]
+    [ ! -s "$ROOT$Q/$name/seen" ]
+    run_ku cleanup --porcelain
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(kept; expiry keep "$name" "400 days old by its stamp; this run marks it \
+seen (quarantine_days 30)")" ]
+    [ "$(< "$ROOT$Q/$name/seen")" = 20261114T120000Z ]
+    private_output
+}
+
 @test "An entry expires once more whole days than quarantine_days passed since its stamp and seen" {
     local a b c name
     a=9.0.4+kali-amd64.$(ago 100) b=9.0.5+kali-amd64.$(ago 31) c=9.0.6+kali-amd64.$(ago 31)

@@ -276,7 +276,8 @@ with the owner's original script.
   an `apt-mark auto` hint. Purges cannot be rolled back, so run it with `-n` first. A module
   tree no package owns is removed when empty and otherwise moved to
   `/var/lib/kernel-updater/quarantine`, where it can be moved back until it expires,
-  `quarantine_days` after a later run first saw it there. It exits 75 while apt or dpkg holds
+  `quarantine_days` after a later run first saw it there; an empty `seen` mark, as a crash can
+  leave, counts as none and is written anew. It exits 75 while apt or dpkg holds
   its lock, which it finds in `/proc/locks`, or when the system changed while its question
   waited, and `--porcelain` prints its plan as tab-separated records.
 - `quarantine_days` in `/etc/kernel-updater.conf`: 0 to 999 whole days, 30 by default; 0 keeps

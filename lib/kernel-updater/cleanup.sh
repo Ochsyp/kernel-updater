@@ -1597,8 +1597,8 @@ _ku_cl_expiry_acts() {
 # directory and no symlink; its name is RELEASE.STAMP, RELEASE a kernel release and STAMP a UTC
 # time as YYYYmmddTHHMMSSZ; it holds nothing but its tree, a directory, and origin and seen,
 # each a regular file; it belongs to root and lies, and its tree with it, on DEV, the
-# quarantine's device; and its seen holds a UTC time of that form. Prints why not and returns 1
-# otherwise.
+# quarantine's device; and its seen, unless empty, holds a UTC time of that form. Prints why not
+# and returns 1 otherwise.
 _ku_cl_entry_times() {
     local entry=$1 dev=$2 real name stamp seen=- part line out owner device
     local -a parts=() paths=() infos=()
@@ -1657,7 +1657,9 @@ _ku_cl_entry_times() {
         printf 'its tree lies on another filesystem than the quarantine'
         return 1
     fi
-    if [[ -e $real/seen ]]; then
+    # An empty seen counts as none: a crash right after the write can leave one, and the run
+    # that next marks the entry seen writes it anew (_ku_cl_seen).
+    if [[ -s $real/seen ]]; then
         line=""
         { IFS= read -r line < "$real/seen"; } 2> /dev/null || :
         if ! _ku_cl_epoch "$line" seen; then
@@ -1710,6 +1712,10 @@ _ku_cl_seen() {
     local stamp file
     TZ=UTC0 printf -v stamp '%(%Y%m%dT%H%M%SZ)T' "$KU_CL_NOW"
     file=$(ku_path "$1")/seen
+    # An empty seen, which _ku_cl_entry_times counts as none, makes way for the new one.
+    if [[ -f $file && ! -L $file && ! -s $file ]]; then
+        rm -f -- "$file" || :
+    fi
     if ! (set -C && umask 077 && printf '%s\n' "$stamp" > "$file") 2> /dev/null; then
         ku_log warning "cannot write seen into the quarantine entry ${1##*/}, which cannot" \
             "expire until a run writes it"
