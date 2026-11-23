@@ -717,7 +717,7 @@ EOF
     run_ku cleanup -n
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"cleanup: nothing to do"* ]]
-    grep -q '^mount -t ntfs3 -o nosuid,nodev,noexec,ro /dev/sdb1 ' "$STUB_LOG"
+    grep -q -F -e "$(logged mount -t ntfs3 -o nosuid,nodev,noexec,ro /dev/sdb1) " "$STUB_LOG"
     awk '/^umount / && !u { u = NR } /^apt-get / && !a { a = NR }
         END { exit !(u && a && u < a) }' "$STUB_LOG"
     [ -z "$(ls -A "$ROOT/run")" ]

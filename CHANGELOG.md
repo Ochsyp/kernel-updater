@@ -363,6 +363,11 @@ with the owner's original script.
   or rollback then exits 75, as `cleanup` does when the system changes while its question
   waits; once it wrote an earlier file of the same run, it still exits 4 and names the files
   written.
+- `cleanup` refuses, in a dry run too, until the migration is finished, because a purge could
+  take away the kernel the legacy entries boot. It reads check's `kali-menu` item from partition
+  1 through a read-only mount: exit 3 while the menu stage or `finalize` is outstanding or the
+  menu is damaged, 66 when partition 1 cannot be found or read, and 78 on another stick or one
+  the configuration does not name.
 
 ### Removed
 
