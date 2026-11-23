@@ -281,12 +281,13 @@ marks it seen (quarantine_days 30)"* ]]
 @test "A real fcntl lock on dpkg's frontend lock, as apt takes it, exits 75 and names its holder" {
     local ready="$BATS_TEST_TMPDIR/locked" i
     # perl takes a write lock on the whole file with F_SETLK, as apt does: struct flock on
-    # x86-64 is l_type and l_whence, padding, l_start, l_len and l_pid, padded to 32 bytes.
+    # x86-64 is l_type and l_whence, padding, l_start, l_len and l_pid, padded to 32 bytes. It
+    # sits in a variable because perl's fcntl needs a third argument it can write to.
     # shellcheck disable=SC2016 # perl expands its own variables
     perl -MFcntl=F_SETLK,F_WRLCK,SEEK_SET -e '
         open(my $fh, ">>", $ARGV[0]) or die "open: $!\n";
-        fcntl($fh, F_SETLK, pack("s s x!8 q q i x!8", F_WRLCK, SEEK_SET, 0, 0, 0))
-            or die "fcntl: $!\n";
+        my $lock = pack("s s x!8 q q i x!8", F_WRLCK, SEEK_SET, 0, 0, 0);
+        fcntl($fh, F_SETLK, $lock) or die "fcntl: $!\n";
         open(my $ready, ">", $ARGV[1]) or die "ready: $!\n";
         close($ready);
         sleep 120;' /var/lib/dpkg/lock-frontend "$ready" > "$BATS_TEST_TMPDIR/perl.log" 2>&1 3>&- &

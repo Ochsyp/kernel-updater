@@ -370,4 +370,10 @@ with the owner's original script.
   runner `run_legacy` in `tests/helpers.bash`; `tests/static.bats` and `tests/repo.bats` no
   longer list it.
 
+### Fixed
+
+- The container test of a real apt lock in `tests/container/cleanup.bats` passes perl's `fcntl`
+  a variable. Perl refused the direct result of `pack`, so the test stopped before it took the
+  lock and never reached the check it is there for.
+
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
