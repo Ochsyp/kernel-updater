@@ -4,8 +4,9 @@
 #
 # Runs kernel-updater cleanup on a KU_ROOT tree of a migrated system with stub tools: its usage
 # and usage errors, root and the tool's lock, the keys detect fills, the identity of /boot, the
-# links in /boot, the kernel packages' states, an interrupted dpkg run, apt's and dpkg's locks
-# as /proc/locks shows them, a clean system with nothing to do, the plan lines in both forms,
+# links in /boot, the kernel packages' states, an interrupted dpkg run, a migration that is not
+# finished or a partition 1 that cannot tell, apt's and dpkg's locks as /proc/locks shows them,
+# a clean system with nothing to do, the plan lines in both forms,
 # and the environment the tools it runs get; then the purge of the config files removed kernels
 # left: what it plans, keeps and lists, a pending reboot, the dry run and the question, the one
 # purge and the sync, the simulation that must match the plan, changes while the question
@@ -49,7 +50,8 @@ Q=/var/lib/kernel-updater/quarantine
 
 # A migrated Kali system: kernels V1 and V2, V2 running, linux-base keeping the links in /boot
 # on V2 and V1, a configuration that names /boot and its LUKS container, dpkg's and apt's state
-# and lock files, an empty updates directory, and no lock in /proc/locks.
+# and lock files, an empty updates directory, no lock in /proc/locks, and a stand-in partition 1
+# that holds the menu of a finished migration.
 setup() {
     stub_init
     use_symlinks || skip "this platform cannot make symlinks"
@@ -72,6 +74,8 @@ setup() {
     ln -s "initrd.img-$V1" "$ROOT/boot/initrd.img.old"
     stub_system_tools
     stubs
+    export KU_P1_DIR="$BATS_TEST_TMPDIR/p1"
+    write_finished_menu "$KU_P1_DIR"
 }
 
 # Write the stubs that answer for the system: root, the tool's lock, stat, /boot's mount, dpkg,
@@ -449,6 +453,21 @@ foreign() {
     printf '%s\n' "$ROOT$2" >> "$BATS_TEST_TMPDIR/foreign.$1"
 }
 
+# Replace the stand-in for partition 1 with a real lookup: /boot lies on the disk sdb, whose
+# partition 1 is the NTFS filesystem the configuration names.
+stick_on_disk() {
+    unset KU_P1_DIR
+    mkdir -p "$ROOT/run"
+    printf 'disk_ptuuid = 5ca1ab1e\np1_fs_uuid = 5CA1AB1E00000001\n' >> "$ROOT$CONF"
+    mkstub lsblk <<'EOF'
+case " $* " in
+    *" -s "*) printf '/dev/mapper/boot_crypt crypt\n/dev/sdb3 part\n/dev/sdb disk\n' ;;
+    *" -d "*) printf '5ca1ab1e\n' ;;
+    *) printf '/dev/sdb   \n/dev/sdb1 1 ntfs 5CA1AB1E00000001\n/dev/sdb3 3 crypto_LUKS x\n' ;;
+esac
+EOF
+}
+
 @test "cleanup --help prints its usage, and an unknown option or an argument exits 64" {
     local args
     run_ku cleanup --help
@@ -590,6 +609,135 @@ foreign() {
     [[ "$stderr" == *"dpkg was interrupted: run 'dpkg --configure -a', then 'kernel-updater"* ]]
     [[ "$stderr" == *"check'; nothing was changed"* ]]
     [ -z "$output" ]
+}
+
+@test "cleanup refuses with 3 and purges nothing while the menu stage has not run" {
+    local args grub=$KU_P1_DIR/multibootusb/grub
+    listed "linux-image-$OLD" rc
+    rm "$grub/kali.cfg"
+    printf 'menuentry "Other" {\n\ttrue\n}\n' > "$grub/grub.cfg"
+    for args in "" "-n" "--yes"; do
+        # shellcheck disable=SC2086 # each case is split into its words on purpose
+        run_ku cleanup $args
+        [ "$status" -eq 3 ] || { printf '"%s" exited %s\n' "$args" "$status" >&2; return 1; }
+        [[ "$stderr" == *"the Kali entries still boot kernels by their versions, which a purge \
+could take away: run 'kernel-updater migrate --stage menu', boot the new entries, then run \
+'kernel-updater migrate --stage finalize'; nothing was changed"* ]]
+        [ -z "$output" ]
+    done
+    [ -z "$(apt_calls)" ]
+    private_output
+}
+
+@test "cleanup refuses with 3 and purges nothing while legacy entries remain" {
+    local args
+    listed "linux-image-$OLD" rc
+    cp "$REPO_DIR/tests/fixtures/grub/migrate-after.cfg" "$KU_P1_DIR/multibootusb/grub/grub.cfg"
+    for args in "" "-n" "--yes"; do
+        # shellcheck disable=SC2086 # each case is split into its words on purpose
+        run_ku cleanup $args
+        [ "$status" -eq 3 ] || { printf '"%s" exited %s\n' "$args" "$status" >&2; return 1; }
+        [[ "$stderr" == *"the legacy Kali entries boot a kernel by its version, which a purge \
+could take away: run 'kernel-updater migrate --stage finalize' after the boot tests; nothing \
+was changed"* ]]
+        [ -z "$output" ]
+    done
+    [ -z "$(apt_calls)" ]
+    private_output
+}
+
+@test "cleanup refuses with 3 and check's words on a damaged menu" {
+    local grub=$KU_P1_DIR/multibootusb/grub
+    listed "linux-image-$OLD" rc
+    rm "$grub/kali.cfg"
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"kali-menu: grub.cfg sources multibootusb/grub/kali.cfg, which is missing"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    write_finished_menu "$KU_P1_DIR"
+    printf 'menuentry "Other" {\n\ttrue\n}\n' > "$grub/grub.cfg"
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"kali-menu: multibootusb/grub/kali.cfg exists, but grub.cfg does not"* ]]
+    write_finished_menu "$KU_P1_DIR"
+    printf 'submenu "Open" {\n' >> "$grub/grub.cfg"
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"kali-menu: the braces or quotes of grub.cfg do not balance"* ]]
+    [ -z "$(apt_calls)" ]
+    private_output
+}
+
+@test "cleanup exits 66 or 78 and purges nothing when partition 1 cannot tell the menu's state" {
+    local unknown="so cleanup cannot tell whether the migration is finished"
+    listed "linux-image-$OLD" rc
+    stick_on_disk
+    # Another stick.
+    sed -i 's/^p1_fs_uuid = .*/p1_fs_uuid = 5CA1AB1E00000002/' "$ROOT$CONF"
+    run_ku cleanup -n
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"is not the NTFS filesystem p1_fs_uuid names; nothing was changed"* ]]
+    private_output
+    # A stick the configuration does not name.
+    sed -i '/^p1_fs_uuid = /d' "$ROOT$CONF"
+    run_ku cleanup -n
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"the stick cannot be told apart, $unknown: set disk_ptuuid"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    private_output
+    printf 'p1_fs_uuid = 5CA1AB1E00000001\n' >> "$ROOT$CONF"
+    # The stick's partition 1 does not mount.
+    mkstub mount <<< 'exit 32'
+    run_ku cleanup -n
+    [ "$status" -eq 66 ]
+    [[ "$stderr" == *"cannot read the stick's partition 1, $unknown: partition 1 does not mount"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    [ -z "$(ls -A "$ROOT/run")" ]
+    private_output
+    # /boot's disk cannot be listed.
+    mkstub lsblk <<< 'exit 1'
+    run_ku cleanup -n
+    [ "$status" -eq 66 ]
+    [[ "$stderr" == *"cannot find the stick's partition 1, $unknown: lsblk cannot list"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    [ -z "$(apt_calls)" ]
+    private_output
+}
+
+@test "cleanup reads the menu through a read-only mount and removes it before apt runs" {
+    export MENU_SRC="$BATS_TEST_TMPDIR/menu"
+    write_finished_menu "$MENU_SRC"
+    stick_on_disk
+    mkstub mount <<'EOF'
+cp -r "$MENU_SRC"/. "${*: -1}"/
+EOF
+    mkstub umount <<'EOF'
+rm -rf "${*: -1}"/multibootusb
+EOF
+    run_ku cleanup -n
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+    grep -q '^mount -t ntfs3 -o nosuid,nodev,noexec,ro /dev/sdb1 ' "$STUB_LOG"
+    awk '/^umount / && !u { u = NR } /^apt-get / && !a { a = NR }
+        END { exit !(u && a && u < a) }' "$STUB_LOG"
+    [ -z "$(ls -A "$ROOT/run")" ]
+    private_output
+}
+
+@test "cleanup names the detect and system stages before the menu" {
+    local grub=$KU_P1_DIR/multibootusb/grub
+    rm "$grub/kali.cfg"
+    printf 'menuentry "Other" {\n\ttrue\n}\n' > "$grub/grub.cfg"
+    printf 'do_symlinks = yes\nlink_in_boot = no\n' > "$ROOT/etc/kernel-img.conf"
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"run 'kernel-updater migrate --stage system' first"* ]]
+    [[ "$stderr" != *"--stage menu"* ]]
+    configure "" ""
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"'kernel-updater migrate --stage detect' first"* ]]
+    [[ "$stderr" != *"--stage menu"* ]]
 }
 
 @test "cleanup exits 75 while apt or dpkg holds a lock, naming its PID and command" {

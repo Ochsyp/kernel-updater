@@ -38,8 +38,9 @@ setup_file() {
 
 # Three dummy kernels installed with link_in_boot = yes and marked manual, as dpkg -i leaves
 # them, the newest running, so that the links point at V3 and V2, and the oldest, V1, removed
-# with its config files left; a configuration that names /boot and its container; and stubs
-# that show /boot as that unlocked container.
+# with its config files left; a configuration that names /boot and its container; stubs that
+# show /boot as that unlocked container; and a stand-in partition 1 with a finished migration's
+# menu, which run_container_cleanup's KU_TEST=1 lets through.
 setup() {
     container_only
     reset_system yes
@@ -48,6 +49,8 @@ setup() {
     dpkg -r "linux-image-$V1"
     stub_init
     stub_system_tools
+    export KU_P1_DIR="$BATS_TEST_TMPDIR/p1"
+    write_finished_menu "$KU_P1_DIR"
     export UNAME_R=$V3 LSINITRAMFS_DROP='^cryptroot/keyfiles'
     printf '%s\n' "boot_fs_uuid = $BOOT_FS_UUID" \
         'boot_luks_uuid = 5ca1ab1e-0000-4000-8000-000000000c01' > /etc/kernel-updater.conf
