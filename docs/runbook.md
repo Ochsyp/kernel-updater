@@ -117,7 +117,11 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
   message names, then run `cleanup` again. No option skips this check.
 - **Exit 3, naming `migrate --stage detect`, `system`, `menu` or `finalize`.** The migration is
   not done: see [migration.md](migration.md). When the message names an export, copy it to the
-  stick from Windows as its `DEPLOY.txt` says, unless you have done so already.
+  stick from Windows as its `DEPLOY.txt` says, unless you have done so already: a second copy
+  undoes what changed on the stick since.
+- **Exit 3, "the export in output_dir waits to put back a menu".** A rollback in the VM exported
+  a menu with entries that boot kernels by version. Copy it to the stick and finish the migration
+  again, or delete the export if you no longer want that rollback.
 - **Exit 3, starting with `kali-menu:`.** The menu on partition 1 is damaged, as the message says.
   Run `sudo kernel-updater check`, and settle its `kali-menu` item first.
 - **"purge nothing while a reboot is pending".** Reboot into "Kali GNU/Linux". When the new

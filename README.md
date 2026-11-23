@@ -301,8 +301,10 @@ must pass, so that no kernel package is stuck between states and the running ker
 installed (3); no interrupted dpkg run may wait for `dpkg --configure -a` (3); and check's
 `kali-menu` item must be `ok`, read read-only from a partition 1 whose files no user but root
 can change, before the question and again after it (3 while it is not, naming an export that
-waits to be copied; 66 when partition 1 cannot be found or read so, as while a desktop has it
-mounted for its user; 78 on another stick or one the configuration does not name).
+waits to be copied, and also while an export, as from a rollback in a VM, waits to bring back
+entries that boot kernels by version; 66 when partition 1 cannot be found or read so, as while
+a desktop has it mounted for its user; 78 on another stick or one the configuration does not
+name).
 
 - **What it keeps.** The running kernel's release and the releases the four links in `/boot`
   point at: no package named for them is purged and no module tree of theirs is touched,

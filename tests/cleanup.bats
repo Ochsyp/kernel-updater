@@ -475,6 +475,33 @@ esac
 EOF
 }
 
+# Have partition 1 mount as root's, showing a finished menu, and findmnt list that mount while it
+# is there. The mount number MOUNT_CHANGE_AT also changes dpkg's status file, as an apt run would.
+stick_mounts() {
+    export MENU_SRC="$BATS_TEST_TMPDIR/menu" MOUNTED="$BATS_TEST_TMPDIR/mounted"
+    write_finished_menu "$MENU_SRC"
+    mkstub mount <<'EOF'
+n=$(( $(cat "$MOUNTED.count" 2> /dev/null || printf 0) + 1 ))
+printf '%s\n' "$n" > "$MOUNTED.count"
+if (( n == ${MOUNT_CHANGE_AT:-0} )); then
+    printf 'changed\n' >> "$KU_ROOT/var/lib/dpkg/status"
+fi
+cp -r "$MENU_SRC"/. "${*: -1}"/
+printf '%s\n' "${*: -1}" > "$MOUNTED"
+EOF
+    mkstub umount <<'EOF'
+rm -rf "${*: -1}"/multibootusb
+rm -f "$MOUNTED"
+EOF
+    mkstub findmnt <<'EOF'
+case " $* " in
+    *" --mountpoint "*) printf '%s\n' "$FINDMNT_OUT" ;;
+    *" -o TARGET --source "*) [[ -s $MOUNTED ]] && cat "$MOUNTED" ;;
+    *) exit 1 ;;
+esac
+EOF
+}
+
 @test "cleanup --help prints its usage, and an unknown option or an argument exits 64" {
     local args
     run_ku cleanup --help
@@ -662,9 +689,47 @@ was changed"* ]]
     [[ "$stderr" == *"cleanup: nothing to do"* ]]
 }
 
+@test "cleanup refuses while an export waits to put back a menu that boots kernels by version" {
+    local out=$ROOT/root/kernel-updater/out name
+    local waits="the export in output_dir waits to put back a menu whose Kali entries boot"
+    listed "linux-image-$OLD" rc
+    mkdir -p "$out"
+    # A rollback in a VM only exports, so the stick still shows the finished menu.
+    for name in migrate-before.cfg migrate-after.cfg; do
+        cp "$REPO_DIR/tests/fixtures/grub/$name" "$out/grub.cfg"
+        (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
+        run_ku cleanup --yes
+        [ "$status" -eq 3 ] || { printf '%s exited %s\n' "$name" "$status" >&2; return 1; }
+        [[ "$stderr" == *"$waits kernels by their versions, which a purge could take away"* ]]
+        [[ "$stderr" == *"; nothing was changed"* ]]
+    done
+    [ -z "$(apt_calls | grep -v -e ' -s ' || true)" ]
+    # A finished menu that differs from the stick, as after an ISO was added, puts back none.
+    cp "$KU_P1_DIR/multibootusb/grub/grub.cfg" "$out/grub.cfg"
+    printf '# an older copy\n' >> "$out/grub.cfg"
+    (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
+    run_ku cleanup -n
+    [ "$status" -eq 0 ]
+    private_output
+}
+
+@test "A change while cleanup reads the menu after the question exits 75 before the purge" {
+    listed "linux-image-$OLD" rc
+    stick_on_disk
+    stick_mounts
+    export MOUNT_CHANGE_AT=2
+    run_ku cleanup --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"changed while the question waited"* ]]
+    [ "$(cat "$MOUNTED.count")" -eq 2 ]
+    [ -z "$(apt_calls | grep -v -e ' -s ' || true)" ]
+    private_output
+}
+
 @test "cleanup names an export that waits to be copied before the stage that made it" {
     local out=$ROOT/root/kernel-updater/out grub=$KU_P1_DIR/multibootusb/grub
-    local copy="copy the export in output_dir to the stick as its DEPLOY.txt says, if you have"
+    local copy="copy the export in output_dir to the stick as its DEPLOY.txt says if you have"
+    copy+=" not yet (a second copy would undo later changes); if you have,"
     mkdir -p "$out"
     # The menu stage exported, and Windows has not copied the files yet.
     printf 'exported kali.cfg\n' > "$out/kali.cfg"
@@ -673,7 +738,7 @@ was changed"* ]]
     printf 'menuentry "Other" {\n\ttrue\n}\n' > "$grub/grub.cfg"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"$copy not yet; else run 'kernel-updater migrate --stage menu', boot"* ]]
+    [[ "$stderr" == *"$copy run 'kernel-updater migrate --stage menu', boot"* ]]
     # finalize exported, and its grub.cfg is not on the stick yet.
     write_finished_menu "$KU_P1_DIR"
     cp "$REPO_DIR/tests/fixtures/grub/migrate-after.cfg" "$grub/grub.cfg"
@@ -681,7 +746,7 @@ was changed"* ]]
     (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"$copy not yet; else run 'kernel-updater migrate --stage finalize' after"* ]]
+    [[ "$stderr" == *"$copy run 'kernel-updater migrate --stage finalize' after"* ]]
     # An export the stick already holds waits for nothing.
     cp "$grub/grub.cfg" "$out/grub.cfg"
     (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
@@ -783,24 +848,8 @@ mounted where users other than root can change its files"* ]]
 }
 
 @test "cleanup reads the menu through a read-only mount and removes it before apt runs" {
-    export MENU_SRC="$BATS_TEST_TMPDIR/menu" MOUNTED="$BATS_TEST_TMPDIR/mounted"
-    write_finished_menu "$MENU_SRC"
     stick_on_disk
-    mkstub mount <<'EOF'
-cp -r "$MENU_SRC"/. "${*: -1}"/
-printf '%s\n' "${*: -1}" > "$MOUNTED"
-EOF
-    mkstub umount <<'EOF'
-rm -rf "${*: -1}"/multibootusb
-rm -f "$MOUNTED"
-EOF
-    mkstub findmnt <<'EOF'
-case " $* " in
-    *" --mountpoint "*) printf '%s\n' "$FINDMNT_OUT" ;;
-    *" -o TARGET --source "*) [[ -s $MOUNTED ]] && cat "$MOUNTED" ;;
-    *) exit 1 ;;
-esac
-EOF
+    stick_mounts
     run_ku cleanup -n
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"cleanup: nothing to do"* ]]

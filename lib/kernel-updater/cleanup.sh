@@ -305,8 +305,8 @@ _ku_cl_preconditions() {
 # Exit unless partition 1's menu shows a finished migration: until finalize, old entries boot a
 # kernel by its version, which a purge could take away. Reads it read-only, and only where no user
 # but root can change it, since the answer allows a purge. Exits 3 when the migration is not
-# finished or the menu is damaged, 66 when it cannot be read so, 78 on another stick or one the
-# configuration does not name.
+# finished, an export waits to bring old entries back or the menu is damaged, 66 when it cannot
+# be read so, 78 on another stick or one the configuration does not name.
 _ku_cl_menu_finished() {
     local identity=0 exported=0 state detail what step
     local unknown="so cleanup cannot tell whether the migration is finished"
@@ -334,7 +334,15 @@ _ku_cl_menu_finished() {
     # The exit trap tries again when the mount stays.
     ku_p1_close || ku_log warning "the read-only mount of partition 1 stays until cleanup ends"
     case $state in
-        ok) return 0 ;;
+        ok)
+            if (( exported == 2 )) && _ku_cl_export_boots_versions; then
+                ku_die "$KU_EX_REFUSED" "the export in output_dir waits to put back a menu whose" \
+                    "Kali entries boot kernels by their versions, which a purge could take away:" \
+                    "copy it to the stick as its DEPLOY.txt says and finish the migration again," \
+                    "or delete the export if you no longer want it; nothing was changed"
+            fi
+            return 0
+            ;;
         skip)
             what="the Kali entries still boot kernels by their versions"
             step="run 'kernel-updater migrate --stage menu', boot the new entries, then run"
@@ -349,9 +357,22 @@ _ku_cl_menu_finished() {
     # In a VM a stage only exports, so running it again would not change the stick.
     if (( exported == 2 )); then
         local copy="copy the export in output_dir to the stick as its DEPLOY.txt says"
-        step="$copy, if you have not yet; else $step"
+        copy+=" if you have not yet (a second copy would undo later changes); if you have,"
+        step="$copy $step"
     fi
     ku_die "$KU_EX_REFUSED" "$what, which a purge could take away: $step; nothing was changed"
+}
+
+# Return 0 when output_dir holds a grub.cfg that would bring back Kali entries naming kernels by
+# version: it does not source kali.cfg, holds legacy entries, or cannot be read as a menu. A
+# rollback in a VM only exports, so the stick shows such a menu only once Windows copied it.
+_ku_cl_export_boots_versions() {
+    local file legacy
+    file=$(ku_path "${KU_CONF[output_dir]}")/grub.cfg
+    [[ -f $file && ! -L $file ]] || return 1
+    ku_menu_sources_kali "$file" || return 0
+    legacy=$(ku_menu_legacy_count "$file") || return 0
+    (( legacy > 0 ))
 }
 
 # Exit 75 while apt or dpkg holds its frontend or database lock, naming the holder, and 3 when
@@ -973,9 +994,9 @@ _ku_cl_count() {
 
 # After the question, check that the plan still holds, or exit: plan again from the same
 # snapshot, which simulates apt's autoremove again, and simulate the purge again, if there is
-# one, then check the locks, take the snapshot anew, so that it also covers what changed while
-# the others ran, and last read the stick's menu again, which the tool's lock cannot keep Windows
-# from changing. Exits 75 when apt or dpkg runs or the set, a simulation or the snapshot changed,
+# one, read the stick's menu again, which the tool's lock cannot keep Windows from changing, then
+# check the locks, and last take the snapshot anew, so that it also covers what changed while
+# the others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the snapshot changed,
 # 3 when the locks cannot be read, and as _ku_cl_menu_finished says. A window of milliseconds
 # stays until apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to wait for. The
 # module trees are checked one by one, right before each is removed or moved (_ku_cl_trees).
@@ -985,6 +1006,7 @@ _ku_cl_recheck() {
         { (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; }; then
         changed=1
     fi
+    _ku_cl_menu_finished
     _ku_cl_not_busy
     if ! now=$(_ku_cl_snapshot) || [[ $now != "$KU_CL_SNAPSHOT" ]]; then
         changed=1
@@ -994,7 +1016,6 @@ _ku_cl_recheck() {
             "the links in /boot changed while the question waited, as when apt ran meanwhile, so" \
             "the plan no longer holds: run cleanup again; nothing was changed"
     fi
-    _ku_cl_menu_finished
 }
 
 # Run the one apt-get purge of KU_CL_SET, with apt's output on stderr, once the caller
