@@ -113,9 +113,11 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
   `/etc/kernel-updater.conf` means that the file needs a fix.
 - **Exit 66 or 78, saying "cleanup cannot tell whether the migration is finished".** `cleanup`
   could not read the menu on partition 1, or the stick is not the one the configuration names.
-  Settle what the message names, then run `cleanup` again. No option skips this check.
+  While a desktop has partition 1 mounted for its user, unmount it there first. Settle what the
+  message names, then run `cleanup` again. No option skips this check.
 - **Exit 3, naming `migrate --stage detect`, `system`, `menu` or `finalize`.** The migration is
-  not done: see [migration.md](migration.md).
+  not done: see [migration.md](migration.md). When the message names an export, copy it to the
+  stick from Windows as its `DEPLOY.txt` says, unless you have done so already.
 - **Exit 3, starting with `kali-menu:`.** The menu on partition 1 is damaged, as the message says.
   Run `sudo kernel-updater check`, and settle its `kali-menu` item first.
 - **"purge nothing while a reboot is pending".** Reboot into "Kali GNU/Linux". When the new

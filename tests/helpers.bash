@@ -212,9 +212,10 @@ make_disk_image() {
 # Write the menu of a finished migration under the partition-1 root DIR: a grub.cfg that sources
 # kali.cfg and holds no legacy entries, and that kali.cfg.
 write_finished_menu() {
+    local marker="# Kali GNU/Linux: kernel-updater keeps the entries in kali.cfg."
+    marker+=" Not a MultiBootUSB block."
     mkdir -p "$1/multibootusb/grub"
-    printf '%s\n' \
-        '# Kali GNU/Linux: kernel-updater keeps the entries in kali.cfg. Not a MultiBootUSB block.' \
+    printf '%s\n' "$marker" \
         'if [ -f /multibootusb/grub/kali.cfg ]; then' \
         '	source /multibootusb/grub/kali.cfg' \
         'fi' > "$1/multibootusb/grub/grub.cfg"

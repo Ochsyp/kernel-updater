@@ -119,6 +119,13 @@ case " $* " in
         done
         ;;
     *" %u %a "*) printf '0 600\n' ;;
+    *" -c %u -- "*)
+        if grep -F -q -x -e "${*: -1}" "${STUB_LOG%/*}/foreign.owner" 2> /dev/null; then
+            printf '1000\n'
+        else
+            printf '0\n'
+        fi
+        ;;
     *) exec "$REAL_STAT" "$@" ;;
 esac
 EOF
@@ -632,7 +639,9 @@ could take away: run 'kernel-updater migrate --stage menu', boot the new entries
 @test "cleanup refuses with 3 and purges nothing while legacy entries remain" {
     local args
     listed "linux-image-$OLD" rc
-    cp "$REPO_DIR/tests/fixtures/grub/migrate-after.cfg" "$KU_P1_DIR/multibootusb/grub/grub.cfg"
+    # With CRLF line endings, as MultiBootUSB writes them.
+    sed 's/$/\r/' "$REPO_DIR/tests/fixtures/grub/migrate-after.cfg" \
+        > "$KU_P1_DIR/multibootusb/grub/grub.cfg"
     for args in "" "-n" "--yes"; do
         # shellcheck disable=SC2086 # each case is split into its words on purpose
         run_ku cleanup $args
@@ -642,6 +651,75 @@ could take away: run 'kernel-updater migrate --stage finalize' after the boot te
 was changed"* ]]
         [ -z "$output" ]
     done
+    [ -z "$(apt_calls)" ]
+    private_output
+}
+
+@test "A finished menu with CRLF line endings lets cleanup run" {
+    sed -i 's/$/\r/' "$KU_P1_DIR/multibootusb/grub/grub.cfg"
+    run_ku cleanup -n
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"cleanup: nothing to do"* ]]
+}
+
+@test "cleanup names an export that waits to be copied before the stage that made it" {
+    local out=$ROOT/root/kernel-updater/out grub=$KU_P1_DIR/multibootusb/grub
+    local copy="copy the export in output_dir to the stick as its DEPLOY.txt says, if you have"
+    mkdir -p "$out"
+    # The menu stage exported, and Windows has not copied the files yet.
+    printf 'exported kali.cfg\n' > "$out/kali.cfg"
+    (cd "$out" && sha256sum kali.cfg > SHA256SUMS)
+    rm "$grub/kali.cfg"
+    printf 'menuentry "Other" {\n\ttrue\n}\n' > "$grub/grub.cfg"
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"$copy not yet; else run 'kernel-updater migrate --stage menu', boot"* ]]
+    # finalize exported, and its grub.cfg is not on the stick yet.
+    write_finished_menu "$KU_P1_DIR"
+    cp "$REPO_DIR/tests/fixtures/grub/migrate-after.cfg" "$grub/grub.cfg"
+    printf 'exported grub.cfg\n' > "$out/grub.cfg"
+    (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"$copy not yet; else run 'kernel-updater migrate --stage finalize' after"* ]]
+    # An export the stick already holds waits for nothing.
+    cp "$grub/grub.cfg" "$out/grub.cfg"
+    (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
+    run_ku cleanup -n
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"take away: run 'kernel-updater migrate --stage finalize' after"* ]]
+    [[ "$stderr" != *"$copy"* ]]
+    [ -z "$(apt_calls)" ]
+    private_output
+}
+
+@test "cleanup refuses with 3 and purges nothing when legacy entries return during the question" {
+    listed "linux-image-$OLD" rc
+    on_recheck "cp '$REPO_DIR/tests/fixtures/grub/migrate-after.cfg' \
+'$KU_P1_DIR/multibootusb/grub/grub.cfg'"
+    run_ku cleanup --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"the legacy Kali entries boot a kernel by its version"* ]]
+    [ -z "$(apt_calls | grep -v -e ' -s ' || true)" ]
+    private_output
+}
+
+@test "cleanup exits 66 and purges nothing while a desktop has partition 1 mounted for its user" {
+    listed "linux-image-$OLD" rc
+    stick_on_disk
+    mkstub findmnt <<'EOF'
+case " $* " in
+    *" --mountpoint "*) printf '%s\n' "$FINDMNT_OUT" ;;
+    *" --source "*) printf '%s / rw,nosuid,nodev\n' "$KU_ROOT/media/user/BOOT" ;;
+    *) exit 1 ;;
+esac
+EOF
+    foreign owner /media/user/BOOT
+    stub_refuse mount
+    run_ku cleanup -n
+    [ "$status" -eq 66 ]
+    [[ "$stderr" == *"so cleanup cannot tell whether the migration is finished: partition 1 is \
+mounted where users other than root can change its files"* ]]
     [ -z "$(apt_calls)" ]
     private_output
 }
@@ -705,14 +783,23 @@ was changed"* ]]
 }
 
 @test "cleanup reads the menu through a read-only mount and removes it before apt runs" {
-    export MENU_SRC="$BATS_TEST_TMPDIR/menu"
+    export MENU_SRC="$BATS_TEST_TMPDIR/menu" MOUNTED="$BATS_TEST_TMPDIR/mounted"
     write_finished_menu "$MENU_SRC"
     stick_on_disk
     mkstub mount <<'EOF'
 cp -r "$MENU_SRC"/. "${*: -1}"/
+printf '%s\n' "${*: -1}" > "$MOUNTED"
 EOF
     mkstub umount <<'EOF'
 rm -rf "${*: -1}"/multibootusb
+rm -f "$MOUNTED"
+EOF
+    mkstub findmnt <<'EOF'
+case " $* " in
+    *" --mountpoint "*) printf '%s\n' "$FINDMNT_OUT" ;;
+    *" -o TARGET --source "*) [[ -s $MOUNTED ]] && cat "$MOUNTED" ;;
+    *) exit 1 ;;
+esac
 EOF
     run_ku cleanup -n
     [ "$status" -eq 0 ]

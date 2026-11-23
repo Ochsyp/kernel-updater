@@ -303,11 +303,12 @@ _ku_cl_preconditions() {
 }
 
 # Exit unless partition 1's menu shows a finished migration: until finalize, old entries boot a
-# kernel by its version, which a purge could take away. Reads partition 1 read-only. Exits 3 when
-# the migration is not finished or the menu is damaged, 66 when it cannot be read, 78 on another
-# stick or one the configuration does not name.
+# kernel by its version, which a purge could take away. Reads it read-only, and only where no user
+# but root can change it, since the answer allows a purge. Exits 3 when the migration is not
+# finished or the menu is damaged, 66 when it cannot be read so, 78 on another stick or one the
+# configuration does not name.
 _ku_cl_menu_finished() {
-    local identity=0 state detail
+    local identity=0 exported=0 state detail what step
     local unknown="so cleanup cannot tell whether the migration is finished"
     if [[ -z $KU_P1_DIR ]]; then
         if ! ku_disk_find; then
@@ -322,30 +323,35 @@ _ku_cl_menu_finished() {
                 "$(ku_disk_unset_hint); nothing was changed"
         fi
     fi
-    if ! ku_p1_open ro; then
+    if ! ku_p1_open plan; then
         ku_die "$KU_EX_NOINPUT" "cannot read the stick's partition 1, $unknown:" \
             "$KU_DK_PROBLEM; nothing was changed"
     fi
     KU_CHECK_STATUS=() KU_CHECK_ITEM=() KU_CHECK_DETAIL=()
     _ku_check_kali_menu
     state=${KU_CHECK_STATUS[0]} detail=${KU_CHECK_DETAIL[0]}
+    ku_export_verify "$KU_DK_ROOT" > /dev/null || exported=$?
     # The exit trap tries again when the mount stays.
     ku_p1_close || ku_log warning "the read-only mount of partition 1 stays until cleanup ends"
     case $state in
-        ok) ;;
+        ok) return 0 ;;
         skip)
-            ku_die "$KU_EX_REFUSED" "the Kali entries still boot kernels by their versions," \
-                "which a purge could take away: run 'kernel-updater migrate --stage menu', boot" \
-                "the new entries, then run 'kernel-updater migrate --stage finalize'; nothing" \
-                "was changed"
+            what="the Kali entries still boot kernels by their versions"
+            step="run 'kernel-updater migrate --stage menu', boot the new entries, then run"
+            step+=" 'kernel-updater migrate --stage finalize'"
             ;;
         warn)
-            ku_die "$KU_EX_REFUSED" "the legacy Kali entries boot a kernel by its version," \
-                "which a purge could take away: run 'kernel-updater migrate --stage finalize'" \
-                "after the boot tests; nothing was changed"
+            what="the legacy Kali entries boot a kernel by its version"
+            step="run 'kernel-updater migrate --stage finalize' after the boot tests"
             ;;
         *) ku_die "$KU_EX_REFUSED" "kali-menu: $detail; nothing was changed" ;;
     esac
+    # In a VM a stage only exports, so running it again would not change the stick.
+    if (( exported == 2 )); then
+        local copy="copy the export in output_dir to the stick as its DEPLOY.txt says"
+        step="$copy, if you have not yet; else $step"
+    fi
+    ku_die "$KU_EX_REFUSED" "$what, which a purge could take away: $step; nothing was changed"
 }
 
 # Exit 75 while apt or dpkg holds its frontend or database lock, naming the holder, and 3 when
@@ -967,11 +973,12 @@ _ku_cl_count() {
 
 # After the question, check that the plan still holds, or exit: plan again from the same
 # snapshot, which simulates apt's autoremove again, and simulate the purge again, if there is
-# one, then check the locks, and last take the snapshot anew, so that it also covers what
-# changed while the others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the
-# snapshot changed, and 3 when the locks cannot be read. A window of milliseconds stays until
-# apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to wait for. The module trees
-# are checked one by one, right before each is removed or moved (_ku_cl_trees).
+# one, then check the locks, take the snapshot anew, so that it also covers what changed while
+# the others ran, and last read the stick's menu again, which the tool's lock cannot keep Windows
+# from changing. Exits 75 when apt or dpkg runs or the set, a simulation or the snapshot changed,
+# 3 when the locks cannot be read, and as _ku_cl_menu_finished says. A window of milliseconds
+# stays until apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to wait for. The
+# module trees are checked one by one, right before each is removed or moved (_ku_cl_trees).
 _ku_cl_recheck() {
     local now planned=" ${KU_CL_SET[*]} " changed=0
     if ! _ku_cl_plan || [[ " ${KU_CL_SET[*]} " != "$planned" ]] ||
@@ -987,6 +994,7 @@ _ku_cl_recheck() {
             "the links in /boot changed while the question waited, as when apt ran meanwhile, so" \
             "the plan no longer holds: run cleanup again; nothing was changed"
     fi
+    _ku_cl_menu_finished
 }
 
 # Run the one apt-get purge of KU_CL_SET, with apt's output on stderr, once the caller
