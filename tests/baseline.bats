@@ -135,6 +135,52 @@ expected_baseline() {
     [[ "$output" == *"$(printf '%-12s  %s' same 16)" ]]
 }
 
+@test "A FAT boot sector hashes without its dirty byte, and any other changed byte shows" {
+    local bits flags
+    for bits in 32 16; do
+        make_fat_disk_image "$KU_P1_DISK" "$bits"
+        flags=$(( bits == 32 ? 1024 + 65 : 1024 + 37 ))
+        run_ku baseline --yes
+        [ "$status" -eq 0 ]
+        # Set as an unclean unplug leaves it: dirty, and disk errors found.
+        printf '\x01' | dd of="$KU_P1_DISK" bs=1 seek="$flags" conv=notrunc status=none
+        run_ku baseline --show
+        [[ "$output" == *"$(printf '%-12s  %s' same 16)" ]]
+        printf '\x03' | dd of="$KU_P1_DISK" bs=1 seek="$flags" conv=notrunc status=none
+        run_ku baseline --show
+        [[ "$output" == *"$(printf '%-12s  %s' same 16)" ]]
+        # The byte after it, and the OEM name.
+        poke_byte "$KU_P1_DISK" $(( flags + 1 ))
+        run_ku baseline --show
+        [[ "$output" == *"$(printf '%-12s  %s\n' same 15 changed p1:boot-sector)" ]]
+        make_fat_disk_image "$KU_P1_DISK" "$bits"
+        poke_byte "$KU_P1_DISK" 1027
+        run_ku baseline --show
+        [[ "$output" == *"$(printf '%-12s  %s\n' same 15 changed p1:boot-sector)" ]]
+    done
+    # An NTFS boot sector keeps every byte: its hash is that of the raw sector.
+    make_disk_image "$KU_P1_DISK"
+    run_ku baseline --yes
+    grep -q -x -F "$(dd if="$KU_P1_DISK" bs=512 skip=2 count=1 status=none | sum)  p1:boot-sector" \
+        "$ROOT$BASELINE"
+    printf '\x01' | dd of="$KU_P1_DISK" bs=1 seek=$(( 1024 + 65 )) conv=notrunc status=none
+    run_ku baseline --show
+    [[ "$output" == *"$(printf '%-12s  %s\n' same 15 changed p1:boot-sector)" ]]
+}
+
+@test "On FAT the list's globs match names in capitals, as an old FAT tool stores them" {
+    printf 'module\n' > "$KU_P1_DIR/multibootusb/grub/i386-pc/EXTRA.MOD"
+    # shellcheck disable=SC2016 # the code expands its own variables
+    run_ku_lib 'KU_DK_FSTYPE=vfat; ku_baseline_hash "$KU_P1_DIR"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"  multibootusb/grub/i386-pc/EXTRA.MOD"* ]]
+    # NTFS keeps the case of its names, and the globs match it.
+    # shellcheck disable=SC2016 # the code expands its own variables
+    run_ku_lib 'KU_DK_FSTYPE=ntfs; ku_baseline_hash "$KU_P1_DIR"'
+    [ "$status" -eq 0 ]
+    [[ "$output" != *EXTRA.MOD* ]]
+}
+
 @test "Declining exits 10, --dry-run writes nothing, and no terminal means no" {
     printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
     run_ku baseline
@@ -199,7 +245,7 @@ EOF
         > "$ROOT/etc/kernel-updater.conf"
     run_ku baseline --yes
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the NTFS"* ]]
+    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
     [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "$stderr" != */dev/sd* ]]
     # --show says so too, without a value, exits 0 and leaves the other partition 1 alone.
     mkstub mount <<< 'exit 32'
@@ -208,7 +254,7 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "$(printf '%-12s  %s\n' disk match partition-1 mismatch grub-version \
         unknown baseline "not compared")" ]
-    [[ "$stderr" == *"warning: partition 1 of the disk that holds /boot is not the NTFS"* ]]
+    [[ "$stderr" == *"warning: partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
     [[ "$stderr" == *"p1_fs_uuid names, so partition 1 is not read"* ]]
     refute_line_match '^u?mount ' "$STUB_LOG"
     [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "$stderr" != */dev/sd* ]]

@@ -825,7 +825,7 @@ mounted where users other than root can change its files"* ]]
     sed -i 's/^p1_fs_uuid = .*/p1_fs_uuid = 5CA1AB1E00000002/' "$ROOT$CONF"
     run_ku cleanup -n
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"is not the NTFS filesystem p1_fs_uuid names; nothing was changed"* ]]
+    [[ "$stderr" == *"is not the FAT or NTFS filesystem p1_fs_uuid names; nothing was changed"* ]]
     private_output
     # A stick the configuration does not name.
     sed -i '/^p1_fs_uuid = /d' "$ROOT$CONF"

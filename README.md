@@ -8,7 +8,8 @@ lists what changed, and [CONTRIBUTING.md](CONTRIBUTING.md) describes how changes
 ## The setup it serves
 
 A USB stick boots several systems through MultiBootUSB, whose GRUB reads
-`/multibootusb/grub/grub.cfg` from an NTFS partition. One submenu starts a full Kali install
+`/multibootusb/grub/grub.cfg` from partition 1: FAT32 with syslinux's boot sector, as
+MultiBootUSB makes it, or NTFS. One submenu starts a full Kali install
 on the same stick, with an encrypted `/boot` that GRUB unlocks and an encrypted root behind
 it. The same install also runs as a virtual machine straight from the stick, booting through
 the same menu.
@@ -50,10 +51,11 @@ GNU coreutils and awk; `grub-script-check` (Debian package `grub-common`) adds a
 to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk` and `blkid`
 (util-linux), `mount` and `umount` (Debian package `mount`), `dpkg-query`, `linux-version`
 (linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which a Kali install
-has. `check` and `baseline` mount the stick's NTFS partition read-only with the kernel's `ntfs3`
-driver, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it, which `migrate` does, needs
-`ntfs3` and `ntfs-3g.probe`, from the same package, and `systemd-detect-virt` tells the
-writer whether it runs in a VM. `migrate` also runs `linux-update-symlinks` (linux-base),
+has. `check` and `baseline` mount the stick's partition 1 read-only: FAT with the kernel's
+`vfat` driver, NTFS with `ntfs3`, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it,
+which `migrate` does on NTFS only, needs `ntfs3` and `ntfs-3g.probe`, from the same package,
+and `systemd-detect-virt` tells the writer whether it runs in a VM, and `check` which
+hypervisor runs it. `migrate` also runs `linux-update-symlinks` (linux-base),
 `debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs. `cleanup`
 runs `apt-get` and `apt-mark` (apt), `dpkg-query`, and `dkms` when it is installed; it moves a
 module tree into its quarantine only with GNU `mv` from coreutils 9.2 on, whose `--no-copy`
@@ -153,12 +155,13 @@ as the `/boot` items while `/boot` is not mounted. `boot-links`, `stale-root-lin
 `reboot-pending` apply only while `/etc/kernel-img.conf` keeps the links in `/boot`.
 `boot-luks` and `boot-ext` judge `/boot` by the GRUB that `grub_floor` names, 2.02 by default.
 
-The last six items look at the stick's partition 1 (see [Partition 1](#partition-1)). `check`
-reads it through `p1_path` while that serves, through a mount that is there, or else through a
-read-only mount of its own on a private directory in `/run`, which it removes before it exits,
-also when interrupted. The five after `p1-identity` skip, saying why, when partition 1 cannot
-be found from `/boot`, is another than the configuration names, or cannot be read; another
-partition 1 is never read. `--no-partition` skips all six and leaves partition 1 alone.
+The last seven items look at the stick's partition 1 (see [Partition 1](#partition-1)).
+`check` reads it through `p1_path` while that serves, through a mount that is there, or else
+through a read-only mount of its own on a private directory in `/run`, which it removes before
+it exits, also when interrupted. The six after `p1-identity` skip, saying why, when partition 1
+cannot be found from `/boot`, is another than the configuration names, or cannot be read;
+another partition 1 is never read. `--no-partition` skips all seven and leaves partition 1
+alone.
 
 | Item | Checks |
 |---|---|
@@ -175,12 +178,13 @@ partition 1 is never read. `--no-partition` skips all six and leaves partition 1
 | `boot-ext` | The ext filesystem at `/boot` has no incompatible feature the GRUB of `grub_floor` refuses: 2.02 reads `filetype`, `extent`, `flex_bg`, `meta_bg` and `64bit` and ignores `needs_recovery` and `mmp`, 2.06 also reads `encrypt`, and 2.12 also ignores `metadata_csum_seed` and `large_dir`. Fails on any other, such as `inline_data` or `casefold` |
 | `fstab-crypttab` | `/etc/fstab` and `/etc/crypttab` name devices by `UUID=` or another name that stays; warns on kernel names such as `/dev/sdX` and on `/dev/disk/by-path` and `/dev/disk/by-id` names, which change with the port or in a VM |
 | `grub-pc` | The debconf answer `grub-pc/install_devices` is empty, so a grub-pc upgrade cannot write GRUB over the stick's boot loader; fails while it names a device |
-| `p1-identity` | Partition 1, found from `/boot`, is the NTFS filesystem `p1_fs_uuid` names, on the disk `disk_ptuuid` names; fails when it is another, naming the disk or partition 1 but no value, also when only one of the keys is set and names another, and, with both keys set, when it cannot be found; skips otherwise while either key is not set |
+| `p1-identity` | Partition 1, found from `/boot`, is the FAT or NTFS filesystem `p1_fs_uuid` names, on the disk `disk_ptuuid` names; fails when it is another, naming the disk or partition 1 but no value, also when only one of the keys is set and names another, and, with both keys set, when it cannot be found; skips otherwise while either key is not set |
 | `grub-version` | The stick's GRUB, whose version `multibootusb/grub/i386-pc/normal.mod` holds, is at least as new as `grub_floor`, or lint and check would trust features it lacks; fails when it is older, warns when its version is unknown, and names the higher floor a newer GRUB allows |
 | `tripwire` | The stick's boot code matches the baseline `kernel-updater baseline` recorded: the files `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector; fails naming what changed, is new or is missing, a file that is or passes a symlink counting as missing, and warns while no baseline is stored |
 | `deployed` | The files exported to `output_dir` match those on partition 1, as its `SHA256SUMS` lists them; fails naming each one that differs or is missing, and skips while nothing was exported. Copy the export only when you have not yet: copied again after the stick changed, it would undo that change |
 | `kali-cfg` | `multibootusb/grub/kali.cfg`, which the menu stage of `migrate` writes, passes `lint` with the stick's own command and module lists; fails on errors and when it or a directory on its way is a symlink, warns on warnings, and skips while the file does not exist |
 | `kali-menu` | `grub.cfg` holds the block `migrate` writes, which sources `kali.cfg`, and `kali.cfg` exists; skips while neither is there, before the migration, warns while the legacy Kali entries remain (until `migrate --stage finalize`), and fails when only one of the block and `kali.cfg` is there, as after a rollback of the menu stage until `kali.cfg` is deleted or the stage runs again, or when `grub.cfg` or a directory on its way is a symlink |
+| `boot-menu` | Which menu booted the running kernel, and which hypervisor runs this system, as `systemd-detect-virt` names it (`none` on bare metal): counts the lines that name the kernel's file, `vmlinuz-<release>`, in the stick's `grub.cfg` and `kali.cfg` and in this system's `/boot/grub/grub.cfg`. Only reports, so it is `ok`, or skips when the release is unknown or a file of the stick's menu is a symlink. After the migration neither menu names a version, as both boot `/vmlinuz` |
 
 Results go to stdout as aligned `STATUS ITEM DETAIL` lines, or with `--porcelain` as
 `ITEM<TAB>STATUS<TAB>DETAIL`, and a summary goes to stderr. Details name kinds and counts,
@@ -198,7 +202,10 @@ kernel-updater baseline [--show] [--yes] [--dry-run] [--porcelain]
 file on partition 1 that `share/kernel-updater/baseline.list` names, such as the boot menus,
 GRUB's core image and modules and syslinux's files, plus the MBR boot code (bytes 0 to 439 of
 the disk, `mbr:boot-code`) and partition 1's boot sector (its first 512 bytes, where syslinux
-keeps its own code, `p1:boot-sector`). Files that do not exist are not recorded. check's
+keeps its own code, `p1:boot-sector`). In a FAT boot sector the flags byte counts as 0: Linux
+and Windows mark it on every mount, and an unplug without an eject leaves the mark, which says
+nothing about the boot code. On FAT the globs of `baseline.list` match names in any case, as an
+old FAT tool may store them in capitals. Files that do not exist are not recorded. check's
 `tripwire` then fails when any of them changes, so record the baseline anew after you change
 the stick on purpose.
 
@@ -388,29 +395,33 @@ and records name packages, releases and paths, never a disk identifier.
 
 ### Partition 1
 
-The tool finds and reaches the stick's partition 1, the NTFS partition labelled BOOT that holds
-MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` writes it.
+The tool finds and reaches the stick's partition 1, the FAT or NTFS partition labelled BOOT
+that holds MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate`
+writes it, and only when it is NTFS. A FAT partition 1 is read only: every stage that would
+write it leaves its files in `output_dir` for Windows to copy, and says why.
 
 - **Finding it.** The tool never trusts a `/dev/sdX` or `/dev/disk/by-id` name, which change
   with the port and in a VM. It starts from the filesystem mounted at `/boot`, walks up with
   `lsblk -s` through the LUKS mapping to the one disk under it, refusing none or several, and
   takes that disk's partition 1. `blkid -p` reads what `lsblk` leaves empty without udev.
-- **Telling it apart.** The disk's PTUUID must be `disk_ptuuid` and partition 1 must be NTFS
-  with the serial `p1_fs_uuid`. A VM that has the whole stick attached, as through a raw-disk
-  VMDK, shows the same identifiers, so both checks hold natively and in such a VM. Messages
+- **Telling it apart.** The disk's PTUUID must be `disk_ptuuid` and partition 1 must be FAT
+  (`vfat`) or NTFS with the serial `p1_fs_uuid`. A VM that has the whole stick attached, as
+  through a raw-disk VMDK, shows the same identifiers, so both checks hold natively and in such a VM. Messages
   say which part differs, never a value.
 - **Reaching it.** A reader, which only hashes and lints what it reads, takes `p1_path` while
   it serves: while it is a mount point that holds `multibootusb/grub/grub.cfg` and, when
   partition 1 can be read, the same `grub.cfg` as partition 1, so that neither the empty mount
   point of a share that is not mounted, as on a native boot, nor another stick's share passes
   for it. Otherwise it takes a mount of partition 1 that is there, and else mounts it
-  read-only on a private directory in `/run` with `nosuid,nodev,noexec`, trying `ntfs3`, then
-  `ntfs-3g`, which gets `norecover`. A read-only mount writes nothing with either. Readers
+  read-only on a private directory in `/run` with `nosuid,nodev,noexec`: FAT with `vfat` and
+  `uid=0,gid=0,umask=077`, as FAT keeps no owners, and NTFS trying `ntfs3`, then `ntfs-3g`,
+  which gets `norecover`. A read-only mount writes nothing with any of them. Readers
   follow no symlink on partition 1, which Windows or a user who owns a mount of it could have
   made: a file that is or passes one counts as missing to the tripwire and to the `deployed`
   item, its GRUB version as unknown, and `kali-cfg` fails.
-- **Writing it.** A writer goes the same way, but takes `p1_path` only with `deploy = path`,
-  and a mount that is there only while it is read-write; both only while no user but root can
+- **Writing it.** Nothing writes a FAT partition 1, since the safe writer below is proven on
+  NTFS alone. On NTFS a writer goes the same way, but takes `p1_path` only with
+  `deploy = path`, and a mount that is there only while it is read-write; both only while no user but root can
   change their files, which rules out the mount a desktop makes for its user, since such a
   user could swap a file for a symlink while root writes. A mount of partition 1, or the share
   at `p1_path`, serves a writer only while it is mounted nowhere else, as mounts of one
@@ -424,8 +435,9 @@ MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate` 
   read-write all the same. It checks that the mount is read-write. A read-write mount that
   root made itself took the volume as it was, so the writer takes it as it is. A dry run
   mounts read-only and does not probe.
-- **Deploying.** In a VM, where Windows may have partition 1 mounted on the host, the guest
-  never writes partition 1 itself: `deploy = auto` and `direct` export there, and only `path`
+- **Deploying.** Every mode exports a FAT partition 1's files: `auto` says so as info, and
+  `direct` and `path` warn. In a VM, where Windows may have partition 1 mounted on the host,
+  the guest never writes partition 1 itself: `deploy = auto` and `direct` export there, and only `path`
   writes, through the host's share. Natively, `auto` and `direct` write directly. `direct` and
   `path` fall back to an export, saying why, when they get no root they may write, as when
   their own read-write mount finds partition 1 hibernated, unclean or marked dirty, or the
@@ -518,7 +530,7 @@ file must be owned by root and not writable by group or others. `examples/kernel
 | `boot_luks_uuid` | UUID of the LUKS container that holds `/boot`, as `cryptsetup luksUUID` prints it. `check` fails when `/boot` is in another container |
 | `verify_action` | What the postinst hook does with a new kernel that may not boot: `fail` (the default) stops its configure, `warn` only warns |
 | `disk_ptuuid` | The stick's disk, as the PTUUID `lsblk -o NAME,LABEL,PTUUID,UUID` prints for it: 8 hex digits, the disk signature of an MBR disk, or a UUID for a GPT disk; kept lower case. With `p1_fs_uuid` it tells the stick apart: `check` fails and `baseline` refuses on another disk |
-| `p1_fs_uuid` | The serial of the stick's NTFS partition 1, labelled BOOT, as the same command prints its UUID: 16 hex digits, kept upper case |
+| `p1_fs_uuid` | The serial of the stick's partition 1, labelled BOOT, as the same command prints its UUID: two groups of 4 hex digits for FAT, such as `5CA1-AB1E`, or 16 hex digits for NTFS; kept upper case |
 | `deploy` | How the files `migrate` writes reach partition 1: `auto` (the default) writes through a mount of partition 1 natively and exports in a VM; `direct` writes through a mount of partition 1 too, and in a VM exports all the same, since the guest never writes partition 1; `export` leaves them in `output_dir` for Windows to copy; `path` writes through `p1_path`, in a VM too, where the host then writes. See [Partition 1](#partition-1) |
 | `p1_path` | An absolute path where partition 1's root is mounted already, such as a VirtualBox shared folder. It serves only while it is a mount point that holds `multibootusb/grub/grub.cfg`, the same as partition 1's when that can be read; then `check` and `baseline` read there, and otherwise partition 1 itself. `deploy = path` writes there, and a plan reads there what it builds on, only while no user but root can change its files, as with a share mounted with `uid=0,gid=0,dmode=0700,fmode=0600`, and while the share is mounted nowhere else, as VirtualBox's automount of it would be; otherwise a plan reads partition 1 itself |
 | `output_dir` | Where an export goes, an absolute path: `/root/kernel-updater/out` by default. It must be a directory of root's closed to group and others (mode 0700), and holds the latest export only |
@@ -659,6 +671,16 @@ bats tests/
   `ntfs` job of the tests workflow installs `ntfs-3g` and `dmsetup`, loads `ntfs3` and runs
   them with `sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs`, failing when any is
   skipped. Run them only on a machine you can spare, as root.
+- `tests/fat` holds the same kind of tests for a FAT partition 1, as MultiBootUSB makes it:
+  partition 1 made FAT32 with `mkfs.vfat` and the serial `5CA1-AB1E`, and `syslinux` installed
+  in `multibootusb`, which writes its boot sector. On it they find partition 1 from `/boot` and
+  check its identity, mount it read-only with `vfat` as root's alone, read names stored in
+  capitals, see a mount a user owns serve no plan, see every deploy mode export instead of
+  writing, and see the tripwire pass a real "not cleanly unmounted" flag but catch any other
+  changed byte of the boot sector. Their `migrate.bats` runs `detect` on the stick and the menu
+  stage, which leaves its files in `output_dir` and partition 1 byte for byte as it was. They
+  run only with `KU_FAT=1`, as root; the `fat` job installs `dosfstools`, `syslinux`, `mtools`
+  and `dmsetup` and runs them with `sudo env "PATH=$PATH" KU_FAT=1 bats --tap tests/fat`.
 - `.githooks/privacy-scan` runs in the tests and before every commit on a clone with the hooks
   turned on (see CONTRIBUTING.md). It refuses CRLF line endings; disk and partition
   identifiers (UUIDs, volume serials, LVM UUIDs, PARTUUIDs) outside the synthetic range;

@@ -43,10 +43,11 @@ Usage: kernel-updater check [--strict] [--no-partition] [--porcelain]
 Reports whether the system keeps the stick's Kali entries bootable: /boot, its links and LUKS
 container, the kernel packages, the initrds, fstab, crypttab and grub-pc, then the stick's
 partition 1: its identity, its GRUB, the tripwire over its boot code, the exported files,
-kali.cfg and whether grub.cfg sources it. Runs as root and changes nothing; a read-only bind
-mount of / looks under the /boot mount point, and partition 1 is read through p1_path or a
-mount that is there, or else through a read-only mount of its own; the mounts it makes are
-removed before the command exits. Results name kinds and counts, never identifiers.
+kali.cfg, whether grub.cfg sources it, and which menu booted the running kernel in which
+hypervisor. Runs as root and changes nothing; a read-only bind mount of / looks under the /boot
+mount point, and partition 1 is read through p1_path or a mount that is there, or else through
+a read-only mount of its own; the mounts it makes are removed before the command exits.
+Results name kinds and counts, never identifiers.
 
   --strict        exit 2 on warnings too
   --no-partition  skip the partition-1 items and leave partition 1 alone
@@ -743,15 +744,16 @@ _ku_check_grub_pc() {
 }
 
 # The partition-1 items, after the system's: p1-identity, grub-version, tripwire, deployed,
-# kali-cfg and kali-menu. They read partition 1 read-only, through KU_P1_DIR, p1_path, a mount
-# that is there or a read-only mount of their own on a private directory in /run, which goes
-# before the results are printed, or through the exit trap should the command be cut short.
+# kali-cfg, kali-menu and boot-menu. They read partition 1 read-only, through KU_P1_DIR,
+# p1_path, a mount that is there or a read-only mount of their own on a private directory in
+# /run, which goes before the results are printed, or through the exit trap should the command
+# be cut short.
 # Each skips with --no-partition (SKIP 1), and all but p1-identity skip, saying why, when
 # partition 1 cannot be found, is another, or cannot be read.
 _ku_check_partition() {
     local name
     if (( $1 )); then
-        for name in p1-identity grub-version tripwire deployed kali-cfg kali-menu; do
+        for name in p1-identity grub-version tripwire deployed kali-cfg kali-menu boot-menu; do
             _ku_check_add skip "$name" "--no-partition leaves partition 1 alone"
         done
         return 0
@@ -761,7 +763,7 @@ _ku_check_partition() {
         KU_CK_P1_WHY="partition 1 cannot be read: $KU_DK_PROBLEM"
     fi
     if [[ -n $KU_CK_P1_WHY ]]; then
-        for name in grub-version tripwire deployed kali-cfg kali-menu; do
+        for name in grub-version tripwire deployed kali-cfg kali-menu boot-menu; do
             _ku_check_add skip "$name" "$KU_CK_P1_WHY"
         done
         return 0
@@ -771,17 +773,19 @@ _ku_check_partition() {
     _ku_check_deployed
     _ku_check_kali_cfg
     _ku_check_kali_menu
+    _ku_check_boot_menu
     if ! ku_p1_close; then
         ku_log warning "the read-only mount of partition 1 stays on $KU_DK_MOUNT_DIR/p1:" \
             "unmount it and remove $KU_DK_MOUNT_DIR by hand"
     fi
 }
 
-# p1-identity: partition 1, found through the disk that holds /boot, must be the NTFS
+# p1-identity: partition 1, found through the disk that holds /boot, must be the FAT or NTFS
 # filesystem p1_fs_uuid names, on the disk disk_ptuuid names. Fails as soon as either key that
 # is set names another, and otherwise skips while either is not set; with KU_P1_DIR the test
 # directory stands in for partition 1. Sets KU_CK_P1_WHY when the other partition-1 items
 # cannot go on, so that they never read a partition 1 the configuration rejects.
+# shellcheck disable=SC2153 # ku_disk_find in disk.sh sets KU_DK_FSTYPE
 _ku_check_p1_identity() {
     local found=1 status=2
     KU_CK_P1_WHY=""
@@ -804,6 +808,9 @@ _ku_check_p1_identity() {
         _ku_check_add ok p1-identity "partition 1 is the test directory KU_P1_DIR names"
     elif (( ! found )); then
         _ku_check_add fail p1-identity "$KU_CK_P1_WHY"
+    elif [[ $KU_DK_FSTYPE == vfat ]]; then
+        _ku_check_add ok p1-identity "the disk that holds /boot and its FAT partition 1 are" \
+            "the ones disk_ptuuid and p1_fs_uuid name"
     else
         _ku_check_add ok p1-identity "the disk that holds /boot and its NTFS partition 1 are" \
             "the ones disk_ptuuid and p1_fs_uuid name"
@@ -995,4 +1002,48 @@ _ku_check_kali_menu() {
         _ku_check_add ok kali-menu "grub.cfg sources multibootusb/grub/kali.cfg, and no legacy" \
             "Kali entries remain"
     fi
+}
+
+# boot-menu: which menu booted the running kernel, and in which hypervisor, as
+# systemd-detect-virt names it (none on bare metal). Counts the lines that name the kernel's file, vmlinuz-RELEASE,
+# in the stick's menu, multibootusb/grub/grub.cfg and kali.cfg, and in this system's
+# /boot/grub/grub.cfg; once migrated, both boot /vmlinuz, which names no version. Reports only:
+# ok, or skip when the release is unknown or a file of the stick's menu is a symlink, which it
+# does not follow.
+_ku_check_boot_menu() {
+    local virt=unknown name rel file count stick=0 own=0 why
+    if [[ -z $KU_CK_RUNNING ]]; then
+        _ku_check_add skip boot-menu "uname -r prints no kernel release"
+        return 0
+    fi
+    if command -v systemd-detect-virt > /dev/null; then
+        # It prints none and exits 1 on bare metal.
+        virt=$(systemd-detect-virt --vm 2> /dev/null) || :
+        [[ $virt =~ ^[a-z0-9_-]+$ ]] || virt=unknown
+    fi
+    for name in grub.cfg kali.cfg; do
+        rel=multibootusb/grub/$name file=$KU_DK_ROOT/multibootusb/grub/$name
+        [[ -e $file || -L $file ]] || continue
+        if ! ku_p1_no_symlink "$KU_DK_ROOT" "$rel"; then
+            _ku_check_add skip boot-menu "$rel or a directory on its way is a symlink, which" \
+                "check does not follow"
+            return 0
+        fi
+        # grep -c prints 0 and exits 1 when no line matches.
+        count=$(grep -a -c -F -e "vmlinuz-$KU_CK_RUNNING" -- "$file" 2> /dev/null) || :
+        stick=$((stick + ${count:-0}))
+    done
+    file=$(ku_path /boot/grub/grub.cfg)
+    if [[ -f $file ]]; then
+        own=$(grep -a -c -F -e "vmlinuz-$KU_CK_RUNNING" -- "$file" 2> /dev/null) || :
+        own=${own:-0}
+    fi
+    case $(( stick > 0 )):$(( own > 0 )) in
+        1:0) why="the stick's menu booted it" ;;
+        0:1) why="Kali's own menu booted it" ;;
+        1:1) why="either menu may have booted it" ;;
+        *) why="neither menu names it by version, as after the migration" ;;
+    esac
+    _ku_check_add ok boot-menu "hypervisor: $virt; the stick's menu names the running kernel's" \
+        "version on $stick line(s), /boot/grub/grub.cfg on $own, so $why"
 }

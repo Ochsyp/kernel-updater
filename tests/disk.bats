@@ -16,6 +16,8 @@ load helpers
 
 PTUUID=5ca1ab1e
 SERIAL=5CA1AB1E00000001
+# Partition 1's filesystem type, which stick_fat makes vfat.
+P1_FSTYPE=ntfs
 BOOT_UUID=5ca1ab1e-0000-4000-8000-000000000b01
 # What the tests print of the deploy mode: mode|why|how|writable.
 SHOW_DEPLOY='printf "%s|%s|%s|%s\n" "$KU_DK_DEPLOY" "$KU_DK_DEPLOY_WHY" "$KU_DK_HOW"'
@@ -23,6 +25,8 @@ SHOW_DEPLOY+=' "$KU_DK_WRITABLE"'
 # Why auto and direct export in a VM.
 IN_VM="this system runs in a VM, where Windows may have partition 1 mounted on the host, so it"
 IN_VM+=" never writes partition 1 itself"
+# Why nothing writes a FAT partition 1.
+FAT_WHY="partition 1 is FAT, which kernel-updater only reads"
 # Why a writer or a plan takes no mount whose files other users can change.
 SHARED="partition 1 is mounted where users other than root can change its files, as a desktop"
 SHARED+=" mounts it for its user: unmount it there, as its eject does, and run again"
@@ -166,10 +170,19 @@ stick_on() {
     local disk=/dev/$1
     export BOOT_MOUNT="/dev/mapper/boot_crypt ext4 $BOOT_UUID" STICK_PTUUID=$PTUUID
     export STICK_TREE="/dev/mapper/boot_crypt crypt"$'\n'"${disk}3 part"$'\n'"$disk disk"
-    STICK_PARTS=$(printf '%s %s %s %s\n' "$disk" "" "" "" "${disk}1" 1 ntfs "$SERIAL" \
+    STICK_PARTS=$(printf '%s %s %s %s\n' "$disk" "" "" "" "${disk}1" 1 "$P1_FSTYPE" "$SERIAL" \
         "${disk}2" 2 vfat 5CA1-AB1E "${disk}3" 3 crypto_LUKS \
         5ca1ab1e-0000-4000-8000-000000000c01 /dev/mapper/boot_crypt "" ext4 "$BOOT_UUID")
     export STICK_PARTS
+}
+
+# Make the stick's partition 1 FAT, as MultiBootUSB leaves it, with the serial 5CA1-AB1E, and
+# write the config that names it, with any further LINES. Partition 1 then mounts only as vfat.
+stick_fat() {
+    SERIAL=5CA1-AB1E P1_FSTYPE=vfat
+    write_config "$@"
+    stick_on sdb
+    export MOUNT_TYPES=vfat
 }
 
 # Make p1_path, /media/sf_BOOT, a mounted share that holds MultiBootUSB's grub.cfg, and have
@@ -188,7 +201,8 @@ share_p1() {
 # Fail unless the last run printed no identifier and no device name.
 private_output() {
     local all="${output,,}${stderr,,}"
-    [[ "$all" != *5ca1ab1e* && "$all" != */dev/sd* && "$all" != */dev/mapper* ]]
+    [[ "$all" != *5ca1ab1e* && "$all" != *5ca1-ab1e* && "$all" != */dev/sd* &&
+        "$all" != */dev/mapper* ]]
 }
 
 # Print the mount and umount calls of the stub log, without the private directory's random
@@ -288,7 +302,7 @@ mount_calls() {
         > "$ROOT/etc/kernel-updater.conf"
     run_ku_lib ku_p1_locate
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the NTFS"* ]]
+    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
     private_output
     printf 'disk_ptuuid = %s\np1_fs_uuid = %s\n' 5ca1ab1e-0000-4000-8000-000000000d01 \
         5CA1AB1E00000002 > "$ROOT/etc/kernel-updater.conf"
@@ -296,13 +310,92 @@ mount_calls() {
     [ "$status" -eq 78 ]
     [[ "$stderr" == *"neither the disk that holds /boot nor its partition 1 is the one"* ]]
     private_output
-    # Partition 1 must be NTFS too, whatever its UUID.
+    # Partition 1 must be FAT or NTFS too, whatever its UUID.
     write_config
     STICK_PARTS=$(printf '%s %s %s %s\n' /dev/sdb "" "" "" /dev/sdb1 1 exfat "$SERIAL")
     export STICK_PARTS
     run_ku_lib ku_p1_locate
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"partition 1 of the disk that holds /boot is not the NTFS filesystem"* ]]
+    [[ "$stderr" == *"partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
+}
+
+@test "A FAT partition 1 matches the serial p1_fs_uuid names, and another serial or type does not" {
+    stick_fat
+    run_ku_lib 'ku_disk_find; ku_disk_identity
+        printf "%s %s %s\n" "$KU_DK_FSTYPE" "$KU_DK_DISK_ID" "$KU_DK_P1_ID"; ku_p1_locate'
+    [ "$status" -eq 0 ]
+    [ "$output" = "vfat match match" ]
+    printf 'disk_ptuuid = %s\np1_fs_uuid = %s\n' "$PTUUID" 5ca1-ab1e \
+        > "$ROOT/etc/kernel-updater.conf"
+    run_ku_lib ku_p1_locate
+    [ "$status" -eq 0 ]
+    printf 'disk_ptuuid = %s\np1_fs_uuid = %s\n' "$PTUUID" 5CA1-AB1F \
+        > "$ROOT/etc/kernel-updater.conf"
+    run_ku_lib ku_p1_locate
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
+    [[ "$stderr" == *"filesystem p1_fs_uuid names; nothing was changed"* ]]
+    private_output
+    # exFAT serials take the same form, but exFAT is neither FAT nor NTFS.
+    stick_fat
+    P1_FSTYPE=exfat
+    stick_on sdb
+    run_ku_lib ku_p1_locate
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
+}
+
+@test "A FAT partition 1 mounts with vfat alone, read-only, its files root's and closed to others" {
+    local expected
+    stick_fat
+    export KU_P1_FSTYPES="ntfs3 ntfs-3g"
+    run_ku_lib 'ku_disk_find; ku_p1_open ro; printf "%s|%s\n" "$KU_DK_HOW" "$KU_DK_PROBLEM"
+        ku_p1_open plan; printf "%s|%s\n" "$KU_DK_HOW" "$KU_DK_PROBLEM"'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'private|\nprivate|' ]
+    expected="mount$(printf ' %q' -t vfat -o nosuid,nodev,noexec,ro,uid=0,gid=0,umask=077 \
+        /dev/sdb1) $ROOT/run/X/p1"$'\n'"umount $ROOT/run/X/p1"
+    [ "$(mount_calls)" = "$expected"$'\n'"$expected" ]
+    refute_line_match '^ntfs-3g\.probe' "$STUB_LOG"
+    [ -z "$(ls -A "$ROOT/run")" ]
+}
+
+@test "Nothing writes a FAT partition 1: auto, direct and path export it, and say why" {
+    stick_fat
+    run_ku_lib 'ku_disk_find; ku_p1_open rw || { printf "%s\n" "$KU_DK_PROBLEM"; exit 3; }'
+    [ "$status" -eq 3 ]
+    [ "$output" = "$FAT_WHY" ]
+    run_ku_lib "ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$status" -eq 0 ]
+    [ "$output" = "export|$FAT_WHY|private|0" ]
+    [[ "$stderr" == *"info: deploy = auto picks export: $FAT_WHY"* ]]
+    # In a VM too, where FAT is the first reason.
+    export VIRT_STATUS=0
+    run_ku_lib "ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$output" = "export|$FAT_WHY|private|0" ]
+    export VIRT_STATUS=1
+    # direct, in a dry run too, and through a read-write mount of root's that is there.
+    stick_fat "deploy = direct"
+    run_ku_lib "ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$output" = "export|$FAT_WHY|private|0" ]
+    [[ "$stderr" == *"warning: deploy = direct cannot write partition 1: $FAT_WHY; the files go"* ]]
+    run_ku_lib "KU_DRY_RUN=1; ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$output" = "export|$FAT_WHY|private|0" ]
+    mkdir -p "$ROOT/media/BOOT"
+    export P1_MOUNTS="$ROOT/media/BOOT / rw,relatime"
+    run_ku_lib "ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$output" = "export|$FAT_WHY|mount|0" ]
+    export P1_MOUNTS=""
+    # path, whose share serves the export's reads.
+    stick_fat "deploy = path" "p1_path = /media/sf_BOOT"
+    share_p1
+    run_ku_lib "ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$output" = "export|$FAT_WHY|path|0" ]
+    [[ "$stderr" == *"warning: deploy = path cannot write partition 1: $FAT_WHY; the files go"* ]]
+    # No read-write mount, and no probe.
+    refute_line_match ',rw|^ntfs-3g\.probe' "$STUB_LOG"
+    private_output
+    [ -z "$(ls -A "$ROOT/run")" ]
 }
 
 @test "A writer exits 78 while disk_ptuuid or p1_fs_uuid is not set, saying how to set them" {

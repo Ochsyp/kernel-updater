@@ -72,7 +72,7 @@ deploy_grub() {
         > "$ROOT/etc/kernel-updater.conf"
     run_ku_lib ku_p1_locate
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the NTFS"* ]]
+    [[ "$stderr" == *"error: partition 1 of the disk that holds /boot is not the FAT or NTFS"* ]]
     [[ "${stderr,,}" != *5ca1ab1e* && "$stderr" != */dev/loop* ]]
 }
 

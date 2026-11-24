@@ -82,12 +82,12 @@ case " $* " in
     *) exit 1 ;;
 esac
 EOF
-    export P1_TYPE=ntfs
+    export P1_TYPE=ntfs P1_SERIAL=5CA1AB1E00000001
     mkstub lsblk <<'EOF'
 case " $* " in
     *" -s "*) printf '%s\n' '/dev/mapper/boot_crypt crypt' '/dev/sdb3 part' '/dev/sdb disk' ;;
     *" -d "*) printf '5ca1ab1e\n' ;;
-    *) printf '%s\n' '/dev/sdb   ' "/dev/sdb1 1 $P1_TYPE 5CA1AB1E00000001" ;;
+    *) printf '%s\n' '/dev/sdb   ' "/dev/sdb1 1 $P1_TYPE $P1_SERIAL" ;;
 esac
 EOF
     mkstub blkid <<< 'exit 2'
@@ -220,7 +220,8 @@ system_done() {
 # Fail unless the last run printed no identifier, device or root device.
 private_output() {
     local all="${output,,}${stderr,,}"
-    [[ "$all" != *5ca1ab1e* && "$all" != */dev/sd* && "$all" != *kali--vg-root* ]] ||
+    [[ "$all" != *5ca1ab1e* && "$all" != *5ca1-ab1e* && "$all" != */dev/sd* &&
+        "$all" != *kali--vg-root* ]] ||
         { printf 'an identifier was printed\n' >&2; return 1; }
 }
 
@@ -270,6 +271,19 @@ backups() {
     private_output
 }
 
+@test "detect fills in the FAT serial of a FAT partition 1" {
+    export P1_TYPE=vfat P1_SERIAL=5ca1-ab1e
+    run_ku migrate --stage detect --yes
+    [ "$status" -eq 0 ]
+    grep -q -x -F 'p1_fs_uuid = 5CA1-AB1E' "$ROOT$CONF"
+    [[ "$stderr" == *"plan:   p1_fs_uuid: the FAT serial of partition 1 of that disk"* ]]
+    private_output
+    # The config it wrote is one the tool loads.
+    run_ku migrate --stage detect --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"holds the keys already; nothing to do"* ]]
+}
+
 @test "detect writes nothing in a dry run, and refuses what it cannot fill" {
     run_ku migrate --stage detect --dry-run
     [ "$status" -eq 0 ]
@@ -283,11 +297,19 @@ backups() {
     run_ku migrate --stage detect --yes
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"/boot is not in an open LUKS container"* ]]
-    export LUKS_TYPE=LUKS1 P1_TYPE=vfat
+    export LUKS_TYPE=LUKS1 P1_TYPE=exfat P1_SERIAL=5CA1-AB1E
     run_ku migrate --stage detect --yes
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"partition 1 of the disk that holds /boot is not NTFS"* ]]
-    export P1_TYPE=ntfs
+    [[ "$stderr" == *"partition 1 of the disk that holds /boot is neither FAT nor NTFS"* ]]
+    # A serial whose form does not fit the filesystem.
+    export P1_TYPE=vfat P1_SERIAL=5CA1AB1E00000001
+    run_ku migrate --stage detect --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"partition 1 has no form disk_ptuuid or p1_fs_uuid takes"* ]]
+    export P1_TYPE=ntfs P1_SERIAL=5CA1-AB1E
+    run_ku migrate --stage detect --yes
+    [ "$status" -eq 3 ]
+    export P1_SERIAL=5CA1AB1E00000001
     printf 'BOOT_IMAGE=/vmlinuz ro quiet\n' > "$ROOT/proc/cmdline"
     run_ku migrate --stage detect --yes
     [ "$status" -eq 3 ]
