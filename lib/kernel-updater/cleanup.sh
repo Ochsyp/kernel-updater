@@ -108,12 +108,14 @@ plan with -n first.
   --porcelain      also print the plan on stdout as STEP, ACTION, OBJECT and DETAIL,
                    tab-separated, once the run ends with 0
 
-Runs as root under the tool's lock, with /boot unlocked and mounted. Exits 0 when done, when
-nothing was left to do and after a dry run, 3 when a check refuses, 4 when a purge, a move or
-a deletion stopped partway, 10 when declined, 64 on a usage error, 66 when /boot is not mounted
-or its LUKS header cannot be read, 75 when another run, apt or dpkg holds a lock or the system
+Runs as root under the tool's lock, with /boot unlocked and mounted, and only once the
+migration is finished: partition 1's menu must source kali.cfg and hold no legacy entries.
+Exits 0 when done, when nothing was left to do and after a dry run, 3 when a check refuses, as
+before the migration is finished, 4 when a purge, a move or a deletion stopped partway, 10 when
+declined, 64 on a usage error, 66 when /boot is not mounted, its LUKS header cannot be read or
+partition 1 cannot be found or read, 75 when another run, apt or dpkg holds a lock or the system
 changed while the question waited, 77 when not run as root and 78 when the configuration is
-bad or names another /boot.
+bad or names another /boot or stick.
 EOF
 }
 
@@ -126,12 +128,13 @@ EOF
 # --porcelain print the plan's records. Exits 0 when done, also when a re-check left a planned
 # tree or entry, when nothing was left to do and after a dry run; 3 when a check or a simulation
 # refuses, apt refused the purge, date prints no time or dpkg-query fails before anything was
-# changed; 4 when the purge stopped after dpkg began to change its database, the check after it
-# fails, a module tree cannot be removed or moved, or checked once something was changed, or a
-# quarantine entry cannot be deleted; 10 when declined; 64 on a usage error; 66 when /boot is
-# not mounted or its LUKS header cannot be read; 75 while another run, apt or dpkg holds a lock,
-# or when the system changed while the question waited; 77 when not root; 78 on a bad
-# configuration or another /boot; and 128+N when signal N cut it short.
+# changed, or the migration is not finished; 4 when the purge stopped after dpkg began to change
+# its database, the check after it fails, a module tree cannot be removed or moved, or checked
+# once something was changed, or a quarantine entry cannot be deleted; 10 when declined; 64 on a
+# usage error; 66 when /boot is not mounted, its LUKS header cannot be read or partition 1 cannot
+# be found or read; 75 while another run, apt or dpkg holds a lock, or when the system changed
+# while the question waited; 77 when not root; 78 on a bad configuration or another /boot or
+# stick; and 128+N when signal N cut it short.
 ku_cmd_cleanup() {
     while (( $# )); do
         case $1 in
@@ -248,8 +251,9 @@ _ku_cl_wanted() {
 # missing; 75 while apt or dpkg holds its lock, and 3 when that cannot be told
 # (_ku_cl_not_busy); 3 when linux-base does not keep the links in /boot or one does not reach a
 # non-empty file there, when check's kernels item fails, as while a kernel package is stuck
-# between states, and when dpkg was interrupted. The locks come before the links, the packages
-# and dpkg's updates directory, which a running apt or dpkg changes for a moment.
+# between states, and when dpkg was interrupted; and last as _ku_cl_menu_finished says. The locks
+# come before the links, the packages and dpkg's updates directory, which a running apt or dpkg
+# changes for a moment.
 _ku_cl_preconditions() {
     local key name i refused=0 kernels=""
     local -a keys=() tools=()
@@ -295,6 +299,82 @@ _ku_cl_preconditions() {
         ku_die "$KU_EX_REFUSED" "dpkg was interrupted: run 'dpkg --configure -a', then" \
             "'kernel-updater check'; nothing was changed"
     fi
+    _ku_cl_menu_finished
+}
+
+# Exit unless partition 1's menu shows a finished migration: until finalize, old entries boot a
+# kernel by its version, which a purge could take away. Reads it read-only, and only where no user
+# but root can change it, since the answer allows a purge. Exits 3 when the migration is not
+# finished, an export waits to bring old entries back or the menu is damaged, 66 when it cannot
+# be read so, 78 on another stick or one the configuration does not name.
+_ku_cl_menu_finished() {
+    local identity=0 exported=0 state detail what step
+    local unknown="so cleanup cannot tell whether the migration is finished"
+    if [[ -z $KU_P1_DIR ]]; then
+        if ! ku_disk_find; then
+            ku_die "$KU_EX_NOINPUT" "cannot find the stick's partition 1, $unknown:" \
+                "$KU_DK_PROBLEM; nothing was changed"
+        fi
+        ku_disk_identity || identity=$?
+        if (( identity == 1 )); then
+            ku_die "$KU_EX_CONFIG" "$(ku_disk_identity_problem); nothing was changed"
+        elif (( identity != 0 )); then
+            ku_die "$KU_EX_CONFIG" "the stick cannot be told apart, $unknown:" \
+                "$(ku_disk_unset_hint); nothing was changed"
+        fi
+    fi
+    if ! ku_p1_open plan; then
+        ku_die "$KU_EX_NOINPUT" "cannot read the stick's partition 1, $unknown:" \
+            "$KU_DK_PROBLEM; nothing was changed"
+    fi
+    KU_CHECK_STATUS=() KU_CHECK_ITEM=() KU_CHECK_DETAIL=()
+    _ku_check_kali_menu
+    state=${KU_CHECK_STATUS[0]} detail=${KU_CHECK_DETAIL[0]}
+    ku_export_verify "$KU_DK_ROOT" > /dev/null || exported=$?
+    # The exit trap tries again when the mount stays.
+    ku_p1_close || ku_log warning "the read-only mount of partition 1 stays until cleanup ends"
+    case $state in
+        ok)
+            # A damaged SHA256SUMS (1) cannot show that the stick already holds the export.
+            if (( exported == 1 || exported == 2 )) && _ku_cl_export_boots_versions; then
+                ku_die "$KU_EX_REFUSED" "the export in output_dir waits to put back a menu whose" \
+                    "Kali entries boot kernels by their versions, which a purge could take away:" \
+                    "copy it to the stick as its DEPLOY.txt says, unless you already did (a" \
+                    "second copy would undo later changes), then finish the migration again;" \
+                    "or delete the export if you no longer want it; nothing was changed"
+            fi
+            return 0
+            ;;
+        skip)
+            what="the Kali entries still boot kernels by their versions"
+            step="run 'kernel-updater migrate --stage menu', boot the new entries, then run"
+            step+=" 'kernel-updater migrate --stage finalize'"
+            ;;
+        warn)
+            what="the legacy Kali entries boot a kernel by its version"
+            step="run 'kernel-updater migrate --stage finalize' after the boot tests"
+            ;;
+        *) ku_die "$KU_EX_REFUSED" "kali-menu: $detail; nothing was changed" ;;
+    esac
+    # In a VM a stage only exports, so running it again would not change the stick.
+    if (( exported == 2 )); then
+        local copy="copy the export in output_dir to the stick as its DEPLOY.txt says"
+        copy+=" if you have not yet (a second copy would undo later changes); if you have,"
+        step="$copy $step"
+    fi
+    ku_die "$KU_EX_REFUSED" "$what, which a purge could take away: $step; nothing was changed"
+}
+
+# Return 0 when output_dir holds a grub.cfg that would bring back Kali entries naming kernels by
+# version: it does not source kali.cfg, holds legacy entries, or cannot be read as a menu. A
+# rollback in a VM only exports, so the stick shows such a menu only once Windows copied it.
+_ku_cl_export_boots_versions() {
+    local file legacy
+    file=$(ku_path "${KU_CONF[output_dir]}")/grub.cfg
+    [[ -f $file && ! -L $file ]] || return 1
+    ku_menu_sources_kali "$file" || return 0
+    legacy=$(ku_menu_legacy_count "$file") || return 0
+    (( legacy > 0 ))
 }
 
 # Exit 75 while apt or dpkg holds its frontend or database lock, naming the holder, and 3 when
@@ -916,17 +996,19 @@ _ku_cl_count() {
 
 # After the question, check that the plan still holds, or exit: plan again from the same
 # snapshot, which simulates apt's autoremove again, and simulate the purge again, if there is
-# one, then check the locks, and last take the snapshot anew, so that it also covers what
-# changed while the others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the
-# snapshot changed, and 3 when the locks cannot be read. A window of milliseconds stays until
-# apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to wait for. The module trees
-# are checked one by one, right before each is removed or moved (_ku_cl_trees).
+# one, read the stick's menu again, which the tool's lock cannot keep Windows from changing, then
+# check the locks, and last take the snapshot anew, so that it also covers what changed while
+# the others ran. Exits 75 when apt or dpkg runs or the set, a simulation or the snapshot changed,
+# 3 when the locks cannot be read, and as _ku_cl_menu_finished says. A window of milliseconds
+# stays until apt takes its lock, which DPkg::Lock::Timeout=0 makes it refuse to wait for. The
+# module trees are checked one by one, right before each is removed or moved (_ku_cl_trees).
 _ku_cl_recheck() {
     local now planned=" ${KU_CL_SET[*]} " changed=0
     if ! _ku_cl_plan || [[ " ${KU_CL_SET[*]} " != "$planned" ]] ||
         { (( ${#KU_CL_SET[@]} )) && ! _ku_cl_exact_set; }; then
         changed=1
     fi
+    _ku_cl_menu_finished
     _ku_cl_not_busy
     if ! now=$(_ku_cl_snapshot) || [[ $now != "$KU_CL_SNAPSHOT" ]]; then
         changed=1

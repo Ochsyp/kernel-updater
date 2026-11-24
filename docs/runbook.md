@@ -36,7 +36,7 @@ autoremove keeps the running kernel and the newest ones, but not always the one
 `/boot/vmlinuz.old` points at. Purges cannot be rolled back, so read the plan of `cleanup -n`
 before you run `cleanup`.
 
-Run `cleanup` only once `migrate --stage finalize` is done. Until then the legacy entries, and
+`cleanup` refuses until `migrate --stage finalize` is done. Until then the legacy entries, and
 a rollback of the menu stage, boot kernels by their versions, which a purge would take away.
 
 ### What the plan says
@@ -111,8 +111,21 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
 - **Exit 66 or 78.** `/boot` is not mounted, or it is not the one the configuration names:
   unlock and mount the stick's `/boot`. A 78 that names a key or a line of
   `/etc/kernel-updater.conf` means that the file needs a fix.
-- **Exit 3, naming `migrate --stage detect` or `migrate --stage system`.** The migration is not
-  done: see [migration.md](migration.md).
+- **Exit 66 or 78, saying "cleanup cannot tell whether the migration is finished".** `cleanup`
+  could not read the menu on partition 1, or the stick is not the one the configuration names.
+  While a desktop has partition 1 mounted for its user, unmount it there first. Settle what the
+  message names, then run `cleanup` again. No option skips this check.
+- **Exit 3, naming `migrate --stage detect`, `system`, `menu` or `finalize`.** The migration is
+  not done: see [migration.md](migration.md). When the message names an export, copy it to the
+  stick from Windows as its `DEPLOY.txt` says, unless you have done so already: a second copy
+  undoes what changed on the stick since.
+- **Exit 3, "the export in output_dir waits to put back a menu".** A rollback in the VM exported
+  a menu with entries that boot kernels by version. Copy it to the stick, unless you have done so
+  already, as a second copy undoes what changed on the stick since. Then finish the migration
+  again. Or delete the export if you no longer want that rollback. This holds while the export's
+  `SHA256SUMS` is damaged too, since cleanup cannot tell whether the stick holds it.
+- **Exit 3, starting with `kali-menu:`.** The menu on partition 1 is damaged, as the message says.
+  Run `sudo kernel-updater check`, and settle its `kali-menu` item first.
 - **"purge nothing while a reboot is pending".** Reboot into "Kali GNU/Linux". When the new
   kernel does not boot, see [When a new kernel fails](#when-a-new-kernel-fails).
 - **A tree kept because "dkms lists modules for it".** Remove those modules with the command the

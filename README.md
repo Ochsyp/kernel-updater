@@ -281,9 +281,9 @@ kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules] [-n] [-y] [--p
 the config files of kernel packages that were removed but not purged, and the old kernels apt's
 autoremove names. Then it removes or moves aside the module trees no package owns, and deletes
 the quarantined trees that expired. Purged packages cannot be rolled back, so read the plan with
-`-n` first. Run it once `migrate --stage finalize` is done: until then the legacy entries, and a
-rollback of the menu stage, boot kernels by their versions. [docs/runbook.md](docs/runbook.md)
-says when to run it and what to do when it refuses.
+`-n` first. It refuses until `migrate --stage finalize` is done: until then the legacy entries,
+and a rollback of the menu stage, boot kernels by their versions.
+[docs/runbook.md](docs/runbook.md) says when to run it and what to do when it refuses.
 
 `--no-rc` leaves the config files of removed kernels alone, `--no-autoremove` the old kernels
 apt's autoremove names, and `--no-modules` the module trees and the quarantine. `-n` prints the
@@ -298,7 +298,13 @@ command, which it finds in `/proc/locks`, since apt and dpkg lock with `fcntl`, 
 cannot test); `/etc/kernel-img.conf` must have linux-base keep the links in `/boot`, relative
 and reaching the kernels' files (3, naming `migrate --stage system`); check's `kernels` item
 must pass, so that no kernel package is stuck between states and the running kernel is
-installed (3); and no interrupted dpkg run may wait for `dpkg --configure -a` (3).
+installed (3); no interrupted dpkg run may wait for `dpkg --configure -a` (3); and check's
+`kali-menu` item must be `ok`, read read-only from a partition 1 whose files no user but root
+can change, before the question and again after it (3 while it is not, naming an export that
+waits to be copied, and also while an export, as from a rollback in a VM, waits to bring back
+entries that boot kernels by version; 66 when partition 1 cannot be found or read so, as while
+a desktop has it mounted for its user; 78 on another stick or one the configuration does not
+name).
 
 - **What it keeps.** The running kernel's release and the releases the four links in `/boot`
   point at: no package named for them is purged and no module tree of theirs is touched,
@@ -585,9 +591,9 @@ bats tests/
   changes to `grub.cfg` a rollback drops; backups named in the order of the runs, removed while
   unfinished and passed over without a `MANIFEST`; and the exit codes.
 - `cleanup.bats` runs `cleanup` on a `KU_ROOT` tree of a migrated system with stub tools, its
-  `apt-get` answering the simulations and logging every call: the checks before the plan, apt's
-  and dpkg's locks as `/proc/locks` under `KU_ROOT` shows them, the releases it keeps and a
-  pending reboot;
+  `apt-get` answering the simulations and logging every call: the checks before the plan, a
+  migration that is not finished, apt's and dpkg's locks as `/proc/locks` under `KU_ROOT` shows
+  them, the releases it keeps and a pending reboot;
   what the purge of the config files removed kernels left and that of the old kernels apt's
   autoremove names take, keep and only list, kernels marked manual, the one purge with its exact
   options, a simulation that differs from the plan, changes while the question waits, a purge

@@ -209,6 +209,19 @@ make_disk_image() {
     } > "$1"
 }
 
+# Write the menu of a finished migration under the partition-1 root DIR: a grub.cfg that sources
+# kali.cfg and holds no legacy entries, and that kali.cfg.
+write_finished_menu() {
+    local marker="# Kali GNU/Linux: kernel-updater keeps the entries in kali.cfg."
+    marker+=" Not a MultiBootUSB block."
+    mkdir -p "$1/multibootusb/grub"
+    printf '%s\n' "$marker" \
+        'if [ -f /multibootusb/grub/kali.cfg ]; then' \
+        '	source /multibootusb/grub/kali.cfg' \
+        'fi' > "$1/multibootusb/grub/grub.cfg"
+    cp "$REPO_DIR/tests/fixtures/grub/kali.expected.cfg" "$1/multibootusb/grub/kali.cfg"
+}
+
 # Overwrite the byte at OFFSET of FILE with an X.
 poke_byte() {
     printf 'X' | dd of="$1" bs=1 seek="$2" conv=notrunc status=none
