@@ -743,6 +743,21 @@ others_ok() {
     expect_item boot-menu skip "multibootusb/grub/kali.cfg or a directory on its way is a symlink"
     rm "$GRUB/kali.cfg"
     write_kali_cfg
+    # A comment, and another kernel whose release starts with the running one's, do not count.
+    write_grub_cfg "# linux /vmlinuz-$V2 root=x" "	linux /vmlinuz-$V2-rt root=x"
+    run_check
+    expect_item boot-menu ok "$stick 0 line(s),"
+    # A file of the stick's menu that cannot be read gives no verdict.
+    rm "$GRUB/kali.cfg"
+    mkdir "$GRUB/kali.cfg"
+    run_check
+    expect_item boot-menu skip "multibootusb/grub/kali.cfg cannot be read"
+    rmdir "$GRUB/kali.cfg"
+    write_kali_cfg
+    # A hypervisor name that is no plain word counts as unknown.
+    export VIRT='vm ware!'
+    run_check
+    expect_item boot-menu ok "hypervisor: unknown;"
     # No kernel release to look for.
     export UNAME_R=""
     run_check

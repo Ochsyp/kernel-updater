@@ -1005,11 +1005,11 @@ _ku_check_kali_menu() {
 }
 
 # boot-menu: which menu booted the running kernel, and in which hypervisor, as
-# systemd-detect-virt names it (none on bare metal). Counts the lines that name the kernel's file, vmlinuz-RELEASE,
-# in the stick's menu, multibootusb/grub/grub.cfg and kali.cfg, and in this system's
-# /boot/grub/grub.cfg; once migrated, both boot /vmlinuz, which names no version. Reports only:
-# ok, or skip when the release is unknown or a file of the stick's menu is a symlink, which it
-# does not follow.
+# systemd-detect-virt names it (none on bare metal). Counts the lines that name the kernel's
+# file (_ku_check_release_lines) in the stick's menu, multibootusb/grub/grub.cfg and kali.cfg,
+# and in this system's /boot/grub/grub.cfg; once migrated, both boot /vmlinuz, which names no
+# version. Reports only: ok, or skip when the release is unknown, or a file of the stick's menu
+# cannot be read or is a symlink, which it does not follow.
 _ku_check_boot_menu() {
     local virt=unknown name rel file count stick=0 own=0 why
     if [[ -z $KU_CK_RUNNING ]]; then
@@ -1029,14 +1029,15 @@ _ku_check_boot_menu() {
                 "check does not follow"
             return 0
         fi
-        # grep -c prints 0 and exits 1 when no line matches.
-        count=$(grep -a -c -F -e "vmlinuz-$KU_CK_RUNNING" -- "$file" 2> /dev/null) || :
-        stick=$((stick + ${count:-0}))
+        if ! count=$(_ku_check_release_lines "$file"); then
+            _ku_check_add skip boot-menu "$rel cannot be read"
+            return 0
+        fi
+        stick=$((stick + count))
     done
     file=$(ku_path /boot/grub/grub.cfg)
     if [[ -f $file ]]; then
-        own=$(grep -a -c -F -e "vmlinuz-$KU_CK_RUNNING" -- "$file" 2> /dev/null) || :
-        own=${own:-0}
+        own=$(_ku_check_release_lines "$file") || own=0
     fi
     case $(( stick > 0 )):$(( own > 0 )) in
         1:0) why="the stick's menu booted it" ;;
@@ -1046,4 +1047,17 @@ _ku_check_boot_menu() {
     esac
     _ku_check_add ok boot-menu "hypervisor: $virt; the stick's menu names the running kernel's" \
         "version on $stick line(s), /boot/grub/grub.cfg on $own, so $why"
+}
+
+# Print how many lines of FILE name the running kernel's file, vmlinuz-RELEASE, followed by a
+# blank, a quote or the line's end, so that another release that starts with this one does not
+# count, and leave out what follows a #. Returns 1 when FILE cannot be read.
+_ku_check_release_lines() {
+    local re=${KU_CK_RUNNING//./[.]} count status=0
+    re=${re//+/[+]}
+    # grep -c prints 0 and exits 1 when no line matches, and exits 2 on a read error.
+    count=$(grep -a -c -E -e "^[^#]*vmlinuz-$re([[:space:]\"']|\$)" -- "$1" 2> /dev/null) ||
+        status=$?
+    (( status < 2 )) || return 1
+    printf '%s\n' "${count:-0}"
 }

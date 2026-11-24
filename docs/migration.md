@@ -115,7 +115,7 @@ path. When either test fails, run `sudo kernel-updater migrate --rollback` and s
 
 ## 8. Write the new menu
 
-Natively, where kernel-updater may write partition 1:
+Natively, where kernel-updater may write an NTFS partition 1 (a FAT one gets an export, as below):
 
 ```bash
 sudo kernel-updater migrate --stage menu -n
