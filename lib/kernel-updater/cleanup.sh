@@ -335,10 +335,12 @@ _ku_cl_menu_finished() {
     ku_p1_close || ku_log warning "the read-only mount of partition 1 stays until cleanup ends"
     case $state in
         ok)
-            if (( exported == 2 )) && _ku_cl_export_boots_versions; then
+            # A damaged SHA256SUMS (1) cannot show that the stick already holds the export.
+            if (( exported == 1 || exported == 2 )) && _ku_cl_export_boots_versions; then
                 ku_die "$KU_EX_REFUSED" "the export in output_dir waits to put back a menu whose" \
                     "Kali entries boot kernels by their versions, which a purge could take away:" \
-                    "copy it to the stick as its DEPLOY.txt says and finish the migration again," \
+                    "copy it to the stick as its DEPLOY.txt says, unless you already did (a" \
+                    "second copy would undo later changes), then finish the migration again;" \
                     "or delete the export if you no longer want it; nothing was changed"
             fi
             return 0

@@ -120,8 +120,10 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
   stick from Windows as its `DEPLOY.txt` says, unless you have done so already: a second copy
   undoes what changed on the stick since.
 - **Exit 3, "the export in output_dir waits to put back a menu".** A rollback in the VM exported
-  a menu with entries that boot kernels by version. Copy it to the stick and finish the migration
-  again, or delete the export if you no longer want that rollback.
+  a menu with entries that boot kernels by version. Copy it to the stick, unless you have done so
+  already, as a second copy undoes what changed on the stick since. Then finish the migration
+  again. Or delete the export if you no longer want that rollback. This holds while the export's
+  `SHA256SUMS` is damaged too, since cleanup cannot tell whether the stick holds it.
 - **Exit 3, starting with `kali-menu:`.** The menu on partition 1 is damaged, as the message says.
   Run `sudo kernel-updater check`, and settle its `kali-menu` item first.
 - **"purge nothing while a reboot is pending".** Reboot into "Kali GNU/Linux". When the new

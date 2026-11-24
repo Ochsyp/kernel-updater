@@ -701,8 +701,14 @@ was changed"* ]]
         run_ku cleanup --yes
         [ "$status" -eq 3 ] || { printf '%s exited %s\n' "$name" "$status" >&2; return 1; }
         [[ "$stderr" == *"$waits kernels by their versions, which a purge could take away"* ]]
+        [[ "$stderr" == *"says, unless you already did (a second copy would undo later changes)"* ]]
         [[ "$stderr" == *"; nothing was changed"* ]]
     done
+    # A damaged SHA256SUMS cannot tell the export apart from the stick, so it stops cleanup too.
+    printf 'not a sums line\n' > "$out/SHA256SUMS"
+    run_ku cleanup --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"$waits kernels by their versions, which a purge could take away"* ]]
     [ -z "$(apt_calls | grep -v -e ' -s ' || true)" ]
     # A finished menu that differs from the stick, as after an ISO was added, puts back none.
     cp "$KU_P1_DIR/multibootusb/grub/grub.cfg" "$out/grub.cfg"

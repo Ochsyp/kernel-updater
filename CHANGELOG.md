@@ -367,7 +367,8 @@ with the owner's original script.
   take away the kernel the legacy entries boot. It reads check's `kali-menu` item read-only from
   a partition 1 whose files no user but root can change, before its question and again after
   it: exit 3 while the menu stage or `finalize` is outstanding, naming an export that waits to
-  be copied, while an export waits to bring back entries that boot kernels by version, or when
+  be copied, while an export, even one with a damaged `SHA256SUMS`, waits to bring back entries
+  that boot kernels by version, or when
   the menu is damaged; 66 when partition 1 cannot be found or read so, as while a
   desktop has it mounted for its user; and 78 on another stick or one the configuration does not
   name.
