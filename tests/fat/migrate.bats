@@ -56,6 +56,8 @@ setup() {
     cp "$lists/commands.txt" "$view/multibootusb/grub/i386-pc/command.lst"
     cp "$lists/modules.txt" "$view/multibootusb/grub/i386-pc/moddep.lst"
     umount "$view"
+    # The tests of this file share the mapping, so each starts from an empty /boot.
+    mkfs.ext4 -q -F -U "$STICK_BOOT_UUID" /dev/mapper/ku-test-fat-boot
     mount /dev/mapper/ku-test-fat-boot "$ROOT/boot"
     for v in "$V1" "$V2" 7.2.9+kali-amd64; do
         printf 'kernel %s\n' "$v" > "$ROOT/boot/vmlinuz-$v"
