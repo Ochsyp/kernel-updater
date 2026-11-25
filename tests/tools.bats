@@ -11,7 +11,9 @@
 
 load helpers
 
-SCRIPTS=(stick-a-copy-menu stick-b-take-offline stick-d-chkdsk stick-e-restore-menu)
+# No step B: taken offline with mountvol /p, BOOT cannot be locked by VMware, which then cannot
+# write it (docs/migration.md).
+SCRIPTS=(stick-a-copy-menu stick-d-chkdsk stick-e-restore-menu)
 # A volume of the stub's, labelled BOOT, on the drive letter Q, with the filesystem given.
 fat_boot() {
     printf "[pscustomobject]@{ FileSystemLabel = 'BOOT'; DriveLetter = '%s'; FileSystem = '%s' }" \
@@ -51,6 +53,12 @@ home_untouched() {
     fi
 }
 
+@test "No script takes BOOT offline before the VM starts" {
+    [ ! -e "$REPO_DIR/tools/windows/stick-b-take-offline.ps1" ]
+    run grep -r -i -l mountvol "$REPO_DIR/tools/windows"
+    [ -z "$output" ]
+}
+
 @test "Each Windows script refuses, changing nothing, when no drive labelled BOOT is there" {
     local name
     for name in "${SCRIPTS[@]}"; do
@@ -58,7 +66,7 @@ home_untouched() {
         [ "$status" -eq 1 ]
         [[ "$output" == "No drive labelled BOOT is mounted on this PC: plug the stick in,"* ]]
         [[ "$output" == *"Nothing was changed." ]]
-        # One without a drive letter, as mountvol /p leaves it, is not there either.
+        # One without a drive letter, as an offline volume has, is not there either.
         run_script "$name" "[pscustomobject]@{ FileSystemLabel = 'BOOT'; DriveLetter = \$null }"
         [ "$status" -eq 1 ]
         [[ "$output" == "No drive labelled BOOT is mounted on this PC:"* ]]
@@ -94,7 +102,7 @@ run_on_stick() {
     [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
     [[ "$output" == *"Copied BOOT (Q:) multibootusb\\grub to: $HOME/Desktop/stick-grub-"* ]]
     [[ "$output" == *"Files: 2 on the stick, 2 in the copy"* ]]
-    [[ "$output" == *"The copy matches the stick. Next: step B." ]]
+    [[ "$output" == *"The copy matches the stick. Next: start the VM through the launcher." ]]
     copy=$(find "$HOME/Desktop" -mindepth 1 -maxdepth 1)
     [[ "$copy" == "$HOME/Desktop/stick-grub-"* ]]
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$copy/grub.cfg"

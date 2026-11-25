@@ -17,7 +17,8 @@ REL=multibootusb/grub/grub.cfg
 ARGS="root=/dev/mapper/kali--vg-root ro quiet"
 OLD=$'menuentry "Kali" {\r\n\tlinux /vmlinuz '"$ARGS"$'\r\n\tinitrd /initrd.img\r\n}\r\n'
 NEW=$'menuentry "Kali" {\r\n\tconfigfile /multibootusb/grub/kali.cfg\r\n}\r\n'
-PHRASE="BOOT is unmounted in Windows"
+# The question before a FAT write, which --yes does not answer.
+QUESTION="Write the FAT partition 1 now? In Windows, Test-Path on BOOT's drive must print False"
 GATE="refusing to write the FAT partition 1:"
 
 setup_file() {
@@ -48,7 +49,7 @@ setup() {
     mkstub systemd-detect-virt <<< 'echo vmware'
     printf '%s' "$OLD" > "$BATS_TEST_TMPDIR/old.cfg"
     printf '%s' "$NEW" > "$BATS_TEST_TMPDIR/new.cfg"
-    printf '%s\n' "$PHRASE" > "$BATS_TEST_TMPDIR/tty"
+    printf 'y\n' > "$BATS_TEST_TMPDIR/tty"
 }
 
 teardown() {
@@ -189,7 +190,7 @@ p1_unchanged() {
     write_grub
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"$GATE the volume was not unmounted cleanly, as while Windows uses it:"* ]]
-    [[ "$stderr" == *"mountvol X: /p"* ]]
+    [[ "$stderr" == *"close what uses BOOT in Windows"* && "$stderr" != *mountvol* ]]
     p1_unchanged "$before"
     set_byte "${STICK_LOOP}p1" "$at" $(( $(byte_at "${STICK_LOOP}p1" "$at") | 8 ))
     # Marked dirty, as an unplug without an eject leaves it.
@@ -220,19 +221,24 @@ p1_unchanged() {
     done
 }
 
-@test "A wrong answer, or none, to the question before a FAT write writes nothing" {
+@test "A no, or no answer, to the question before a FAT write writes nothing, --yes or not" {
     local before
     before=$(p1_sum)
-    printf 'yes\n' > "$BATS_TEST_TMPDIR/tty"
+    printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
     write_grub
     [ "$status" -eq 10 ]
-    [[ "$stderr" == *"Type '$PHRASE' to write partition 1:"* ]]
-    [[ "$stderr" == *"declined: the answer was not '$PHRASE'; nothing was changed"* ]]
+    [[ "$stderr" == *"$QUESTION [y/N] "* ]]
+    [[ "$stderr" == *"declined; nothing was changed"* && "$stderr" != *mountvol* ]]
+    p1_unchanged "$before"
+    # --yes answers the plan's questions, never this one.
+    write_grub 'KU_ASSUME_YES=1'
+    [ "$status" -eq 10 ]
+    [[ "$stderr" == *"$QUESTION [y/N] "* ]]
     p1_unchanged "$before"
     rm "$BATS_TEST_TMPDIR/tty"
-    write_grub
+    write_grub 'KU_ASSUME_YES=1'
     [ "$status" -eq 10 ]
-    [[ "$stderr" == *"no terminal to type the answer on, which --yes does not give"* ]]
+    [[ "$stderr" == *"no terminal to answer on, which --yes does not do for this question"* ]]
     p1_unchanged "$before"
     # A dry run asks nothing and writes nothing.
     write_grub 'KU_DRY_RUN=1'

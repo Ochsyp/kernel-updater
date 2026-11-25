@@ -148,9 +148,11 @@ p1_file() {
 @test "menu --write-fat writes the menu under VMware, and --rollback --write-fat puts grub.cfg back" {
     stick_config
     mkstub systemd-detect-virt <<< 'echo vmware'
-    printf 'BOOT is unmounted in Windows\n' > "$BATS_TEST_TMPDIR/tty"
+    # --yes answers the plan's question; the person answers the one before the FAT write.
+    printf 'y\n' > "$BATS_TEST_TMPDIR/tty"
     run_ku migrate --stage menu --yes --write-fat
     [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$stderr" == *"Write the FAT partition 1 now? In Windows, Test-Path on BOOT's drive"* ]]
     [[ "$stderr" == *"info: --write-fat: VMware, the stick's menu booted the running kernel"* ]]
     [[ "$stderr" == *"info: wrote multibootusb/grub/kali.cfg"* ]]
     [[ "$stderr" == *"info: wrote multibootusb/grub/grub.cfg; the old one is kept as"* ]]
@@ -174,7 +176,7 @@ p1_file() {
 @test "menu --write-fat outside VMware refuses, and a dry run with it writes nothing" {
     local before
     stick_config
-    printf 'BOOT is unmounted in Windows\n' > "$BATS_TEST_TMPDIR/tty"
+    printf 'y\n' > "$BATS_TEST_TMPDIR/tty"
     before=$(p1_sum)
     run_ku migrate --stage menu --yes --write-fat
     [ "$status" -eq 3 ]
