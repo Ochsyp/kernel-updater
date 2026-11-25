@@ -4,7 +4,7 @@
 #
 # Syntax-checks every shell file and the awk scripts, and requires ShellCheck to report
 # nothing for any shell file: the scripts, the libraries, the git hooks, apt-guard, the kernel
-# hooks and the tests, the container and NTFS suites included.
+# hooks and the tests, the container, NTFS and FAT suites included.
 # -------------------------------------------------------
 
 load helpers
@@ -78,7 +78,7 @@ HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan lib/kernel
     cd "$REPO_DIR"
     run_shellcheck -x -f gcc "${SCRIPTS[@]}" "${HOOKS[@]}" tests/helpers.bash tests/*.bats \
         tests/container/container.bash tests/container/*.bats tests/ntfs/ntfs.bash \
-        tests/ntfs/*.bats
+        tests/ntfs/*.bats tests/fat/fat.bash tests/fat/*.bats
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }

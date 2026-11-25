@@ -9,7 +9,7 @@
 # Known keys and the check their values must pass (the _ku_valid_* function of that name),
 # and the defaults; an empty default leaves an optional key unset.
 declare -gA KU_CONF_SCHEMA=([grub_floor]=grub_version [boot_fs_uuid]=uuid [boot_luks_uuid]=uuid
-    [verify_action]=verify_action [disk_ptuuid]=ptuuid [p1_fs_uuid]=ntfs_serial [deploy]=deploy
+    [verify_action]=verify_action [disk_ptuuid]=ptuuid [p1_fs_uuid]=p1_serial [deploy]=deploy
     [p1_path]=abs_path [output_dir]=abs_path [backups_keep]=count [root_device]=root_device
     [menu_variants]=menu_variants [previous_variants]=variants [quarantine_days]=days)
 declare -gA KU_CONF=([grub_floor]=2.02 [boot_fs_uuid]="" [boot_luks_uuid]="" [verify_action]=fail
@@ -72,10 +72,10 @@ ku_config_load() {
         "_ku_valid_${KU_CONF_SCHEMA[$key]}" "$value" ||
             ku_die "$KU_EX_CONFIG" "$file:$n: invalid value for '$key'"
         # UUIDs and disk signatures are kept lower case, as blkid, cryptsetup and lsblk print
-        # them, and NTFS serials upper case, as blkid prints those.
+        # them, and FAT and NTFS serials upper case, as blkid prints those.
         case ${KU_CONF_SCHEMA[$key]} in
             uuid | ptuuid) value=${value,,} ;;
-            ntfs_serial) value=${value^^} ;;
+            p1_serial) value=${value^^} ;;
             # A path loses its trailing slashes, so that output_dir/ names its directory and
             # not, to mkdir, its own parent.
             abs_path)
@@ -132,6 +132,16 @@ _ku_valid_ptuuid() {
 # An NTFS volume serial as blkid prints it: 16 hex digits, in either case.
 _ku_valid_ntfs_serial() {
     [[ $1 =~ ^[0-9A-Fa-f]{16}$ ]]
+}
+
+# A FAT volume serial as blkid prints it: two groups of 4 hex digits, in either case.
+_ku_valid_fat_serial() {
+    [[ $1 =~ ^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$ ]]
+}
+
+# The serial of partition 1, FAT's or NTFS's.
+_ku_valid_p1_serial() {
+    _ku_valid_fat_serial "$1" || _ku_valid_ntfs_serial "$1"
 }
 
 # How a writer deploys to partition 1: auto, direct, export or path.

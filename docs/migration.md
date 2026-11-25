@@ -60,6 +60,7 @@ sudo kernel-updater check
 No item should fail but `grub-pc`, which the system stage settles. Until then `kernel-img`
 warns and the items about the links in `/boot` skip; `tripwire` warns while no baseline is
 stored, and `kali-menu` skips until the menu stage and warns until the finalize stage.
+`boot-menu` names the hypervisor and whether the stick's menu booted the running kernel.
 `boot-identity`, `boot-luks` and `boot-ext` must be `ok`: they say whether `/boot` is the one
 the configuration names, and whether the stick's GRUB unlocks and reads it.
 
@@ -114,7 +115,7 @@ path. When either test fails, run `sudo kernel-updater migrate --rollback` and s
 
 ## 8. Write the new menu
 
-Natively, where kernel-updater may write partition 1:
+Natively, where kernel-updater may write an NTFS partition 1 (a FAT one gets an export, as below):
 
 ```bash
 sudo kernel-updater migrate --stage menu -n
@@ -141,8 +142,9 @@ it since, such as MultiBootUSB adding an ISO from Windows: look at `grub.cfg` on
 you answer, since what changed outside the Kali submenu stays. Its entry then keeps the old
 value, so the tripwire keeps reporting the change until step 11 records it.
 
-In the VM, or with `--deploy export`, the files go to `output_dir` instead: copy them in
-Windows, `kali.cfg` first, into `BOOT:\multibootusb\grub\`, as `DEPLOY.txt` there says, then
+In the VM, on a FAT partition 1, which kernel-updater only reads, or with `--deploy export`,
+the files go to `output_dir` instead: copy them in Windows, `kali.cfg` first, into
+`BOOT:\multibootusb\grub\`, as `DEPLOY.txt` there says, then
 run `sudo kernel-updater check`, whose `deployed` item compares the stick with the export. Its
 `tripwire` item fails for the two files, when a baseline is stored, until step 11. Should a
 later stage or rollback write partition 1 itself while such an export is not copied, that

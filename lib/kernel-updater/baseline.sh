@@ -299,8 +299,9 @@ ku_baseline_record() {
 
 # Print "SHA256  NAME" for the boot files under partition 1's ROOT that baseline.list names,
 # the MBR boot code of the disk (mbr:boot-code, its bytes 0 to 439) and partition 1's boot
-# sector (p1:boot-sector, its first 512 bytes), sorted by NAME. Files that do not exist are left
-# out, and so are the two sectors while no disk is known, as with KU_P1_DIR without KU_P1_DISK.
+# sector (p1:boot-sector, its first 512 bytes but a FAT flags byte), sorted by NAME. Files that
+# do not exist are left out, and so are the two sectors while no disk is known, as with
+# KU_P1_DIR without KU_P1_DISK.
 # Returns 1 when the list, a file or a sector cannot be read, and then warns which of them,
 # naming no device.
 ku_baseline_hash() {
@@ -332,7 +333,7 @@ ku_baseline_hash() {
         sums[mbr:boot-code]=$hash
         if ! lba=$(_ku_baseline_p1_lba "$KU_P1_DISK") ||
             ! hash=$(dd if="$KU_P1_DISK" bs=512 skip="$lba" count=1 status=none 2> /dev/null |
-                ku_sha256); then
+                _ku_baseline_sector_hash); then
             ku_log warning "cannot read the boot sector of partition 1"
             return 1
         fi
@@ -343,7 +344,7 @@ ku_baseline_hash() {
             return 1
         fi
         sums[mbr:boot-code]=$hash
-        if ! hash=$(head -c 512 -- "$KU_DK_PART" 2> /dev/null | ku_sha256); then
+        if ! hash=$(head -c 512 -- "$KU_DK_PART" 2> /dev/null | _ku_baseline_sector_hash); then
             ku_log warning "cannot read the boot sector of partition 1"
             return 1
         fi
@@ -377,6 +378,9 @@ _ku_baseline_names() {
     (
         cd -- "$root" || exit 1
         shopt -s nullglob
+        # FAT finds a name in any case, as GRUB does, and an old FAT tool stores short names
+        # in capitals.
+        [[ $KU_DK_FSTYPE != vfat ]] || shopt -s nocaseglob
         for line in "${patterns[@]}"; do
             # shellcheck disable=SC2086 # the last component of a line may be a glob
             for name in $line; do
@@ -389,6 +393,35 @@ _ku_baseline_names() {
             done
         done
     ) | LC_ALL=C sort -u
+}
+
+# Print the SHA-256 of the boot sector on stdin, its first 512 bytes, with the flags byte of a
+# FAT boot sector read as 0: Linux and Windows set its "not cleanly unmounted" and "disk
+# errors" bits on a mount, and an unplug without an eject leaves them, which says nothing about
+# the boot code. Every other sector, NTFS's among them, hashes byte for byte as it is.
+_ku_baseline_sector_hash() {
+    local hex flags
+    hex=$(od -A n -v -t x1 | tr -d ' \n') || return 1
+    if flags=$(_ku_baseline_fat_flags "$hex"); then
+        hex=${hex:0:flags * 2}00${hex:flags * 2 + 2}
+    fi
+    # Bash before 5.2 has no & in a replacement, hence sed.
+    # shellcheck disable=SC2001,SC2059 # the format holds only the \x escapes sed makes
+    printf "$(sed 's/../\\x&/g' <<< "$hex")" | ku_sha256
+}
+
+# Print the offset of the flags byte when the hex digits HEX are a FAT boot sector: one that ends
+# in 55 AA, is named neither NTFS nor exFAT at byte 3, and has an extended boot signature, 28 or
+# 29, right after that byte: at 66 for FAT32, whose 16-bit FAT size is 0, and at 38 for FAT12
+# and FAT16. Returns 1 for any other sector.
+_ku_baseline_fat_flags() {
+    local hex=$1 flags=37
+    (( ${#hex} == 1024 )) && [[ ${hex:1020:4} == 55aa ]] || return 1
+    # The names start "NTFS" and "EXFAT".
+    [[ ${hex:6:8} != 4e544653 && ${hex:6:10} != 4558464154 ]] || return 1
+    [[ ${hex:44:4} != 0000 ]] || flags=65
+    [[ ${hex:(flags + 1) * 2:2} == 2[89] ]] || return 1
+    printf '%s\n' "$flags"
 }
 
 # Print the first sector of the first partition in the MBR of the disk image FILE, which

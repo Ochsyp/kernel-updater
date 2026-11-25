@@ -288,6 +288,12 @@ with the owner's original script.
 - Tests for `cleanup`: `tests/cleanup.bats` with stub tools, and `tests/container/cleanup.bats`
   with real apt-get and dpkg runs on dummy kernels, module trees and quarantine entries, and a
   real fcntl lock on dpkg's frontend lock.
+- `check`'s `boot-menu` item: the hypervisor `systemd-detect-virt` names, and which menu names
+  the running kernel by its version, the stick's or this system's `/boot/grub/grub.cfg`, so
+  that it shows which one booted it.
+- A `fat` job in the tests workflow: `tests/fat` builds a stick with a FAT32 partition 1 and
+  syslinux's boot sector in a loop file, and runs identity, mounts, names in capitals, the
+  tripwire with a real dirty flag, `detect`, and a menu stage that leaves partition 1 as it was.
 
 ### Changed
 
@@ -372,6 +378,13 @@ with the owner's original script.
   the menu is damaged; 66 when partition 1 cannot be found or read so, as while a
   desktop has it mounted for its user; and 78 on another stick or one the configuration does not
   name.
+- Partition 1 may be FAT, as MultiBootUSB makes it, and not only NTFS. `detect`,
+  `check`, `baseline` and `cleanup` read it: `p1_fs_uuid` takes a FAT serial such as
+  `5CA1-AB1E`, and the tool mounts FAT read-only with `vfat`, its files root's alone. Nothing
+  writes a FAT partition 1: `migrate`'s stages and rollbacks leave their files in `output_dir`
+  for Windows to copy, whatever `deploy` says, and say why. The tripwire ignores the flags byte
+  in a FAT boot sector, which every mount and an unplug without an eject change, and on FAT the
+  globs of `baseline.list` match names in any case. NTFS sticks work as before.
 
 ### Removed
 

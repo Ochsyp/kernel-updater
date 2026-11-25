@@ -209,6 +209,34 @@ make_disk_image() {
     } > "$1"
 }
 
+# Write the disk image FILE as make_disk_image does, with partition 1 FAT (type 0x0c) and a
+# SYSLINUX boot sector of FAT BITS, 32 or 16, in sector 2: its "not cleanly unmounted" byte, at
+# 65 for FAT32 and at 37 for FAT16, is clear.
+make_fat_disk_image() {
+    local fatsz='\0\0' before=41 after=443
+    if [[ $2 == 16 ]]; then
+        fatsz='\x20\0' before=13 after=471
+    fi
+    {
+        head -c 440 /dev/zero | tr '\0' M
+        printf '\x1e\xab\xa1\x5c\0\0'
+        printf '\0\0\0\0\x0c\0\0\0\x02\0\0\0\x08\0\0\0'
+        head -c 48 /dev/zero
+        printf '\x55\xaa'
+        head -c 512 /dev/zero | tr '\0' G
+        # Jump, OEM name, bytes per sector up to the media byte, then the 16-bit FAT size,
+        # which FAT32 leaves 0.
+        printf '\xeb\x58\x90SYSLINUX\0\x02\x01\x20\0\x02\0\0\0\0\xf8'
+        # shellcheck disable=SC2059 # the format is one of the two escapes above
+        printf "$fatsz"
+        head -c "$before" /dev/zero | tr '\0' B
+        # The flags byte, then the extended boot signature.
+        printf '\0\x29'
+        head -c "$after" /dev/zero | tr '\0' C
+        printf '\x55\xaa'
+    } > "$1"
+}
+
 # Write the menu of a finished migration under the partition-1 root DIR: a grub.cfg that sources
 # kali.cfg and holds no legacy entries, and that kali.cfg.
 write_finished_menu() {

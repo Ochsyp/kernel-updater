@@ -94,6 +94,12 @@ setup() {
     [ "${KU_CONF[p1_fs_uuid]}" = 5CA1AB1E00000001 ]
 }
 
+@test "p1_fs_uuid takes a FAT serial of two groups of 4 hex digits and keeps it upper case" {
+    printf 'p1_fs_uuid = 5ca1-ab1e\n' > "$CONF"
+    ku_config_load "$CONF"
+    [ "${KU_CONF[p1_fs_uuid]}" = 5CA1-AB1E ]
+}
+
 @test "deploy, p1_path, output_dir and backups_keep take their values" {
     printf '%s\n' 'deploy = path' 'p1_path = /media/sf_BOOT' \
         'output_dir = /srv/kernel updater/out' 'backups_keep = 99' > "$CONF"
@@ -125,7 +131,9 @@ setup() {
     for entry in "disk_ptuuid 5ca1ab1" "disk_ptuuid 5ca1ab1e0" "disk_ptuuid 0x5ca1ab1e" \
         "disk_ptuuid 5ca1ab1g" "disk_ptuuid 5ca1ab1e-0000-4000-8000-000000000d0" \
         "p1_fs_uuid 5CA1AB1E0000001" "p1_fs_uuid 5CA1AB1E000000001" \
-        "p1_fs_uuid 5CA1-AB1E-0000-0001" "deploy Auto" "deploy copy" "p1_path media/sf_BOOT" \
+        "p1_fs_uuid 5CA1-AB1E-0000-0001" "p1_fs_uuid 5CA1AB1E" "p1_fs_uuid 5CA1-AB1" \
+        "p1_fs_uuid 5CA1-AB1E0" "p1_fs_uuid 5CA1_AB1E" "p1_fs_uuid 5CA1-AB1G" "deploy Auto" \
+        "deploy copy" "p1_path media/sf_BOOT" \
         "p1_path /media/../BOOT" "p1_path /media/./BOOT" "output_dir ~/out" \
         "backups_keep 0" "backups_keep 100" "backups_keep 05" "backups_keep -1"; do
         read -r key value <<< "$entry"

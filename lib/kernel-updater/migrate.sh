@@ -312,7 +312,7 @@ _ku_mg_stage_detect() {
 
 # Find what detect fills: set KU_MG_VALUE and KU_MG_ORIGIN by key. Exits as detect says.
 _ku_mg_discover() {
-    local out source fstype uuid name value luks="" status=0
+    local out source fstype uuid name value kind luks="" status=0
     KU_MG_VALUE=() KU_MG_ORIGIN=()
     out=$(ku_probe_boot_mount)
     if [[ -z $out ]]; then
@@ -362,20 +362,26 @@ _ku_mg_discover() {
     if ! ku_disk_find; then
         ku_die "$KU_EX_NOINPUT" "cannot find the stick's partition 1: $KU_DK_PROBLEM; nothing" \
             "was changed"
-    elif [[ $KU_DK_FSTYPE != ntfs ]]; then
-        ku_die "$KU_EX_REFUSED" "partition 1 of the disk that holds /boot is not NTFS, so it is" \
-            "not the MultiBootUSB partition kernel-updater serves; nothing was changed"
-    elif [[ -z $KU_DK_PTUUID || -z $KU_DK_UUID ]]; then
+    elif [[ $KU_DK_FSTYPE == vfat ]]; then
+        kind=FAT
+    elif [[ $KU_DK_FSTYPE == ntfs ]]; then
+        kind=NTFS
+    else
+        ku_die "$KU_EX_REFUSED" "partition 1 of the disk that holds /boot is neither FAT nor" \
+            "NTFS, so it is not the MultiBootUSB partition kernel-updater serves; nothing was" \
+            "changed"
+    fi
+    if [[ -z $KU_DK_PTUUID || -z $KU_DK_UUID ]]; then
         ku_die "$KU_EX_NOINPUT" "cannot read the PTUUID of the disk that holds /boot or the" \
             "serial of its partition 1; nothing was changed"
-    elif ! _ku_valid_ptuuid "$KU_DK_PTUUID" || ! _ku_valid_ntfs_serial "$KU_DK_UUID"; then
+    elif ! _ku_valid_ptuuid "$KU_DK_PTUUID" || ! "_ku_valid_${kind,,}_serial" "$KU_DK_UUID"; then
         ku_die "$KU_EX_REFUSED" "the PTUUID of the disk that holds /boot or the serial of its" \
             "partition 1 has no form disk_ptuuid or p1_fs_uuid takes; nothing was changed"
     fi
     KU_MG_VALUE['disk_ptuuid']=${KU_DK_PTUUID,,}
     KU_MG_ORIGIN['disk_ptuuid']="the PTUUID of the disk that holds /boot"
     KU_MG_VALUE['p1_fs_uuid']=${KU_DK_UUID^^}
-    KU_MG_ORIGIN['p1_fs_uuid']="the NTFS serial of partition 1 of that disk"
+    KU_MG_ORIGIN['p1_fs_uuid']="the $kind serial of partition 1 of that disk"
     _ku_mg_cmdline_root
     KU_MG_VALUE['root_device']=$KU_MG_ROOTDEV
     KU_MG_ORIGIN['root_device']="the root= device of the running kernel's command line"

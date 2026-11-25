@@ -552,8 +552,8 @@ ku_export() {
         list+="     $name"$'\n'
     done
     printf -v steps '%s\n' "kernel-updater export" "" \
-        "These files are for the stick's partition 1, the NTFS partition labelled BOOT, which" \
-        "kernel-updater does not write itself here. To deploy them:" "" \
+        "These files are for the stick's partition 1, the FAT or NTFS partition labelled BOOT," \
+        "which kernel-updater does not write itself here. To deploy them:" "" \
         "1. In Windows, copy them, in this order, into $KU_DEPLOY_WINDOWS_DIR on the stick," \
         "   replacing the files of the same name there:" "" "$list" \
         "2. Let Windows finish writing to the stick before you boot from it." \

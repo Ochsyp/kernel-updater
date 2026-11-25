@@ -3,7 +3,8 @@
 # grub-script-check for the example configs, so every test runs. The kali job runs the container
 # suite in tests/container on a Kali rolling image built from ci/kali/Dockerfile; the weekly run
 # catches changes in Kali rolling. The ntfs job runs tests/ntfs as root on the runner, where it
-# builds a synthetic stick in a loop file and mounts real NTFS with ntfs3 and ntfs-3g. Actions
+# builds a synthetic stick in a loop file and mounts real NTFS with ntfs3 and ntfs-3g; the fat
+# job runs tests/fat the same way on a FAT32 partition 1 with syslinux's boot sector. Actions
 # are pinned to commit SHAs; Dependabot proposes updates.
 name: tests
 
@@ -128,5 +129,43 @@ jobs:
         run: |
           if grep -E '^ok [0-9]+ .* # skip' "$RUNNER_TEMP/ntfs.tap"; then
             echo "::error::NTFS tests were skipped; every one must run in the ntfs job."
+            exit 1
+          fi
+
+  fat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        # An explicit bash adds -o pipefail, so the tee below cannot hide a failing bats run.
+        shell: bash
+    env:
+      BATS_VERSION: 1.13.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install bats, dosfstools and syslinux
+        run: |
+          # As in the bats job, bats goes into a temporary prefix that later steps find
+          # through GITHUB_PATH.
+          npm install --no-save --ignore-scripts --prefix "$RUNNER_TEMP/bats" "bats@${BATS_VERSION}"
+          echo "$RUNNER_TEMP/bats/node_modules/.bin" >> "$GITHUB_PATH"
+          # dosfstools provides mkfs.vfat, syslinux and mtools install syslinux's boot sector
+          # without a mount, fdisk provides sfdisk, and dmsetup the device-mapper device the
+          # migrate test mounts as /boot. The kernel has vfat built in.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends dosfstools syslinux mtools fdisk \
+            dmsetup
+          "$RUNNER_TEMP/bats/node_modules/.bin/bats" --version
+      - name: Run the FAT tests
+        # The tests attach a loop device, make filesystems on it and mount them, so they run as
+        # root; they change only the loop file they build and what they mount under their own
+        # temporary directories.
+        run: sudo env "PATH=$PATH" KU_FAT=1 bats --tap tests/fat | tee "$RUNNER_TEMP/fat.tap"
+      - name: Fail on skipped tests
+        run: |
+          if grep -E '^ok [0-9]+ .* # skip' "$RUNNER_TEMP/fat.tap"; then
+            echo "::error::FAT tests were skipped; every one must run in the fat job."
             exit 1
           fi

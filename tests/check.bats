@@ -15,7 +15,7 @@ V2=9.0.2+kali-amd64
 BY_ID=/dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0
 ITEMS=(boot-mounted boot-identity boot-shadowed kernel-img boot-links stale-root-links kernels
     reboot-pending initrd boot-luks boot-ext fstab-crypttab grub-pc)
-P1_ITEMS=(p1-identity grub-version tripwire deployed kali-cfg kali-menu)
+P1_ITEMS=(p1-identity grub-version tripwire deployed kali-cfg kali-menu boot-menu)
 # The line migrate's block in grub.cfg opens with.
 MARKER="# Kali GNU/Linux: kernel-updater keeps the entries in kali.cfg. Not a MultiBootUSB block."
 
@@ -31,12 +31,13 @@ setup() {
 }
 
 # Write the config file with grub_floor FLOOR, 2.02 by default, the UUIDs of /boot and the
-# identity of the stick: disk_ptuuid PTUUID, 5ca1ab1e by default, and its partition 1.
+# identity of the stick: disk_ptuuid PTUUID, 5ca1ab1e by default, and p1_fs_uuid SERIAL, an
+# NTFS serial by default.
 write_config() {
     printf 'grub_floor = %s\nboot_fs_uuid = %s\nboot_luks_uuid = %s\n' "${1:-2.02}" \
         5ca1ab1e-0000-4000-8000-000000000b01 5ca1ab1e-0000-4000-8000-000000000c01 \
         > "$ROOT/etc/kernel-updater.conf"
-    printf 'disk_ptuuid = %s\np1_fs_uuid = 5CA1AB1E00000001\n' "${2:-5ca1ab1e}" \
+    printf 'disk_ptuuid = %s\np1_fs_uuid = %s\n' "${2:-5ca1ab1e}" "${3:-5CA1AB1E00000001}" \
         >> "$ROOT/etc/kernel-updater.conf"
 }
 
@@ -110,7 +111,7 @@ stick_from_boot() {
 case " $* " in
     *" -s "*) printf '%s\n' '/dev/mapper/boot_crypt crypt' '/dev/sdb3 part' '/dev/sdb disk' ;;
     *" -d "*) printf '5ca1ab1e\n' ;;
-    *) printf '%s\n' '/dev/sdb   ' '/dev/sdb1 1 ntfs 5CA1AB1E00000001' ;;
+    *) printf '%s\n' '/dev/sdb   ' "/dev/sdb1 1 ${P1_LSBLK:-ntfs 5CA1AB1E00000001}" ;;
 esac
 EOF
     mkstub blkid <<< 'exit 2'
@@ -163,6 +164,11 @@ EOF
     mkstub dpkg-query <<'EOF'
 cat "$DPKG_QUERY_OUT"
 exit "${DPKG_QUERY_STATUS:-0}"
+EOF
+    # VIRT is the hypervisor systemd-detect-virt names: none on bare metal.
+    mkstub systemd-detect-virt <<'EOF'
+printf '%s\n' "${VIRT:-none}"
+[[ ${VIRT:-none} != none ]]
 EOF
     mkstub linux-version <<'EOF'
 [[ $1 == sort ]] && exec sort -V
@@ -225,7 +231,7 @@ others_ok() {
     local i all=("${ITEMS[@]}" "${P1_ITEMS[@]}")
     run_ku check
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 19 ]
+    [ "${#lines[@]}" -eq 20 ]
     for i in "${!all[@]}"; do
         if [[ "${lines[i]}" != "ok    ${all[i]} "* ]]; then
             printf 'line %d: %s\n' "$i" "${lines[i]}" >&2
@@ -233,7 +239,7 @@ others_ok() {
         fi
     done
     [ "${lines[0]}" = "ok    boot-mounted      /boot is a separate ext4 mount" ]
-    [[ "$stderr" == *"info: check: 19 item(s): 19 ok, 0 warn, 0 fail, 0 skip"* ]]
+    [[ "$stderr" == *"info: check: 20 item(s): 20 ok, 0 warn, 0 fail, 0 skip"* ]]
     grep -q "^mount --bind --make-private -o ro $ROOT/ $ROOT/run/kernel-updater\.[^/]*/root\$" \
         "$STUB_LOG"
     grep -q "^umount $ROOT/run/kernel-updater\.[^/]*/root\$" "$STUB_LOG"
@@ -647,12 +653,12 @@ others_ok() {
     others_ok
 }
 
-@test "--no-partition skips the six partition-1 items and leaves partition 1 alone" {
+@test "--no-partition skips the seven partition-1 items and leaves partition 1 alone" {
     local name
     stick_from_boot
     run_check --no-partition
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 19 ]
+    [ "${#lines[@]}" -eq 20 ]
     for name in "${P1_ITEMS[@]}"; do
         expect_item "$name" skip "--no-partition leaves partition 1 alone"
     done
@@ -688,6 +694,76 @@ others_ok() {
     [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "$output$stderr" != */dev/sd* ]]
 }
 
+@test "p1-identity finds a FAT partition 1, and check reads it with vfat, read-only" {
+    local dir="$ROOT/run/kernel-updater\\.[^/]*/p1" opts
+    stick_from_boot
+    export P1_LSBLK="vfat 5CA1-AB1E"
+    write_config 2.02 5ca1ab1e 5ca1-ab1e
+    run_check
+    expect_item p1-identity ok \
+        "the disk that holds /boot and its FAT partition 1 are the ones disk_ptuuid and"
+    opts='nosuid\\,nodev\\,noexec\\,ro\\,uid=0\\,gid=0\\,umask=077'
+    grep -q "^mount -t vfat -o $opts /dev/sdb1 $dir\$" "$STUB_LOG"
+    refute_line_match '^mount -t ntfs|\\,rw' "$STUB_LOG"
+    [ -z "$(ls -A "$ROOT/run")" ]
+    [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "${output,,}${stderr,,}" != *5ca1-ab1e* ]]
+}
+
+@test "boot-menu names the hypervisor and which menu names the running kernel by its version" {
+    local stick="the stick's menu names the running kernel's version on"
+    run_check
+    expect_item boot-menu ok "hypervisor: none; $stick 0 line(s), /boot/grub/grub.cfg on 0,"
+    expect_item boot-menu ok "so neither menu names it by version, as after the migration"
+    # The stick's menu, in VMware.
+    export VIRT=vmware
+    write_grub_cfg 'menuentry "Kali" {' "	linux /vmlinuz-$V2 root=x" '}'
+    run_check
+    expect_item boot-menu ok "hypervisor: vmware; $stick 1 line(s), /boot/grub/grub.cfg on 0,"
+    expect_item boot-menu ok "so the stick's menu booted it"
+    # Kali's own menu as well; kali.cfg counts as the stick's menu.
+    mkdir -p "$ROOT/boot/grub"
+    printf '\tlinux /vmlinuz-%s root=x\n' "$V2" "$V2" > "$ROOT/boot/grub/grub.cfg"
+    write_kali_cfg "echo vmlinuz-$V2"
+    run_check
+    expect_item boot-menu ok "$stick 2 line(s), /boot/grub/grub.cfg on 2,"
+    expect_item boot-menu ok "so either menu may have booted it"
+    write_grub_cfg
+    write_kali_cfg
+    run_check
+    expect_item boot-menu ok "$stick 0 line(s), /boot/grub/grub.cfg on 2,"
+    expect_item boot-menu ok "so Kali's own menu booted it"
+    # Another kernel's version does not count.
+    printf '\tlinux /vmlinuz-%s root=x\n' "$V1" > "$ROOT/boot/grub/grub.cfg"
+    run_check
+    expect_item boot-menu ok "/boot/grub/grub.cfg on 0,"
+    # A symlink on the stick is not followed.
+    rm "$GRUB/kali.cfg"
+    ln -s grub.cfg "$GRUB/kali.cfg"
+    run_check
+    expect_item boot-menu skip "multibootusb/grub/kali.cfg or a directory on its way is a symlink"
+    rm "$GRUB/kali.cfg"
+    write_kali_cfg
+    # A comment, and another kernel whose release starts with the running one's, do not count.
+    write_grub_cfg "# linux /vmlinuz-$V2 root=x" "	linux /vmlinuz-$V2-rt root=x"
+    run_check
+    expect_item boot-menu ok "$stick 0 line(s),"
+    # A file of the stick's menu that cannot be read gives no verdict.
+    rm "$GRUB/kali.cfg"
+    mkdir "$GRUB/kali.cfg"
+    run_check
+    expect_item boot-menu skip "multibootusb/grub/kali.cfg cannot be read"
+    rmdir "$GRUB/kali.cfg"
+    write_kali_cfg
+    # A hypervisor name that is no plain word counts as unknown.
+    export VIRT='vm ware!'
+    run_check
+    expect_item boot-menu ok "hypervisor: unknown;"
+    # No kernel release to look for.
+    export UNAME_R=""
+    run_check
+    expect_item boot-menu skip "uname -r prints no kernel release"
+}
+
 @test "p1-identity fails on another stick or none, and the other partition-1 items skip" {
     local name
     stick_from_boot
@@ -695,7 +771,7 @@ others_ok() {
     run_check
     [ "$status" -eq 2 ]
     expect_item p1-identity fail "the disk that holds /boot is not the one disk_ptuuid names"
-    for name in grub-version tripwire deployed kali-cfg kali-menu; do
+    for name in grub-version tripwire deployed kali-cfg kali-menu boot-menu; do
         expect_item "$name" skip "partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
     done
     refute_line_match '^mount -t ' "$STUB_LOG"
@@ -723,7 +799,7 @@ others_ok() {
     run_check
     [ "$status" -eq 2 ]
     expect_item p1-identity fail "the disk that holds /boot is not the one disk_ptuuid names"
-    for name in grub-version tripwire deployed kali-cfg kali-menu; do
+    for name in grub-version tripwire deployed kali-cfg kali-menu boot-menu; do
         expect_item "$name" skip "partition 1 is not the one disk_ptuuid and p1_fs_uuid name"
     done
     refute_line_match '^mount -t ' "$STUB_LOG"

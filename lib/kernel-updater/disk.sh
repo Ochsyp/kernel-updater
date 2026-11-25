@@ -2,18 +2,19 @@
 # -------------------------------------------------------
 # kernel-updater partition 1
 #
-# Finds the stick's partition 1, the NTFS partition MultiBootUSB boots from, through the disk
-# that holds /boot, checks that it is the one the configuration names, reaches its root to read
-# or write it, and picks how a writer deploys to it. Defines functions and settings only.
+# Finds the stick's partition 1, the FAT or NTFS partition MultiBootUSB boots from, through the
+# disk that holds /boot, checks that it is the one the configuration names, reaches its root to
+# read it, or to write it when it is NTFS, and picks how a writer deploys to it. Defines
+# functions and settings only.
 # -------------------------------------------------------
 
 # Seams for the tests, which come from the environment only with KU_TEST=1, as those of
 # common.sh do: KU_P1_DIR, a directory that stands in for partition 1's root, so that nothing is
 # found or mounted; KU_P1_DISK, a file that stands in for the disk, whose MBR boot code and first
 # partition's boot sector the baseline hashes; KU_P1_FSTYPES, the filesystem types a read-only
-# mount of partition 1 tries, in order, as a read-write one takes ntfs3 alone; and KU_P1_PROBE,
-# the command that checks the volume before a read-write mount, so that a test can do without
-# one.
+# mount of an NTFS partition 1 tries, in order, as a read-write one takes ntfs3 alone; and
+# KU_P1_PROBE, the command that checks the volume before a read-write mount, so that a test can
+# do without one.
 if [[ ${KU_TEST:-} == 1 ]]; then
     KU_P1_DIR=${KU_P1_DIR:-} KU_P1_DISK=${KU_P1_DISK:-}
     KU_P1_FSTYPES=${KU_P1_FSTYPES:-ntfs3 ntfs-3g} KU_P1_PROBE=${KU_P1_PROBE:-ntfs-3g.probe}
@@ -39,6 +40,8 @@ KU_DK_PATH_WARNED=0
 KU_DK_SHARED="partition 1 is mounted where users other than root can change its files, as a"
 KU_DK_SHARED+=" desktop mounts it for its user: unmount it there, as its eject does, and run"
 KU_DK_SHARED+=" again"
+# Why no writer writes a FAT partition 1: the safe writer is proven on NTFS alone.
+KU_DK_FAT="partition 1 is FAT, which kernel-updater only reads"
 # The private mount's directory in /run, 1 while partition 1 may be mounted on its p1/, and 1
 # once the exit trap removes that mount.
 KU_DK_MOUNT_DIR="" KU_DK_MOUNTED=0 KU_DK_CLEANUP=0
@@ -126,8 +129,8 @@ ku_disk_find() {
 
 # Compare what ku_disk_find found with disk_ptuuid and p1_fs_uuid, ignoring case, and set
 # KU_DK_DISK_ID and KU_DK_P1_ID to match, mismatch or unset (the key is not set). Partition 1
-# must also be NTFS. Returns 0 when both match, 1 when either does not, and 2 when neither
-# mismatches but a key is not set.
+# must also be FAT (vfat) or NTFS. Returns 0 when both match, 1 when either does not, and 2 when
+# neither mismatches but a key is not set.
 ku_disk_identity() {
     local ptuuid=${KU_CONF[disk_ptuuid]} serial=${KU_CONF[p1_fs_uuid]}
     KU_DK_DISK_ID=unset KU_DK_P1_ID=unset
@@ -139,7 +142,8 @@ ku_disk_identity() {
     fi
     if [[ -n $serial ]]; then
         KU_DK_P1_ID=mismatch
-        if [[ $KU_DK_FSTYPE == ntfs && -n $KU_DK_UUID && ${KU_DK_UUID^^} == "${serial^^}" ]]; then
+        if [[ ( $KU_DK_FSTYPE == ntfs || $KU_DK_FSTYPE == vfat ) && -n $KU_DK_UUID &&
+            ${KU_DK_UUID^^} == "${serial^^}" ]]; then
             KU_DK_P1_ID=match
         fi
     fi
@@ -160,7 +164,7 @@ ku_disk_identity_problem() {
             ;;
         mismatch:*) printf 'the disk that holds /boot is not the one disk_ptuuid names' ;;
         *)
-            printf 'partition 1 of the disk that holds /boot is not the NTFS filesystem'
+            printf 'partition 1 of the disk that holds /boot is not the FAT or NTFS filesystem'
             printf ' p1_fs_uuid names'
             ;;
     esac
@@ -205,7 +209,7 @@ ku_p1_locate() {
 # ku_disk_find first, but for KU_P1_DIR and a reader's p1_path. Returns 0 once a root is
 # reached: a writer may write there while KU_DK_PROBLEM stays empty, and KU_DK_WRITABLE is
 # then 1, but after a dry run's read-only mount. Returns 1 with KU_DK_PROBLEM set when no root
-# is reached.
+# is reached, and always for rw on a FAT partition 1, which nothing writes.
 ku_p1_open() {
     local mode=$1
     if ! ku_p1_close; then
@@ -213,7 +217,10 @@ ku_p1_open() {
         return 1
     fi
     KU_DK_PROBLEM=""
-    if [[ -n $KU_P1_DIR ]]; then
+    if [[ $mode == rw && -z $KU_P1_DIR && $KU_DK_FSTYPE == vfat ]]; then
+        KU_DK_PROBLEM=$KU_DK_FAT
+        return 1
+    elif [[ -n $KU_P1_DIR ]]; then
         KU_DK_ROOT=$KU_P1_DIR KU_DK_HOW=test
     elif [[ $mode == rw && ${KU_CONF[deploy]} == path ]]; then
         if [[ -z ${KU_CONF[p1_path]} ]]; then
@@ -466,7 +473,8 @@ ku_p1_close() {
 }
 
 # Mount partition 1 on p1/ in a new private directory in /run, read-only for MODE ro and plan,
-# trying the types in KU_P1_FSTYPES in turn, and read-write for rw, with ntfs3 alone; always
+# trying the types in KU_P1_FSTYPES in turn, and read-write for rw, with ntfs3 alone; a FAT
+# partition 1 only ever read-only, with vfat, as root's alone (ku_p1_open refuses rw); always
 # with nosuid, nodev and noexec. A dry run mounts read-only whatever MODE says. Never forced,
 # never removing the hibernation file, and never replaying and clearing the log Windows left:
 # ntfs3 replays that log on a read-write mount and has no option to refuse, so a read-write
@@ -479,7 +487,7 @@ ku_p1_close() {
 # mount. Returns 1 with KU_DK_PROBLEM set when /run is not safe to mount in, the volume is not
 # safe to write, no type mounts, or another mount shares the files.
 _ku_p1_mount() {
-    local mode=$1 flag=ro parent dir type opts kind=read-only
+    local mode=$1 flag=ro parent dir type opts list kind=read-only
     local -a types=()
     if [[ $mode == rw ]] && (( ! KU_DRY_RUN )); then
         flag=rw kind=read-write
@@ -507,7 +515,9 @@ _ku_p1_mount() {
         _ku_p1_cleanup || :
         return 1
     fi
-    if [[ $flag == rw ]]; then
+    if [[ $KU_DK_FSTYPE == vfat ]]; then
+        types=(vfat)
+    elif [[ $flag == rw ]]; then
         types=(ntfs3)
     else
         read -r -a types <<< "$KU_P1_FSTYPES"
@@ -516,6 +526,9 @@ _ku_p1_mount() {
         opts=nosuid,nodev,noexec,$flag
         if [[ $type == ntfs-3g ]]; then
             opts+=,norecover
+        elif [[ $type == vfat ]]; then
+            # FAT keeps no owners: without these, its files would take the mode of root's umask.
+            opts+=,uid=0,gid=0,umask=077
         fi
         KU_DK_MOUNTED=1
         if mount -t "$type" -o "$opts" "$KU_DK_PART" "$dir/p1" 2> /dev/null; then
@@ -539,7 +552,8 @@ _ku_p1_mount() {
         KU_DK_PROBLEM="partition 1 does not mount read-write with ntfs3, as when the volume is"
         KU_DK_PROBLEM+=" marked dirty: let Windows check the stick, then run again"
     else
-        KU_DK_PROBLEM="partition 1 does not mount $kind with ${KU_P1_FSTYPES// /, }"
+        printf -v list '%s, ' "${types[@]}"
+        KU_DK_PROBLEM="partition 1 does not mount $kind with ${list%, }"
     fi
     _ku_p1_cleanup || :
     return 1
@@ -623,7 +637,8 @@ ku_in_vm() {
 # through a mount of the partition, path through p1_path, and export leaves the files in
 # output_dir for Windows to copy. In a VM, where Windows may have partition 1 mounted on the
 # host, this system never writes partition 1 itself: auto and direct export there, and only
-# path writes, through the host. Elsewhere auto writes directly. direct and path fall back to
+# path writes, through the host. Elsewhere auto writes directly. Every mode exports a FAT
+# partition 1, which nothing writes, and auto says so as info. direct and path fall back to
 # export, with a warning that says why, when they get no root they may write: a read-only
 # mount, a volume Windows left hibernated, unclean or marked dirty, which only a mount of its
 # own looks at, since a read-write mount that root made took the volume as it was, a failed
@@ -632,25 +647,24 @@ ku_in_vm() {
 # as ku_p1_locate does. Sets KU_DK_DEPLOY, KU_DK_DEPLOY_WHY for every export, and KU_DK_ROOT,
 # whose files no user but root can change, so that a plan may read there what it builds on
 # (ku_deploy_read), and which direct and path may write but in a dry run. Returns 1 with
-# KU_DK_PROBLEM set when there is no
-# such root, which an export needs too, as while a desktop has partition 1 mounted for its
-# user.
+# KU_DK_PROBLEM set when there is no such root, which an export needs too, as while a desktop
+# has partition 1 mounted for its user.
 ku_deploy_resolve() {
-    local mode=${KU_CONF[deploy]} name=${KU_CONF[deploy]} why="" vm=0
+    local mode=${KU_CONF[deploy]} name=${KU_CONF[deploy]} why="" expected=0
     KU_DK_DEPLOY="" KU_DK_DEPLOY_WHY=""
     ku_p1_locate
-    case $mode in
-        auto | direct)
-            if ku_in_vm; then
-                why="this system runs in a VM, where Windows may have partition 1 mounted on"
-                why+=" the host, so it never writes partition 1 itself"
-                mode="export" vm=1
-            else
-                mode=direct
-            fi
-            ;;
-        export) why="deploy = export" ;;
-    esac
+    # ku_p1_locate found partition 1 and its type, unless KU_P1_DIR stands in for it.
+    if [[ $mode == export ]]; then
+        why="deploy = export"
+    elif [[ -z $KU_P1_DIR && $KU_DK_FSTYPE == vfat ]]; then
+        why=$KU_DK_FAT mode=export expected=1
+    elif [[ $mode == auto || $mode == direct ]] && ku_in_vm; then
+        why="this system runs in a VM, where Windows may have partition 1 mounted on the host,"
+        why+=" so it never writes partition 1 itself"
+        mode=export expected=1
+    elif [[ $mode == auto ]]; then
+        mode=direct
+    fi
     if [[ $mode == direct || $mode == path ]]; then
         if ku_p1_open rw && [[ -z $KU_DK_PROBLEM ]]; then
             KU_DK_DEPLOY=$mode
@@ -670,7 +684,7 @@ ku_deploy_resolve() {
         fi
         return 1
     fi
-    if [[ $name == auto ]] && (( vm )); then
+    if [[ $name == auto ]] && (( expected )); then
         ku_log info "deploy = auto picks export: $why"
     elif [[ $name != export ]]; then
         ku_log warning "deploy = $name cannot write partition 1: $why; the files go to" \
