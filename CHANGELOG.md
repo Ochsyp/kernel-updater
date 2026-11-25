@@ -300,8 +300,8 @@ with the owner's original script.
   clean-shutdown bit, when nothing has it mounted, and once you typed `BOOT is unmounted in
   Windows`, which `--yes` does not answer. It refuses (3) otherwise and writes nothing. The plan
   reads partition 1 through a read-only mount; the writes go through a read-write one with
-  `flush`. The safe writer syncs the filesystem after each of its steps, and on FAT reads each
-  file back through a new read-only mount. `docs/migration.md` gives the steps in Windows before
+  `flush`. On FAT the safe writer syncs the filesystem after each of its steps and reads each
+  file back through a new read-only mount; on NTFS it writes as before. `docs/migration.md` gives the steps in Windows before
   and after each write, and how to put the old menu back. `tests/fat/write.bats` covers every
   refusal, the writer on real FAT32 and FAT16, a failed rename or read-back, and a power loss
   after each step.
