@@ -91,6 +91,10 @@ p1_extras() {
 # FATs, the directories and the files.
 fsck_copy() {
     local fsinfo
+    if [[ $(stat -c %s "$1") != "$(blockdev --getsize64 "${STICK_LOOP}p1")" ]]; then
+        printf '%s is no whole copy of partition 1\n' "${1##*/}" >&2
+        return 1
+    fi
     set_byte "$1" "$FAT32_FLAGS" 0
     fsinfo=$(( ($(byte_at "$1" 48) + 256 * $(byte_at "$1" 49)) *
         ($(byte_at "$1" 11) + 256 * $(byte_at "$1" 12)) ))
@@ -118,6 +122,7 @@ p1_unchanged() {
 }
 
 @test "--write-fat writes grub.cfg under VMware, reads it back through a new mount, and fsck passes" {
+    local mounts
     # The writer logs each mount of partition 1 it makes anew and its options.
     # shellcheck disable=SC2016 # the code expands its own variables
     write_grub '
@@ -130,11 +135,13 @@ p1_unchanged() {
     [[ "$stderr" == *"info: --write-fat: VMware, the stick's menu booted the running kernel, and"* ]]
     [[ "$stderr" == *"deploy: direct"* ]]
     [[ "$stderr" == *"info: wrote $REL; the old one is kept as $REL.ku-"* ]]
-    # Read-write with flush, then read-only for the read-back, then read-write again.
-    [ "$(grep -c '^remount ' <<< "$stderr")" -eq 3 ]
-    [[ "$(grep '^remount ' <<< "$stderr" | sed -n 1p)" == "remount rw: rw,"*flush* ]]
-    [[ "$(grep '^remount ' <<< "$stderr" | sed -n 2p)" == "remount ro: ro,"* ]]
-    [[ "$(grep '^remount ' <<< "$stderr" | sed -n 3p)" == "remount rw: rw,"*flush* ]]
+    # Read-write with flush, then read-only for the read-back, then read-write again. The first
+    # follows the question on its line, as the typed answer's newline is not echoed here.
+    mounts=$(grep -o -E 'remount (ro|rw): [^ ]+' <<< "$stderr")
+    [ "$(wc -l <<< "$mounts")" -eq 3 ]
+    [[ "$(sed -n 1p <<< "$mounts")" == "remount rw: rw,"*flush* ]]
+    [[ "$(sed -n 2p <<< "$mounts")" == "remount ro: ro,"* ]]
+    [[ "$(sed -n 3p <<< "$mounts")" == "remount rw: rw,"*flush* ]]
     # CRLF and all, with the old one kept beside it, and nothing else left.
     cmp "$BATS_TEST_TMPDIR/new.cfg" <(p1_grub)
     [[ "$(p1_extras)" =~ ^grub\.cfg\.ku-[0-9]{8}T[0-9]{6}Z\.bak$ ]]
@@ -272,16 +279,68 @@ EOF
     fsck_clean "${STICK_LOOP}p1"
 }
 
+@test "A read-back mount that fails is followed by a read-write one, which puts the old grub.cfg back" {
+    # The read-only mount for the read-back fails, and leaves nothing mounted.
+    # shellcheck disable=SC2016 # the code expands its own variables
+    write_grub '
+        eval "_ku_real_remount() $(declare -f ku_p1_remount | tail -n +2)"
+        ku_p1_remount() {
+            if [[ $1 == ro ]]; then
+                umount "$KU_DK_MOUNT_DIR/p1"
+                KU_DK_WRITABLE=0 KU_DK_PROBLEM="the test failed the mount"
+                return 1
+            fi
+            _ku_real_remount "$@"
+        }'
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"$REL cannot be read back through a new mount: the test failed the mount;"* ]]
+    [[ "$stderr" == *"$REL was restored as it was"* ]]
+    cmp "$BATS_TEST_TMPDIR/old.cfg" <(p1_grub)
+    [[ "$(p1_extras)" =~ ^grub\.cfg\.ku-[0-9]{8}T[0-9]{6}Z\.bak$ ]]
+    [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
+    fsck_clean "${STICK_LOOP}p1"
+}
+
+@test "When partition 1 does not mount read-write after the read-back, the run says what is left" {
+    # The read-write mount after the read-back fails, and leaves nothing mounted.
+    # shellcheck disable=SC2016 # the code expands its own variables
+    write_grub '
+        eval "_ku_real_remount() $(declare -f ku_p1_remount | tail -n +2)"
+        ku_p1_remount() {
+            if [[ $1 == rw ]] && (( KU_DK_FAT_RW == 2 )); then
+                umount "$KU_DK_MOUNT_DIR/p1"
+                KU_DK_WRITABLE=0 KU_DK_PROBLEM="the test failed the mount"
+                return 1
+            fi
+            _ku_real_remount "$@"
+        }'
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"$REL was written and reads back as written, but partition 1 does not mount"* ]]
+    [[ "$stderr" == *"read-write again: the test failed the mount; the old one waits beside it as"* ]]
+    [[ "$stderr" != *"warning: the old grub.cfg waits beside the new one"* ]]
+    cmp "$BATS_TEST_TMPDIR/new.cfg" <(p1_grub)
+    # The backup, and the old one aside, which the run did not reach to remove.
+    [ "$(p1_extras | wc -l)" -eq 2 ]
+    p1_extras | grep -q -x -E '\.grub\.cfg\.ku-[0-9]{8}T[0-9]{6}Z\.old'
+    p1_extras | grep -q -x -E 'grub\.cfg\.ku-[0-9]{8}T[0-9]{6}Z\.bak'
+    [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
+    [ -z "$(ls -A "$ROOT/run")" ]
+    fsck_clean "${STICK_LOOP}p1"
+}
+
 @test "Power lost after any step of a FAT write leaves a volume fsck passes, with a grub.cfg to boot" {
     local copy view n=0 gaps=0 olds=0 news=0
     export REAL_SYNC COPIES="$BATS_TEST_TMPDIR/copies" P1_DEV="${STICK_LOOP}p1"
     REAL_SYNC=$(command -v sync)
     mkdir "$COPIES"
-    # After each sync of the writer, a copy of partition 1 as the stick then holds it.
+    # After each sync of the writer, a copy of partition 1 as the stick then holds it: the
+    # kernel first drops what it keeps of the device but what the mount uses, which the sync
+    # wrote out, so the copy reads the device itself.
     mkstub sync <<'EOF'
 "$REAL_SYNC" "$@" || exit
+blockdev --flushbufs "$P1_DEV"
 n=$(find "$COPIES" -name 'step.*' | wc -l)
-dd if="$P1_DEV" of="$COPIES/step.$(printf '%02d' $((n + 1)))" bs=1M iflag=direct status=none
+dd if="$P1_DEV" of="$COPIES/step.$(printf '%02d' $((n + 1)))" bs=1M status=none
 EOF
     write_grub
     [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }

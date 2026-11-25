@@ -157,13 +157,15 @@ EOF
 
 @test "A read-back that fails on NTFS puts grub.cfg back and exits 4" {
     local view
-    # The sync before the read-back fails; the restore's goes through.
-    export REAL_SYNC SYNC_DONE="$BATS_TEST_TMPDIR/sync.done"
+    # The sync before the read-back, the second of grub.cfg itself after the one that follows
+    # the rename, fails; the restore's goes through.
+    export REAL_SYNC SYNC_COUNT="$BATS_TEST_TMPDIR/sync.count"
     REAL_SYNC=$(command -v sync)
     mkstub sync <<'EOF'
-if [[ ! -e $SYNC_DONE ]]; then
-    : > "$SYNC_DONE"
-    exit 1
+if [[ ${*: -1} == */grub.cfg ]]; then
+    n=$(( $(cat "$SYNC_COUNT" 2> /dev/null || echo 0) + 1 ))
+    printf '%s\n' "$n" > "$SYNC_COUNT"
+    (( n != 2 )) || exit 1
 fi
 exec "$REAL_SYNC" "$@"
 EOF

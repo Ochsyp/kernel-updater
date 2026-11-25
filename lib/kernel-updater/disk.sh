@@ -866,6 +866,11 @@ _ku_deploy_resolve_fat() {
         _ku_fat_refuse "--write-fat writes through a mount of its own, which deploy = $name" \
             "does not"
     fi
+    # A mount this run made earlier is no other's.
+    if ! ku_p1_close; then
+        KU_DK_PROBLEM="the previous mount of partition 1 stays"
+        return 1
+    fi
     out=$(findmnt -n -r -o TARGET --source "$KU_DK_PART" 2> /dev/null) || out=""
     if [[ -n $out ]]; then
         _ku_fat_refuse "partition 1 is mounted already, and --write-fat writes only through a" \
@@ -882,10 +887,6 @@ _ku_deploy_resolve_fat() {
             *) [[ $virt =~ ^[a-z0-9_-]+$ ]] || virt="an unknown hypervisor" ;;
         esac
         _ku_fat_refuse "this system runs in $virt, and --write-fat writes only under VMware"
-    fi
-    if ! ku_p1_close; then
-        KU_DK_PROBLEM="the previous mount of partition 1 stays"
-        return 1
     fi
     KU_DK_PROBLEM=""
     _ku_p1_device plan || return 1
@@ -933,10 +934,13 @@ ku_p1_remount() {
         KU_DK_PROBLEM="partition 1 has no FAT mount of kernel-updater's own"
         return 1
     fi
-    sync -f -- "$dir" 2> /dev/null || :
-    if ! umount "$dir" 2> /dev/null; then
-        KU_DK_PROBLEM="partition 1 cannot be unmounted, as while a program uses it"
-        return 1
+    # After a mount that failed, nothing is left to unmount there.
+    if findmnt -n -r --mountpoint "$dir" > /dev/null 2>&1; then
+        sync -f -- "$dir" 2> /dev/null || :
+        if ! umount "$dir" 2> /dev/null; then
+            KU_DK_PROBLEM="partition 1 cannot be unmounted, as while a program uses it"
+            return 1
+        fi
     fi
     KU_DK_WRITABLE=0
     if ! mount -t vfat -o "$(_ku_p1_options vfat "$mode")" "$KU_DK_PART" "$dir" 2> /dev/null; then

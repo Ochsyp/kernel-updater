@@ -444,7 +444,8 @@ Windows to copy, and says why.
   the stick and not from what `vfat` kept, and mounts it read-write again; a read-back that
   differs puts the old file back. A power loss between the move aside and the rename, a few
   milliseconds, leaves no `grub.cfg`; every other moment leaves the old or the new one, and a
-  volume that `chkdsk` finds in order but for the dirty mark.
+  volume that `chkdsk` finds in order but for the dirty mark and the count of free clusters,
+  which it recounts.
 - **Writing it.** On NTFS a writer goes the same way as a reader, but takes `p1_path` only with
   `deploy = path`, and a mount that is there only while it is read-write; both only while no user but root can
   change their files, which rules out the mount a desktop makes for its user, since such a

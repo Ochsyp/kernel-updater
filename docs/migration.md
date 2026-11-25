@@ -175,7 +175,9 @@ mountvol X: /p
 ```
 
 It prints nothing. It worked when `Test-Path X:\` prints `False` and Explorer shows no BOOT
-drive. BOOT comes back the next time you plug the stick in.
+drive. BOOT should come back the next time you plug the stick in. If it does not, open Disk
+Management (`diskmgmt.msc`), right-click BOOT on the stick, and set it online, or give it its
+drive letter again with "Change Drive Letter and Paths".
 
 C. Start the VM through the launcher. In Kali, see the plan first; it writes nothing:
 

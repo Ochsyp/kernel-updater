@@ -160,7 +160,9 @@ p1_file() {
     [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
     [ "$(fat_flags)" = 0 ]
     fsck_clean "${STICK_LOOP}p1"
-    # The legacy entry still boots the running kernel, so the rollback may write too.
+    # The legacy entry still boots the running kernel, so the rollback may write too, a second
+    # later, as its backup beside grub.cfg is named after the second.
+    sleep 1
     run_ku migrate --rollback --yes --write-fat
     [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
     cmp "$BATS_TEST_TMPDIR/grub.before" <(p1_file grub.cfg)
