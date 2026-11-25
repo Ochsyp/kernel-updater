@@ -15,8 +15,9 @@ Write-Host "chkdsk $drive, read-only:"
 & chkdsk.exe $drive
 $status = $LASTEXITCODE
 if ($status -ne 0) {
-    Stop-Step ("chkdsk reported problems on BOOT ($drive), exit ${status}: run 'chkdsk $drive /f' " +
-        'as administrator, then step E.')
+    Stop-Step ("chkdsk did not report BOOT ($drive) clean, exit ${status}: read its output above. " +
+        "If it lists errors, run 'chkdsk $drive /f' as administrator, then step E; if it could " +
+        'not check the drive, run this again.')
 }
 Write-Host "chkdsk found no problems on BOOT ($drive), exit 0."
 Wait-Close

@@ -7,6 +7,9 @@
 $drive = Get-BootDrive
 $source = "$drive\multibootusb\grub"
 $desktop = [Environment]::GetFolderPath('Desktop')
+if (-not $desktop -or -not (Test-Path -LiteralPath $desktop -PathType Container)) {
+    Stop-Step 'This account has no Desktop folder to copy the menu to. Nothing was changed.'
+}
 $target = Join-Path $desktop ('stick-grub-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 if (Test-Path -LiteralPath $target) {
     Stop-Step "$target exists already: run this again in a second. Nothing was changed."

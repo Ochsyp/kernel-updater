@@ -23,7 +23,9 @@ if ((Read-Host 'Type yes to go on') -ne 'yes') {
     Stop-Step 'Not copied. Nothing was changed.'
 }
 try {
-    Copy-Item -Path "$from\*" -Destination "$to\" -Recurse -Force -ErrorAction Stop
+    # By literal paths, as a folder name may hold [ or ], which -Path reads as a wildcard.
+    Get-ChildItem -LiteralPath $from -Force -ErrorAction Stop |
+        Copy-Item -Destination $to -Recurse -Force -ErrorAction Stop
 } catch {
     Stop-Step (("The copy failed: {0}. Run this again; if it fails again, copy {1} to {2} in " +
         'Explorer.') -f $_.Exception.Message, $from, $to)

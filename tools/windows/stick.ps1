@@ -41,6 +41,18 @@ function Get-BootDrive {
         Stop-Step (('BOOT ({0}) holds no multibootusb\grub\grub.cfg, so it is not the ' +
             'MultiBootUSB stick. Nothing was changed.') -f $drive)
     }
+    # A disk inside the PC may hold a copy of the stick; the stick itself is on USB.
+    $bus = ''
+    try {
+        $bus = [string](Get-Partition -DriveLetter $found[0].DriveLetter -ErrorAction Stop |
+            Get-Disk -ErrorAction Stop).BusType
+    } catch {
+        $bus = ''
+    }
+    if ($bus -ne 'USB') {
+        Stop-Step (('BOOT ({0}) is not on a USB disk, so it is not the stick. Nothing was ' +
+            'changed.') -f $drive)
+    }
     return $drive
 }
 

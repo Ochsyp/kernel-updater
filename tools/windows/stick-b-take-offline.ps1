@@ -14,7 +14,10 @@ if (-not (Test-Admin)) {
 Write-Host "Taking BOOT ($drive) offline: mountvol $drive\ /p"
 & mountvol.exe "$drive\" /p
 $status = $LASTEXITCODE
-Start-Sleep -Seconds 2
+# Windows may take some seconds to let the drive go.
+for ($i = 0; $i -lt 15 -and (Test-Path -LiteralPath "$drive\"); $i++) {
+    Start-Sleep -Seconds 1
+}
 if (Test-Path -LiteralPath "$drive\") {
     Stop-Step ("mountvol exited $status, and $drive is still there, so Windows still uses BOOT: " +
         'do not start the VM.')
