@@ -99,8 +99,8 @@ private_output() {
     run_ku check --porcelain
     expect_item p1-identity ok "the disk that holds /boot and its FAT partition 1 are"
     expect_item kali-menu skip "not migrated yet"
-    # V2 runs, and the fixture's legacy entries name other kernels only.
-    expect_item boot-menu ok "hypervisor: none; the stick's menu names the running kernel's"
+    # The fixture's legacy entries boot other command lines only.
+    expect_item boot-menu ok "hypervisor: none; the running kernel's command line ends 0 linux"
     [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
     [ "$(p1_sum)" = "$before" ]
 }
@@ -120,6 +120,72 @@ private_output() {
     cmp "$FIXTURES/kali.expected.cfg" "$out/kali.cfg"
     cmp "$BATS_TEST_TMPDIR/grub.after" "$out/grub.cfg"
     [ "$(cut -c 67- "$out/SHA256SUMS")" = $'kali.cfg\ngrub.cfg' ]
+    [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
+    [ "$(p1_sum)" = "$before" ]
+}
+
+# The configuration detect writes for the stick, and a command line that the fixture's first
+# legacy entry boots, as the stick's menu booted the running kernel.
+stick_config() {
+    printf '%s\n' "boot_fs_uuid = $STICK_BOOT_UUID" \
+        'boot_luks_uuid = 5ca1ab1e-0000-4000-8000-000000000c01' \
+        "disk_ptuuid = $STICK_PTUUID" "p1_fs_uuid = $STICK_SERIAL" \
+        'root_device = /dev/mapper/kali--vg-root' > "$ROOT$CONF"
+    printf 'BOOT_IMAGE=/vmlinuz-7.2.9+kali-amd64 %s %s\n' 'root=/dev/mapper/kali--vg-root' \
+        'cryptdevice=UUID=5ca1ab1e-0000-4000-8000-000000000c02:root_crypt ro quiet splash' \
+        > "$ROOT/proc/cmdline"
+}
+
+# Print partition 1's FILE, read through a new read-only mount.
+p1_file() {
+    local view
+    view=$(mount_p1 ro "$BATS_TEST_TMPDIR")
+    cat "$view/multibootusb/grub/$1"
+    umount "$view"
+    rmdir "$view"
+}
+
+@test "menu --write-fat writes the menu under VMware, and --rollback --write-fat puts grub.cfg back" {
+    stick_config
+    mkstub systemd-detect-virt <<< 'echo vmware'
+    printf 'BOOT is unmounted in Windows\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku migrate --stage menu --yes --write-fat
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$stderr" == *"info: --write-fat: VMware, the stick's menu booted the running kernel"* ]]
+    [[ "$stderr" == *"info: wrote multibootusb/grub/kali.cfg"* ]]
+    [[ "$stderr" == *"info: wrote multibootusb/grub/grub.cfg; the old one is kept as"* ]]
+    private_output
+    cmp "$FIXTURES/kali.expected.cfg" <(p1_file kali.cfg)
+    cmp "$BATS_TEST_TMPDIR/grub.after" <(p1_file grub.cfg)
+    [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
+    [ "$(fat_flags)" = 0 ]
+    fsck_clean "${STICK_LOOP}p1"
+    # The legacy entry still boots the running kernel, so the rollback may write too, a second
+    # later, as its backup beside grub.cfg is named after the second.
+    sleep 1
+    run_ku migrate --rollback --yes --write-fat
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    cmp "$BATS_TEST_TMPDIR/grub.before" <(p1_file grub.cfg)
+    [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
+    fsck_clean "${STICK_LOOP}p1"
+    private_output
+}
+
+@test "menu --write-fat outside VMware refuses, and a dry run with it writes nothing" {
+    local before
+    stick_config
+    printf 'BOOT is unmounted in Windows\n' > "$BATS_TEST_TMPDIR/tty"
+    before=$(p1_sum)
+    run_ku migrate --stage menu --yes --write-fat
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"refusing to write the FAT partition 1: this system runs in no VM, and"* ]]
+    private_output
+    [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
+    [ "$(p1_sum)" = "$before" ]
+    mkstub systemd-detect-virt <<< 'echo vmware'
+    run_ku migrate --stage menu --dry-run --write-fat
+    [ "$status" -eq 0 ] || { printf '%s\n' "$stderr" >&2; return 1; }
+    [[ "$stderr" == *"would write multibootusb/grub/grub.cfg"* ]]
     [ -z "$(findmnt -n -r -o TARGET --source "${STICK_LOOP}p1")" ]
     [ "$(p1_sum)" = "$before" ]
 }

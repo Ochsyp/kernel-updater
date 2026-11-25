@@ -14,7 +14,7 @@
 load ../helpers
 load fat
 
-FAT_WHY="partition 1 is FAT, which kernel-updater only reads"
+FAT_WHY="partition 1 is FAT, which kernel-updater writes only with migrate --write-fat"
 
 setup_file() {
     fat_enabled || return 0
@@ -35,6 +35,7 @@ setup() {
     ROOT="$BATS_TEST_TMPDIR/root"
     mkdir -p "$ROOT/boot" "$ROOT/etc" "$ROOT/run" "$ROOT/proc"
     cat /proc/filesystems > "$ROOT/proc/filesystems"
+    printf 'BOOT_IMAGE=/vmlinuz root=/dev/mapper/kali--vg-root ro quiet\n' > "$ROOT/proc/cmdline"
     fresh_partition
     mount "${STICK_LOOP}p2" "$ROOT/boot"
     printf 'disk_ptuuid = %s\np1_fs_uuid = %s\n' "$STICK_PTUUID" "$STICK_SERIAL" \

@@ -26,7 +26,7 @@ SHOW_DEPLOY+=' "$KU_DK_WRITABLE"'
 IN_VM="this system runs in a VM, where Windows may have partition 1 mounted on the host, so it"
 IN_VM+=" never writes partition 1 itself"
 # Why nothing writes a FAT partition 1.
-FAT_WHY="partition 1 is FAT, which kernel-updater only reads"
+FAT_WHY="partition 1 is FAT, which kernel-updater writes only with migrate --write-fat"
 # Why a writer or a plan takes no mount whose files other users can change.
 SHARED="partition 1 is mounted where users other than root can change its files, as a desktop"
 SHARED+=" mounts it for its user: unmount it there, as its eject does, and run again"
@@ -133,9 +133,11 @@ EOF
     mkstub ntfs-3g.probe <<'EOF'
 exit "$PROBE_STATUS"
 EOF
-    # VIRT_STATUS is systemd-detect-virt's status: 0 in a VM, 1 on bare metal.
-    export VIRT_STATUS=1
+    # VIRT_STATUS is systemd-detect-virt's status: 0 in a VM, 1 on bare metal; VIRT is what it
+    # prints for --vm without --quiet.
+    export VIRT_STATUS=1 VIRT=none
     mkstub systemd-detect-virt <<'EOF'
+[[ " $* " == *" --quiet "* ]] || printf '%s\n' "$VIRT"
 exit "$VIRT_STATUS"
 EOF
     # Not root, so the config file's owner is not checked. Root owns every directory, with the
@@ -396,6 +398,145 @@ mount_calls() {
     refute_line_match ',rw|^ntfs-3g\.probe' "$STUB_LOG"
     private_output
     [ -z "$(ls -A "$ROOT/run")" ]
+}
+
+@test "--write-fat refuses another deploy, no VMware, a mount there and a menu that did not boot" {
+    local gate="refusing to write the FAT partition 1:" mode
+    stick_fat
+    run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"$gate this system runs in no VM, and --write-fat writes only under VMware;"* ]]
+    [[ "$stderr" == *"; nothing was changed"* ]]
+    export VIRT=kvm VIRT_STATUS=0
+    run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"$gate this system runs in kvm, and"* ]]
+    export VIRT='vm ware!'
+    run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+    [[ "$stderr" == *"$gate this system runs in an unknown hypervisor, and"* ]]
+    export VIRT=vmware
+    # Partition 1's menu boots nothing with this command line.
+    mkdir -p "$ROOT/proc"
+    printf 'BOOT_IMAGE=/vmlinuz root=/dev/sdb3 ro\n' > "$ROOT/proc/cmdline"
+    run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"$gate the running kernel's command line ends 0 linux line(s) of the stick's"* ]]
+    rm "$ROOT/proc/cmdline"
+    run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+    [[ "$stderr" == *"$gate which menu booted the running kernel cannot be told: /proc/cmdline"* ]]
+    # A mount of partition 1 that is there.
+    mkdir -p "$ROOT/media/BOOT"
+    export P1_MOUNTS="$ROOT/media/BOOT / rw,relatime"
+    run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+    [[ "$stderr" == *"$gate partition 1 is mounted already, and --write-fat writes only through"* ]]
+    export P1_MOUNTS=""
+    # export and path take no mount of their own.
+    for mode in export path; do
+        stick_fat "deploy = $mode" "p1_path = /media/sf_BOOT"
+        run_ku_lib "KU_DK_WRITE_FAT=1; $RESOLVE"
+        [ "$status" -eq 3 ]
+        [[ "$stderr" == *"$gate --write-fat writes through a mount of its own, which deploy = $mode"* ]]
+    done
+    # Nothing was mounted read-write, and on NTFS the flag changes nothing.
+    refute_line_match ',rw' "$STUB_LOG"
+    SERIAL=5CA1AB1E00000001 P1_FSTYPE=ntfs
+    export MOUNT_TYPES=ntfs3
+    write_config
+    stick_on sdb
+    run_ku_lib "KU_DK_WRITE_FAT=1; ku_deploy_resolve; $SHOW_DEPLOY"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: --write-fat changes nothing here, as partition 1 is not FAT"* ]]
+    [[ "$output" == export\|* ]]
+    private_output
+    [ -z "$(ls -A "$ROOT/run")" ]
+}
+
+# Put the bytes given in hex at OFFSET of FILE.
+put_bytes() {
+    local file=$1 at=$2 hex
+    shift 2
+    printf -v hex '\\x%s' "$@"
+    # shellcheck disable=SC2059 # the format is the bytes
+    printf "$hex" | dd of="$file" bs=1 seek="$at" conv=notrunc status=none
+}
+
+# Make FILE the first 64 sectors of a FAT volume of TYPE, 32, 16 or 12, as far as ku_fat_clean
+# reads them: a boot sector whose flags byte is FLAGS, in hex, and the FAT's entry 1, whose bytes
+# follow, in hex, lowest first.
+fat_volume() {
+    local file=$1 type=$2 flags=$3 entry
+    shift 3
+    head -c 32768 /dev/zero > "$file"
+    put_bytes "$file" 11 00 02
+    put_bytes "$file" 510 55 aa
+    case $type in
+        32)
+            # 1 sector a cluster, 32 reserved, 2 FATs, 131072 sectors, 1024 a FAT.
+            put_bytes "$file" 13 01 20 00 02 00 00 00 00
+            put_bytes "$file" 32 00 00 02 00 00 04 00 00
+            put_bytes "$file" 65 "$flags"
+            entry=$((32 * 512 + 4))
+            ;;
+        16)
+            # 4 sectors a cluster, 1 reserved, 2 FATs, 512 root entries, 65536 sectors, 32 a FAT.
+            put_bytes "$file" 13 04 01 00 02 00 02 00 00
+            put_bytes "$file" 22 20 00
+            put_bytes "$file" 32 00 00 01 00
+            put_bytes "$file" 37 "$flags"
+            entry=$((512 + 2))
+            ;;
+        12)
+            # A floppy's: 1 sector a cluster, 224 root entries, 2880 sectors, 9 a FAT.
+            put_bytes "$file" 13 01 01 00 02 e0 00 40 0b
+            put_bytes "$file" 22 09 00
+            put_bytes "$file" 37 "$flags"
+            entry=$((512 + 1))
+            ;;
+    esac
+    put_bytes "$file" "$entry" "$@"
+}
+
+@test "ku_fat_clean takes a FAT32 or FAT16 volume as clean only with no flag and both bits of entry 1" {
+    local vol="$BATS_TEST_TMPDIR/vol" flags
+    local code='ku_fat_clean "$1" || { printf "%s\n" "$KU_DK_PROBLEM"; exit 1; }'
+    fat_volume "$vol" 32 00 ff ff ff 0f
+    run_ku_lib "$code" "$vol"
+    [ "$status" -eq 0 ]
+    fat_volume "$vol" 32 00 ff ff ff 07
+    run_ku_lib "$code" "$vol"
+    [ "$status" -eq 1 ]
+    [[ "$output" == "the volume was not unmounted cleanly, as while Windows uses it: unmount BOOT"* ]]
+    [[ "$output" == *"in Windows with mountvol X: /p as administrator, then run again" ]]
+    fat_volume "$vol" 32 00 ff ff ff 0b
+    run_ku_lib "$code" "$vol"
+    [[ "$output" == "the volume has disk errors marked: let Windows check it with chkdsk X: /f,"* ]]
+    for flags in 01 02; do
+        fat_volume "$vol" 32 "$flags" ff ff ff 0f
+        run_ku_lib "$code" "$vol"
+        [ "$status" -eq 1 ]
+        [[ "$output" == "the volume is marked dirty, as after an unplug without an eject: let"* ]]
+    done
+    fat_volume "$vol" 16 00 ff ff
+    run_ku_lib "$code" "$vol"
+    [ "$status" -eq 0 ]
+    fat_volume "$vol" 16 00 ff 7f
+    run_ku_lib "$code" "$vol"
+    [[ "$output" == "the volume was not unmounted cleanly,"* ]]
+    fat_volume "$vol" 16 00 ff bf
+    run_ku_lib "$code" "$vol"
+    [[ "$output" == "the volume has disk errors marked:"* ]]
+    fat_volume "$vol" 16 01 ff ff
+    run_ku_lib "$code" "$vol"
+    [[ "$output" == "the volume is marked dirty,"* ]]
+    fat_volume "$vol" 12 00 ff ff
+    run_ku_lib "$code" "$vol"
+    [ "$output" = "partition 1 is FAT12, which keeps no clean-shutdown bit to check" ]
+    # No boot sector at all.
+    head -c 32768 /dev/zero > "$vol"
+    run_ku_lib "$code" "$vol"
+    [ "$output" = "partition 1 holds no FAT boot sector that can be read" ]
+    run_ku_lib "$code" "$BATS_TEST_TMPDIR/none"
+    [ "$output" = "partition 1 holds no FAT boot sector that can be read" ]
 }
 
 @test "A writer exits 78 while disk_ptuuid or p1_fs_uuid is not set, saying how to set them" {

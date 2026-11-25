@@ -40,8 +40,17 @@ KU_DK_PATH_WARNED=0
 KU_DK_SHARED="partition 1 is mounted where users other than root can change its files, as a"
 KU_DK_SHARED+=" desktop mounts it for its user: unmount it there, as its eject does, and run"
 KU_DK_SHARED+=" again"
-# Why no writer writes a FAT partition 1: the safe writer is proven on NTFS alone.
-KU_DK_FAT="partition 1 is FAT, which kernel-updater only reads"
+# Why no writer writes a FAT partition 1 unless the run asks for it: Windows may have the volume
+# mounted on the host while a VM uses the stick, and FAT has no journal to fall back on.
+KU_DK_FAT="partition 1 is FAT, which kernel-updater writes only with migrate --write-fat"
+# 1 when the run asks to write a FAT partition 1 (migrate --write-fat); 1 once
+# ku_deploy_resolve let a writer write it, which it reads through a read-only mount of its own
+# until ku_p1_fat_rw mounts that read-write, and 2 from then on; and what a person types first.
+KU_DK_WRITE_FAT=0 KU_DK_FAT_RW=0
+KU_DK_FAT_PHRASE="BOOT is unmounted in Windows"
+# How many linux lines end with the running kernel's command line, as ku_boot_menu counted
+# them: in the stick's menu, and in this system's /boot/grub/grub.cfg.
+KU_DK_MENU_STICK=0 KU_DK_MENU_OWN=0
 # The private mount's directory in /run, 1 while partition 1 may be mounted on its p1/, and 1
 # once the exit trap removes that mount.
 KU_DK_MOUNT_DIR="" KU_DK_MOUNTED=0 KU_DK_CLEANUP=0
@@ -468,8 +477,23 @@ ku_p1_no_symlink() {
 # Remove the private mount ku_p1_open made, if it made one, and forget partition 1's root.
 # Returns 1 when the mount stays, which the exit trap then tries again to remove.
 ku_p1_close() {
-    KU_DK_ROOT="" KU_DK_WRITABLE=0 KU_DK_HOW=""
+    KU_DK_ROOT="" KU_DK_WRITABLE=0 KU_DK_HOW="" KU_DK_FAT_RW=0
     _ku_p1_cleanup
+}
+
+# Print the options a mount of partition 1 with TYPE takes for FLAG, ro or rw: always nosuid,
+# nodev and noexec; norecover for ntfs-3g, since recovering is its default; and for vfat root as
+# the owner of every file, as FAT keeps no owners and its files would take the mode of root's
+# umask, plus flush when read-write, so that each file reaches the stick once it is closed.
+_ku_p1_options() {
+    local opts=nosuid,nodev,noexec,$2
+    if [[ $1 == ntfs-3g ]]; then
+        opts+=,norecover
+    elif [[ $1 == vfat ]]; then
+        opts+=,uid=0,gid=0,umask=077
+        [[ $2 != rw ]] || opts+=,flush
+    fi
+    printf '%s\n' "$opts"
 }
 
 # Mount partition 1 on p1/ in a new private directory in /run, read-only for MODE ro and plan,
@@ -523,13 +547,7 @@ _ku_p1_mount() {
         read -r -a types <<< "$KU_P1_FSTYPES"
     fi
     for type in "${types[@]}"; do
-        opts=nosuid,nodev,noexec,$flag
-        if [[ $type == ntfs-3g ]]; then
-            opts+=,norecover
-        elif [[ $type == vfat ]]; then
-            # FAT keeps no owners: without these, its files would take the mode of root's umask.
-            opts+=,uid=0,gid=0,umask=077
-        fi
+        opts=$(_ku_p1_options "$type" "$flag")
         KU_DK_MOUNTED=1
         if mount -t "$type" -o "$opts" "$KU_DK_PART" "$dir/p1" 2> /dev/null; then
             ku_log debug "partition 1 is mounted $kind with $type"
@@ -654,6 +672,12 @@ ku_deploy_resolve() {
     KU_DK_DEPLOY="" KU_DK_DEPLOY_WHY=""
     ku_p1_locate
     # ku_p1_locate found partition 1 and its type, unless KU_P1_DIR stands in for it.
+    if [[ -z $KU_P1_DIR && $KU_DK_FSTYPE == vfat ]] && (( KU_DK_WRITE_FAT )); then
+        _ku_deploy_resolve_fat "$name"
+        return
+    elif (( KU_DK_WRITE_FAT )); then
+        ku_log warning "--write-fat changes nothing here, as partition 1 is not FAT"
+    fi
     if [[ $mode == export ]]; then
         why="deploy = export"
     elif [[ -z $KU_P1_DIR && $KU_DK_FSTYPE == vfat ]]; then
@@ -692,4 +716,241 @@ ku_deploy_resolve() {
     fi
     # shellcheck disable=SC2034 # read by the commands that deploy
     KU_DK_DEPLOY="export" KU_DK_DEPLOY_WHY=$why
+}
+
+# =======================================================
+#               WRITING A FAT PARTITION 1
+# =======================================================
+
+# Print the running kernel's command line without the BOOT_IMAGE= that GRUB puts first, its
+# words one blank apart: what a linux line of the menu that booted it ends with. Returns 1 when
+# /proc/cmdline cannot be read or holds nothing else.
+ku_cmdline_args() {
+    local line="" file
+    local -a words=()
+    file=$(ku_path /proc/cmdline)
+    { IFS= read -r line < "$file"; } 2> /dev/null || [[ -n $line ]] || return 1
+    read -r -a words <<< "$line"
+    if [[ ${words[0]:-} == BOOT_IMAGE=* ]]; then
+        words=("${words[@]:1}")
+    fi
+    (( ${#words[@]} )) || return 1
+    printf '%s\n' "${words[*]}"
+}
+
+# Print how many lines of FILE run linux, linux16 or linuxefi and end with ARGS, the words of a
+# command line one blank apart, whatever blanks and CRLF line endings FILE has: GRUB passes the
+# words after the kernel's file as the command line. Returns 1 when FILE cannot be read.
+ku_menu_lines() {
+    [[ -f $2 && -r $2 ]] || return 1
+    KU_ARGS=$1 awk '
+        { gsub(/\r/, ""); gsub(/[ \t]+/, " "); sub(/^ /, ""); sub(/ $/, "") }
+        /^linux(16|efi)? / {
+            want = " " ENVIRON["KU_ARGS"]
+            if (length($0) > length(want) &&
+                substr($0, length($0) - length(want) + 1) == want) {
+                n++
+            }
+        }
+        END { print n + 0 }' "$2" 2> /dev/null
+}
+
+# Count the linux lines that end with the running kernel's command line, in the stick's menu
+# under ROOT, multibootusb/grub/grub.cfg and kali.cfg, into KU_DK_MENU_STICK, and in this
+# system's /boot/grub/grub.cfg, into KU_DK_MENU_OWN: the menu that booted the kernel holds such
+# a line. Follows no symlink on the stick. Returns 1 with KU_DK_PROBLEM set when that cannot be
+# counted.
+ku_boot_menu() {
+    local root=$1 args name rel file count
+    KU_DK_MENU_STICK=0 KU_DK_MENU_OWN=0
+    if ! args=$(ku_cmdline_args); then
+        KU_DK_PROBLEM="/proc/cmdline holds no command line beside BOOT_IMAGE"
+        return 1
+    fi
+    for name in grub.cfg kali.cfg; do
+        rel=multibootusb/grub/$name file=$root/multibootusb/grub/$name
+        [[ -e $file || -L $file ]] || continue
+        if ! ku_p1_no_symlink "$root" "$rel"; then
+            KU_DK_PROBLEM="$rel or a directory on its way is a symlink, which kernel-updater"
+            KU_DK_PROBLEM+=" does not follow"
+            return 1
+        fi
+        if ! count=$(ku_menu_lines "$args" "$file"); then
+            KU_DK_PROBLEM="$rel cannot be read"
+            return 1
+        fi
+        KU_DK_MENU_STICK=$((KU_DK_MENU_STICK + count))
+    done
+    file=$(ku_path /boot/grub/grub.cfg)
+    if [[ -e $file ]]; then
+        if ! count=$(ku_menu_lines "$args" "$file"); then
+            KU_DK_PROBLEM="/boot/grub/grub.cfg cannot be read"
+            return 1
+        fi
+        KU_DK_MENU_OWN=$count
+    fi
+}
+
+# Return 0 when the FAT volume on DEVICE was left clean: its boot sector does not mark it dirty,
+# as Linux does while it has it mounted read-write and an unplug without an eject leaves it,
+# and the FAT's entry 1 keeps its clean-shutdown bit, which Windows clears while it uses the
+# volume, and its bit for no disk errors. FAT32 and FAT16 have these; FAT12 does not. Neither
+# proves that Windows has let go of the volume, which only unmounting it there does. Returns 1
+# with KU_DK_PROBLEM set otherwise.
+ku_fat_clean() {
+    local -a b=() e=()
+    local bps="" spc rsv nfats roots total fatsz flags at size clean sound clusters entry=0 i
+    read -r -d '' -a b < <(od -A n -t u1 -v -N 512 -- "$1" 2> /dev/null) || :
+    if (( ${#b[@]} == 512 )) && (( b[510] == 85 && b[511] == 170 )); then
+        bps=$((b[11] + 256 * b[12])) spc=${b[13]} rsv=$((b[14] + 256 * b[15])) nfats=${b[16]}
+        roots=$((b[17] + 256 * b[18])) total=$((b[19] + 256 * b[20]))
+        fatsz=$((b[22] + 256 * b[23]))
+        (( total )) || total=$((b[32] + 256 * b[33] + 65536 * b[34] + 16777216 * b[35]))
+    fi
+    if [[ -z $bps ]] || (( bps < 512 || bps > 4096 || (bps & (bps - 1)) || !spc || !rsv ||
+        !nfats )); then
+        KU_DK_PROBLEM="partition 1 holds no FAT boot sector that can be read"
+        return 1
+    fi
+    if (( fatsz == 0 )); then
+        flags=${b[65]} at=$((rsv * bps + 4)) size=4 clean=$((1 << 27)) sound=$((1 << 26))
+    else
+        clusters=$(( (total - rsv - nfats * fatsz - (roots * 32 + bps - 1) / bps) / spc ))
+        if (( clusters < 4085 )); then
+            KU_DK_PROBLEM="partition 1 is FAT12, which keeps no clean-shutdown bit to check"
+            return 1
+        fi
+        flags=${b[37]} at=$((rsv * bps + 2)) size=2 clean=$((1 << 15)) sound=$((1 << 14))
+    fi
+    read -r -d '' -a e < <(od -A n -t u1 -v -j "$at" -N "$size" -- "$1" 2> /dev/null) || :
+    if (( ${#e[@]} != size )); then
+        KU_DK_PROBLEM="the FAT of partition 1 cannot be read"
+        return 1
+    fi
+    for (( i = size - 1; i >= 0; i-- )); do
+        entry=$((entry * 256 + e[i]))
+    done
+    if (( flags & 3 )); then
+        KU_DK_PROBLEM="the volume is marked dirty, as after an unplug without an eject: let"
+        KU_DK_PROBLEM+=" Windows check it with chkdsk X: /f, then run again"
+    elif (( !(entry & clean) )); then
+        KU_DK_PROBLEM="the volume was not unmounted cleanly, as while Windows uses it: unmount"
+        KU_DK_PROBLEM+=" BOOT in Windows with mountvol X: /p as administrator, then run again"
+    elif (( !(entry & sound) )); then
+        KU_DK_PROBLEM="the volume has disk errors marked: let Windows check it with chkdsk X: /f,"
+        KU_DK_PROBLEM+=" then run again"
+    else
+        return 0
+    fi
+    return 1
+}
+
+# Exit 3, saying that the FAT partition 1 is not written, and why: WHY.
+_ku_fat_refuse() {
+    ku_die "$KU_EX_REFUSED" "refusing to write the FAT partition 1: $*; nothing was changed"
+}
+
+# ku_deploy_resolve for a FAT partition 1 with --write-fat, whose deploy is NAME. Writes only
+# when all of these hold, and exits 3 otherwise: deploy is auto or direct, as the write goes
+# through a mount of its own; nothing has partition 1 mounted yet; systemd-detect-virt names
+# VMware, whose launcher gives the VM the stick, and in which the user's boot test showed that
+# the stick's menu boots Kali; the running kernel's command line ends a linux line of the
+# stick's menu and none of /boot/grub/grub.cfg, so that the menu it writes is the one that
+# boots; and the volume was left clean (ku_fat_clean). Then sets KU_DK_DEPLOY to direct and
+# KU_DK_FAT_RW to 1, with KU_DK_ROOT on a read-only mount of its own, which ku_p1_fat_rw mounts
+# read-write before the first write, once the person typed that Windows let go of the volume.
+# Returns 1 with KU_DK_PROBLEM set when partition 1 does not mount.
+_ku_deploy_resolve_fat() {
+    local name=$1 virt="" out
+    if [[ $name != auto && $name != direct ]]; then
+        _ku_fat_refuse "--write-fat writes through a mount of its own, which deploy = $name" \
+            "does not"
+    fi
+    # A mount this run made earlier is no other's.
+    if ! ku_p1_close; then
+        KU_DK_PROBLEM="the previous mount of partition 1 stays"
+        return 1
+    fi
+    out=$(findmnt -n -r -o TARGET --source "$KU_DK_PART" 2> /dev/null) || out=""
+    if [[ -n $out ]]; then
+        _ku_fat_refuse "partition 1 is mounted already, and --write-fat writes only through a" \
+            "mount of its own: unmount it, then run again"
+    fi
+    if command -v systemd-detect-virt > /dev/null; then
+        # It prints none and exits 1 on bare metal.
+        virt=$(systemd-detect-virt --vm 2> /dev/null) || :
+    fi
+    if [[ $virt != vmware ]]; then
+        case $virt in
+            none) virt="no VM" ;;
+            "") virt="what systemd-detect-virt does not name" ;;
+            *) [[ $virt =~ ^[a-z0-9_-]+$ ]] || virt="an unknown hypervisor" ;;
+        esac
+        _ku_fat_refuse "this system runs in $virt, and --write-fat writes only under VMware"
+    fi
+    KU_DK_PROBLEM=""
+    _ku_p1_device plan || return 1
+    if [[ $KU_DK_HOW != private ]]; then
+        _ku_fat_refuse "partition 1 is mounted already, and --write-fat writes only through a" \
+            "mount of its own: unmount it, then run again"
+    fi
+    if ! ku_boot_menu "$KU_DK_ROOT"; then
+        _ku_fat_refuse "which menu booted the running kernel cannot be told: $KU_DK_PROBLEM"
+    fi
+    if (( KU_DK_MENU_STICK == 0 || KU_DK_MENU_OWN > 0 )); then
+        _ku_fat_refuse "the running kernel's command line ends $KU_DK_MENU_STICK linux line(s)" \
+            "of the stick's menu and $KU_DK_MENU_OWN of /boot/grub/grub.cfg, so the stick's" \
+            "menu cannot be told to have booted it"
+    fi
+    ku_fat_clean "$KU_DK_PART" || _ku_fat_refuse "$KU_DK_PROBLEM"
+    ku_log info "--write-fat: VMware, the stick's menu booted the running kernel, and" \
+        "partition 1 was unmounted cleanly"
+    # shellcheck disable=SC2034 # read by the commands that deploy
+    KU_DK_DEPLOY=direct KU_DK_DEPLOY_WHY="" KU_DK_FAT_RW=1
+}
+
+# Before the first write to a FAT partition 1 that ku_deploy_resolve let a writer write: ask
+# the person to type KU_DK_FAT_PHRASE, which --yes does not answer, check again that the volume
+# is clean, and mount it read-write in the place of the read-only mount. Exits 10 on another
+# answer. Returns 1 with KU_DK_PROBLEM set when it stays read-only, or is no longer mounted.
+ku_p1_fat_rw() {
+    (( KU_DK_FAT_RW == 1 )) || return 0
+    ku_ask_phrase "$KU_DK_FAT_PHRASE" "Unmount BOOT in Windows first, with mountvol X: /p as" \
+        "administrator. Type '$KU_DK_FAT_PHRASE' to write partition 1:"
+    ku_fat_clean "$KU_DK_PART" || return 1
+    ku_p1_remount rw || return 1
+    KU_DK_FAT_RW=2
+}
+
+# Unmount the private mount of the FAT partition 1 and mount it again in the same place,
+# read-only for MODE ro and read-write for rw, so that a read through it comes from the stick
+# and not from what the kernel kept of the earlier mount. Returns 1 with KU_DK_PROBLEM set when
+# it is not mounted as MODE asks then; KU_DK_WRITABLE says whether it is mounted read-write, and
+# it may not be mounted at all.
+ku_p1_remount() {
+    local mode=$1 dir=$KU_DK_MOUNT_DIR/p1 kind=read-only
+    [[ $mode == ro ]] || kind=read-write
+    if [[ $KU_DK_HOW != private || -z $KU_DK_MOUNT_DIR || $KU_DK_FSTYPE != vfat ]]; then
+        KU_DK_PROBLEM="partition 1 has no FAT mount of kernel-updater's own"
+        return 1
+    fi
+    # After a mount that failed, nothing is left to unmount there.
+    if findmnt -n -r --mountpoint "$dir" > /dev/null 2>&1; then
+        sync -f -- "$dir" 2> /dev/null || :
+        if ! umount "$dir" 2> /dev/null; then
+            KU_DK_PROBLEM="partition 1 cannot be unmounted, as while a program uses it"
+            return 1
+        fi
+    fi
+    KU_DK_WRITABLE=0
+    if ! mount -t vfat -o "$(_ku_p1_options vfat "$mode")" "$KU_DK_PART" "$dir" 2> /dev/null; then
+        KU_DK_PROBLEM="partition 1 does not mount $kind with vfat again"
+        return 1
+    fi
+    if ! _ku_p1_sole "$dir"; then
+        KU_DK_PROBLEM=$KU_DK_SHARED
+        umount "$dir" 2> /dev/null || :
+        return 1
+    fi
+    [[ $mode == ro ]] || KU_DK_WRITABLE=1
 }

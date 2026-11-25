@@ -294,6 +294,17 @@ with the owner's original script.
 - A `fat` job in the tests workflow: `tests/fat` builds a stick with a FAT32 partition 1 and
   syslinux's boot sector in a loop file, and runs identity, mounts, names in capitals, the
   tripwire with a real dirty flag, `detect`, and a menu stage that leaves partition 1 as it was.
+- `migrate --write-fat`, which lets one run write a FAT partition 1 from the VM, and only under
+  VMware, when the running kernel's command line ends a `linux` line of the stick's menu and
+  none of `/boot/grub/grub.cfg`, when the volume is not marked dirty and its FAT keeps the
+  clean-shutdown bit, when nothing has it mounted, and once you typed `BOOT is unmounted in
+  Windows`, which `--yes` does not answer. It refuses (3) otherwise and writes nothing. The plan
+  reads partition 1 through a read-only mount; the writes go through a read-write one with
+  `flush`. On FAT the safe writer syncs the filesystem after each of its steps and reads each
+  file back through a new read-only mount; on NTFS it writes as before. `docs/migration.md` gives the steps in Windows before
+  and after each write, and how to put the old menu back. `tests/fat/write.bats` covers every
+  refusal, the writer on real FAT32 and FAT16, a failed rename or read-back, and a power loss
+  after each step.
 
 ### Changed
 
@@ -385,6 +396,10 @@ with the owner's original script.
   for Windows to copy, whatever `deploy` says, and say why. The tripwire ignores the flags byte
   in a FAT boot sector, which every mount and an unplug without an eject change, and on FAT the
   globs of `baseline.list` match names in any case. NTFS sticks work as before.
+- A FAT partition 1 is written with `migrate --write-fat`, and exported as before without it.
+- `check`'s `boot-menu` item counts the `linux` lines that end with the running kernel's command
+  line, as GRUB passed it, instead of the lines that name its version: after the migration both
+  menus boot `/vmlinuz`, and a version alone does not tell the two menus apart.
 
 ### Removed
 

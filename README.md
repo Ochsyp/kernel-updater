@@ -53,9 +53,9 @@ to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk`
 (linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which a Kali install
 has. `check` and `baseline` mount the stick's partition 1 read-only: FAT with the kernel's
 `vfat` driver, NTFS with `ntfs3`, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it,
-which `migrate` does on NTFS only, needs `ntfs3` and `ntfs-3g.probe`, from the same package,
-and `systemd-detect-virt` tells the writer whether it runs in a VM, and `check` which
-hypervisor runs it. `migrate` also runs `linux-update-symlinks` (linux-base),
+which only `migrate` does, needs on NTFS `ntfs3` and `ntfs-3g.probe`, from the same package,
+and on FAT `vfat` and `migrate --write-fat` under VMware; `systemd-detect-virt` tells the
+writer whether it runs in a VM, and which, and `check` which hypervisor runs it. `migrate` also runs `linux-update-symlinks` (linux-base),
 `debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs. `cleanup`
 runs `apt-get` and `apt-mark` (apt), `dpkg-query`, and `dkms` when it is installed; it moves a
 module tree into its quarantine only with GNU `mv` from coreutils 9.2 on, whose `--no-copy`
@@ -184,7 +184,7 @@ alone.
 | `deployed` | The files exported to `output_dir` match those on partition 1, as its `SHA256SUMS` lists them; fails naming each one that differs or is missing, and skips while nothing was exported. Copy the export only when you have not yet: copied again after the stick changed, it would undo that change |
 | `kali-cfg` | `multibootusb/grub/kali.cfg`, which the menu stage of `migrate` writes, passes `lint` with the stick's own command and module lists; fails on errors and when it or a directory on its way is a symlink, warns on warnings, and skips while the file does not exist |
 | `kali-menu` | `grub.cfg` holds the block `migrate` writes, which sources `kali.cfg`, and `kali.cfg` exists; skips while neither is there, before the migration, warns while the legacy Kali entries remain (until `migrate --stage finalize`), and fails when only one of the block and `kali.cfg` is there, as after a rollback of the menu stage until `kali.cfg` is deleted or the stage runs again, or when `grub.cfg` or a directory on its way is a symlink |
-| `boot-menu` | Which menu booted the running kernel, and which hypervisor runs this system, as `systemd-detect-virt` names it (`none` on bare metal): counts the lines that name the kernel's file, `vmlinuz-<release>`, in the stick's `grub.cfg` and `kali.cfg` and in this system's `/boot/grub/grub.cfg`. Only reports, so it is `ok`, or skips when the release is unknown, or a file of the stick's menu cannot be read or is a symlink. Comment lines do not count. After the migration neither menu names a version, as both boot `/vmlinuz` |
+| `boot-menu` | Which menu booted the running kernel, and which hypervisor runs this system, as `systemd-detect-virt` names it (`none` on bare metal): counts the `linux` lines that end with the kernel's command line, as GRUB passed it without `BOOT_IMAGE=`, in the stick's `grub.cfg` and `kali.cfg` and in this system's `/boot/grub/grub.cfg`, whatever blanks and line endings they have. Only reports, so it is `ok`, or skips when `/proc/cmdline` holds nothing beside `BOOT_IMAGE=`, or a file of the stick's menu cannot be read or is a symlink. `migrate --write-fat` writes a FAT partition 1 only when this says that the stick's menu booted it |
 
 Results go to stdout as aligned `STATUS ITEM DETAIL` lines, or with `--porcelain` as
 `ITEM<TAB>STATUS<TAB>DETAIL`, and a summary goes to stderr. Details name kinds and counts,
@@ -228,8 +228,8 @@ all. `--porcelain` prints the lines as `KEY<TAB>VALUE`.
 ### migrate
 
 ```text
-kernel-updater migrate [--stage STAGE] [--deploy MODE] [--output-dir DIR] [-n] [-y]
-kernel-updater migrate --rollback [STAMP] [-n] [-y]
+kernel-updater migrate [--stage STAGE] [--deploy MODE] [--output-dir DIR] [--write-fat] [-n] [-y]
+kernel-updater migrate --rollback [STAMP] [--write-fat] [-n] [-y]
 ```
 
 `migrate` makes the one-time switch to the link-based menu: afterwards a kernel install or
@@ -252,6 +252,13 @@ file as `NAME=<value>`.
 | `finalize` | Needs `menu` done. Removes the legacy submenu from `grub.cfg` and nothing else, after a question that asks for the boot tests first, and writes it or exports it. After a write it sets `grub.cfg`'s entry in the stored baseline, unless `grub.cfg` differed from it before, and names, in a warning, the files that still differ from it, which `kernel-updater baseline` then shows and records once checked; it records the whole baseline only when none is stored. A rollback that writes `grub.cfg` or `kali.cfg` treats their entries as `menu` does |
 | `all` | The default: `detect`, `system` and `menu` in turn. A dry run stops after the first stage that would change something, as the later plans build on it. `finalize` never runs with them |
 
+`--write-fat` lets this run write a FAT partition 1, which every run without it exports, and
+only as the Partition 1 section below says: under VMware, when the stick's menu booted the
+running kernel, the volume was left clean, and you type `BOOT is unmounted in Windows` at its
+question, which `--yes` does not answer. Otherwise it refuses (3), or exits 10 on another
+answer, and writes nothing. On NTFS it changes nothing and says so.
+[docs/migration.md](docs/migration.md#writing-a-fat-partition-1-from-the-vm) lists what to do in
+Windows before and after.
 `--deploy` and `--output-dir` stand in for `deploy` and `output_dir` for one run; an export
 that `--output-dir` takes elsewhere than the configured `output_dir` gets a warning, since
 check's `deployed` item and later runs read only that one. A write of `menu`, `finalize` or a
@@ -397,8 +404,9 @@ and records name packages, releases and paths, never a disk identifier.
 
 The tool finds and reaches the stick's partition 1, the FAT or NTFS partition labelled BOOT
 that holds MultiBootUSB, so that `migrate` can write its menu there safely; only `migrate`
-writes it, and only when it is NTFS. A FAT partition 1 is read only: every stage that would
-write it leaves its files in `output_dir` for Windows to copy, and says why.
+writes it. A FAT partition 1 is written only by a run with `--write-fat` that passes every
+check below; every other stage that would write it leaves its files in `output_dir` for
+Windows to copy, and says why.
 
 - **Finding it.** The tool never trusts a `/dev/sdX` or `/dev/disk/by-id` name, which change
   with the port and in a VM. It starts from the filesystem mounted at `/boot`, walks up with
@@ -419,8 +427,26 @@ write it leaves its files in `output_dir` for Windows to copy, and says why.
   follow no symlink on partition 1, which Windows or a user who owns a mount of it could have
   made: a file that is or passes one counts as missing to the tripwire and to the `deployed`
   item, its GRUB version as unknown, and `kali-cfg` fails.
-- **Writing it.** Nothing writes a FAT partition 1, since the safe writer below is proven on
-  NTFS alone. On NTFS a writer goes the same way, but takes `p1_path` only with
+- **Writing FAT.** FAT has no journal, and in the VM Windows may have the volume mounted on
+  the host at the same time, which would corrupt it. So a FAT partition 1 is written only with
+  `migrate --write-fat`, and only when all of these hold, or the run refuses (3) and writes
+  nothing: `deploy` is `auto` or `direct`; nothing has partition 1 mounted; `systemd-detect-virt`
+  names `vmware`; the running kernel's command line, without `BOOT_IMAGE=`, ends a `linux` line
+  of the stick's `grub.cfg` or `kali.cfg` and none of `/boot/grub/grub.cfg`, so that the menu it
+  writes is the one that booted it; and the volume was left clean: its boot sector is not
+  marked dirty, and the FAT's entry 1 keeps the clean-shutdown bit, which Windows clears while
+  it uses the volume, and the bit for no disk errors (FAT32 and FAT16; FAT12 is refused). The
+  plan is read through a read-only mount of its own. Before the first write the run asks you to
+  type `BOOT is unmounted in Windows`, checks the volume once more, and mounts it read-write
+  with `vfat` and `flush` in the same place. The writer below then syncs the filesystem after
+  each step: the backup, the temporary file, the move aside, the rename and the removal of the
+  old file. It reads each file back through a new read-only mount, so that the read comes from
+  the stick and not from what `vfat` kept, and mounts it read-write again; a read-back that
+  differs puts the old file back. A power loss between the move aside and the rename, a few
+  milliseconds, leaves no `grub.cfg`; every other moment leaves the old or the new one, and a
+  volume that `chkdsk` finds in order but for the dirty mark and the count of free clusters,
+  which it recounts.
+- **Writing it.** On NTFS a writer goes the same way as a reader, but takes `p1_path` only with
   `deploy = path`, and a mount that is there only while it is read-write; both only while no user but root can
   change their files, which rules out the mount a desktop makes for its user, since such a
   user could swap a file for a symlink while root writes. A mount of partition 1, or the share
@@ -435,8 +461,8 @@ write it leaves its files in `output_dir` for Windows to copy, and says why.
   read-write all the same. It checks that the mount is read-write. A read-write mount that
   root made itself took the volume as it was, so the writer takes it as it is. A dry run
   mounts read-only and does not probe.
-- **Deploying.** Every mode exports a FAT partition 1's files: `auto` says so as info, and
-  `direct` and `path` warn. In a VM, where Windows may have partition 1 mounted on the host,
+- **Deploying.** Without `--write-fat`, every mode exports a FAT partition 1's files: `auto`
+  says so as info, and `direct` and `path` warn. In a VM, where Windows may have partition 1 mounted on the host,
   the guest never writes partition 1 itself: `deploy = auto` and `direct` export there, and only `path`
   writes, through the host's share. Natively, `auto` and `direct` write directly. `direct` and
   `path` fall back to an export, saying why, when they get no root they may write, as when
@@ -678,7 +704,13 @@ bats tests/
   capitals, see a mount a user owns serve no plan, see every deploy mode export instead of
   writing, and see the tripwire pass a real "not cleanly unmounted" flag but catch any other
   changed byte of the boot sector. Their `migrate.bats` runs `detect` on the stick and the menu
-  stage, which leaves its files in `output_dir` and partition 1 byte for byte as it was. They
+  stage, which leaves its files in `output_dir` and partition 1 byte for byte as it was, and,
+  with `--write-fat` under a stub VMware, writes the menu and rolls it back. Their
+  `write.bats` sees each check before a FAT write refuse with partition 1 byte for byte as it
+  was, the writer read back through a new mount, a failed rename and a failed read-back put
+  back, FAT16 too, and a copy of partition 1 after every step the writer syncs, as a power loss
+  would leave it, pass `fsck.vfat -n` with the old or the new `grub.cfg`, or none only between
+  the move aside and the rename. They
   run only with `KU_FAT=1`, as root; the `fat` job installs `dosfstools`, `syslinux`, `mtools`
   and `dmsetup` and runs them with `sudo env "PATH=$PATH" KU_FAT=1 bats --tap tests/fat`.
 - `.githooks/privacy-scan` runs in the tests and before every commit on a clone with the hooks

@@ -125,6 +125,27 @@ ku_ask() {
     return 1
 }
 
+# Ask PROMPT on the terminal, the words after PHRASE, and return 0 once the answer is PHRASE,
+# blanks around it aside. --yes does not answer it, since it says that the person did something
+# by hand. Exits 10 on another answer or when no terminal can be read.
+ku_ask_phrase() {
+    local phrase=$1 answer=""
+    shift
+    if [[ -z $KU_TTY_FD ]] && ! { exec {KU_TTY_FD}< "$KU_TTY"; } 2> /dev/null; then
+        KU_TTY_FD=""
+        ku_die "$KU_EX_DECLINED" "no terminal to type the answer on, which --yes does not give;" \
+            "nothing was changed"
+    fi
+    printf '%s ' "$*" >&2
+    IFS= read -r answer <&"$KU_TTY_FD" || true
+    answer=${answer%$'\r'}
+    answer=${answer#"${answer%%[![:space:]]*}"}
+    answer=${answer%"${answer##*[![:space:]]}"}
+    if [[ $answer != "$phrase" ]]; then
+        ku_die "$KU_EX_DECLINED" "declined: the answer was not '$phrase'; nothing was changed"
+    fi
+}
+
 # Ask PROMPT as ku_ask does and return 0 on "y" or "yes". Exits 10 on any other answer or when
 # no terminal can be read, so nothing runs unconfirmed.
 ku_confirm() {
