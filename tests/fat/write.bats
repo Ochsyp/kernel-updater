@@ -19,6 +19,7 @@ OLD=$'menuentry "Kali" {\r\n\tlinux /vmlinuz '"$ARGS"$'\r\n\tinitrd /initrd.img\
 NEW=$'menuentry "Kali" {\r\n\tconfigfile /multibootusb/grub/kali.cfg\r\n}\r\n'
 # The question before a FAT write, which --yes does not answer.
 QUESTION="Write the FAT partition 1 now? In Windows, Test-Path on BOOT's drive must print False"
+QUESTION+=" while this VM runs [y/N]"
 GATE="refusing to write the FAT partition 1:"
 
 setup_file() {
@@ -227,13 +228,13 @@ p1_unchanged() {
     printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
     write_grub
     [ "$status" -eq 10 ]
-    [[ "$stderr" == *"$QUESTION [y/N] "* ]]
+    [[ "$stderr" == *"$QUESTION"* ]] || { printf 'stderr:\n%s\n' "$stderr" >&2; return 1; }
     [[ "$stderr" == *"declined; nothing was changed"* && "$stderr" != *mountvol* ]]
     p1_unchanged "$before"
     # --yes answers the plan's questions, never this one.
     write_grub 'KU_ASSUME_YES=1'
     [ "$status" -eq 10 ]
-    [[ "$stderr" == *"$QUESTION [y/N] "* ]]
+    [[ "$stderr" == *"$QUESTION"* ]] || { printf 'stderr:\n%s\n' "$stderr" >&2; return 1; }
     p1_unchanged "$before"
     rm "$BATS_TEST_TMPDIR/tty"
     write_grub 'KU_ASSUME_YES=1'
