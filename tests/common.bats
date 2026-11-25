@@ -88,6 +88,28 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
+@test "ku_ask_phrase takes the phrase alone, blanks around it aside, and never --yes" {
+    KU_TTY="$BATS_TEST_TMPDIR/tty"
+    local answer
+    for answer in "BOOT is unmounted" "  BOOT is unmounted"$'\t' $'BOOT is unmounted\r'; do
+        printf '%s\n' "$answer" > "$KU_TTY"
+        run ku_ask_phrase "BOOT is unmounted" "Type it:"
+        [ "$status" -eq 0 ]
+        [ "$output" = "Type it: " ]
+    done
+    KU_ASSUME_YES=1
+    for answer in y yes "boot is unmounted" "BOOT is  unmounted" ""; do
+        printf '%s\n' "$answer" > "$KU_TTY"
+        run ku_ask_phrase "BOOT is unmounted" "Type it:"
+        [ "$status" -eq 10 ]
+        [[ "$output" == *"declined: the answer was not 'BOOT is unmounted'; nothing was changed" ]]
+    done
+    KU_TTY="$BATS_TEST_TMPDIR/no-such-tty"
+    run ku_ask_phrase "BOOT is unmounted" "Type it:"
+    [ "$status" -eq 10 ]
+    [[ "$output" == *"no terminal to type the answer on, which --yes does not give;"* ]]
+}
+
 @test "ku_ask returns 1 on a no, and each question reads the next answer of the terminal" {
     KU_TTY="$BATS_TEST_TMPDIR/tty"
     printf 'y\nn\nyes\n' > "$KU_TTY"

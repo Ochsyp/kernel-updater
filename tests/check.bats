@@ -709,44 +709,47 @@ others_ok() {
     [[ "${output,,}${stderr,,}" != *5ca1ab1e* && "${output,,}${stderr,,}" != *5ca1-ab1e* ]]
 }
 
-@test "boot-menu names the hypervisor and which menu names the running kernel by its version" {
-    local stick="the stick's menu names the running kernel's version on"
+@test "boot-menu names the hypervisor and which menu ends a linux line with the kernel's command line" {
+    local line="the running kernel's command line ends" args="root=/dev/mapper/kali--vg-root ro"
+    # Without a command line beside BOOT_IMAGE, nothing is told.
     run_check
-    expect_item boot-menu ok "hypervisor: none; $stick 0 line(s), /boot/grub/grub.cfg on 0,"
-    expect_item boot-menu ok "so neither menu names it by version, as after the migration"
-    # The stick's menu, in VMware.
+    expect_item boot-menu skip "/proc/cmdline holds no command line beside BOOT_IMAGE"
+    mkdir -p "$ROOT/proc"
+    printf 'BOOT_IMAGE=/vmlinuz\n' > "$ROOT/proc/cmdline"
+    run_check
+    expect_item boot-menu skip "/proc/cmdline holds no command line beside BOOT_IMAGE"
+    # kali.cfg's entry, in VMware.
+    printf 'BOOT_IMAGE=/vmlinuz %s quiet\n' "$args" > "$ROOT/proc/cmdline"
     export VIRT=vmware
-    write_grub_cfg 'menuentry "Kali" {' "	linux /vmlinuz-$V2 root=x" '}'
     run_check
-    expect_item boot-menu ok "hypervisor: vmware; $stick 1 line(s), /boot/grub/grub.cfg on 0,"
-    expect_item boot-menu ok "so the stick's menu booted it"
-    # Kali's own menu as well; kali.cfg counts as the stick's menu.
+    expect_item boot-menu ok "hypervisor: vmware; $line 1 linux line(s) of the stick's menu and 0"
+    expect_item boot-menu ok "and 0 of /boot/grub/grub.cfg, so the stick's menu booted it"
+    # grub.cfg counts too, CRLF and with other blanks between the words, and so do linux16 and
+    # Kali's own menu.
+    write_grub_cfg $'\t  linux16\t/vmlinuz-x   root=/dev/mapper/kali--vg-root ro  quiet  '
     mkdir -p "$ROOT/boot/grub"
-    printf '\tlinux /vmlinuz-%s root=x\n' "$V2" "$V2" > "$ROOT/boot/grub/grub.cfg"
-    write_kali_cfg "echo vmlinuz-$V2"
+    printf '\tlinux /vmlinuz-%s %s quiet\n' "$V2" "$args" > "$ROOT/boot/grub/grub.cfg"
     run_check
-    expect_item boot-menu ok "$stick 2 line(s), /boot/grub/grub.cfg on 2,"
+    expect_item boot-menu ok "$line 2 linux line(s) of the stick's menu and 1 of /boot/grub/grub.cfg,"
     expect_item boot-menu ok "so either menu may have booted it"
+    # Kali's own menu alone.
     write_grub_cfg
-    write_kali_cfg
+    printf '\tlinux /vmlinuz-%s root=UUID=x ro quiet\n' "$V2" > "$ROOT/boot/grub/grub.cfg"
+    printf 'BOOT_IMAGE=/vmlinuz-%s root=UUID=x ro quiet\n' "$V2" > "$ROOT/proc/cmdline"
     run_check
-    expect_item boot-menu ok "$stick 0 line(s), /boot/grub/grub.cfg on 2,"
+    expect_item boot-menu ok "$line 0 linux line(s) of the stick's menu and 1 of /boot/grub/grub.cfg,"
     expect_item boot-menu ok "so Kali's own menu booted it"
-    # Another kernel's version does not count.
-    printf '\tlinux /vmlinuz-%s root=x\n' "$V1" > "$ROOT/boot/grub/grub.cfg"
+    # A line that goes on past the command line, a comment and another command do not count.
+    printf 'BOOT_IMAGE=/vmlinuz %s\n' "$args" > "$ROOT/proc/cmdline"
+    write_grub_cfg "# linux /vmlinuz $args" "	echo linux /vmlinuz $args"
     run_check
-    expect_item boot-menu ok "/boot/grub/grub.cfg on 0,"
+    expect_item boot-menu ok "$line 0 linux line(s) of the stick's menu and 0 of /boot/grub/grub.cfg,"
+    expect_item boot-menu ok "so which menu booted it cannot be told"
     # A symlink on the stick is not followed.
     rm "$GRUB/kali.cfg"
     ln -s grub.cfg "$GRUB/kali.cfg"
     run_check
     expect_item boot-menu skip "multibootusb/grub/kali.cfg or a directory on its way is a symlink"
-    rm "$GRUB/kali.cfg"
-    write_kali_cfg
-    # A comment, and another kernel whose release starts with the running one's, do not count.
-    write_grub_cfg "# linux /vmlinuz-$V2 root=x" "	linux /vmlinuz-$V2-rt root=x"
-    run_check
-    expect_item boot-menu ok "$stick 0 line(s),"
     # A file of the stick's menu that cannot be read gives no verdict.
     rm "$GRUB/kali.cfg"
     mkdir "$GRUB/kali.cfg"
@@ -758,10 +761,6 @@ others_ok() {
     export VIRT='vm ware!'
     run_check
     expect_item boot-menu ok "hypervisor: unknown;"
-    # No kernel release to look for.
-    export UNAME_R=""
-    run_check
-    expect_item boot-menu skip "uname -r prints no kernel release"
 }
 
 @test "p1-identity fails on another stick or none, and the other partition-1 items skip" {

@@ -147,3 +147,52 @@ p1_sum() {
     sync
     sha256sum < "${STICK_LOOP}p1" | cut -c 1-64
 }
+
+# Print the byte at OFFSET of FILE as a decimal number.
+byte_at() {
+    od -A n -t u1 -j "$2" -N 1 "$1" | tr -d ' '
+}
+
+# Set the byte at OFFSET of FILE to the decimal VALUE.
+set_byte() {
+    # shellcheck disable=SC2059 # the format is the one escape made here
+    printf "\x$(printf '%02x' "$3")" | dd of="$1" bs=1 seek="$2" conv=notrunc status=none
+    sync
+}
+
+# Print the offset in FILE, a FAT32 or FAT16 volume, of the byte of the FAT's entry 1 that holds
+# its clean-shutdown bit: bit 27 of a FAT32 entry, bit 15 of a FAT16 one, as the bit 3 or 7 of
+# that byte.
+fat_clean_byte() {
+    local bps rsv fatsz16
+    bps=$(( $(byte_at "$1" 11) + 256 * $(byte_at "$1" 12) ))
+    rsv=$(( $(byte_at "$1" 14) + 256 * $(byte_at "$1" 15) ))
+    fatsz16=$(( $(byte_at "$1" 22) + 256 * $(byte_at "$1" 23) ))
+    if (( fatsz16 == 0 )); then
+        printf '%s\n' $(( rsv * bps + 7 ))
+    else
+        printf '%s\n' $(( rsv * bps + 3 ))
+    fi
+}
+
+# Clear the clean-shutdown bit of FILE's FAT, as Windows does while it uses the volume.
+clear_clean_bit() {
+    local at mask=8
+    at=$(fat_clean_byte "$1")
+    [[ $(byte_at "$1" 22)$(byte_at "$1" 23) == 00 ]] || mask=128
+    set_byte "$1" "$at" $(( $(byte_at "$1" "$at") & ~mask & 255 ))
+}
+
+# Return 0 when fsck.vfat finds nothing to repair on FILE, and print what it found otherwise.
+fsck_clean() {
+    local out
+    if ! out=$(fsck.vfat -n "$1" 2>&1); then
+        printf 'fsck.vfat -n %s:\n%s\n' "${1##*/}" "$out" >&2
+        return 1
+    fi
+}
+
+# Print the SHA-256 of FILE.
+sum_of() {
+    sha256sum < "$1" | cut -c 1-64
+}
