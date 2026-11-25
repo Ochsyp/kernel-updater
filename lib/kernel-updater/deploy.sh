@@ -140,7 +140,15 @@ ku_deploy_write() {
     if [[ -n $KU_DEPLOY_BEFORE_WRITE ]]; then
         hook=$KU_DEPLOY_BEFORE_WRITE
         KU_DEPLOY_BEFORE_WRITE=""
+        # A hook that stops the run leaves the stick as it was: the exit trap removes the
+        # backup just made, as it removes a temporary file.
+        if [[ -n $stamp ]]; then
+            _ku_deploy_track "$backup"
+        fi
         "$hook"
+        if [[ -n $stamp ]]; then
+            _ku_deploy_forget "$backup"
+        fi
     fi
     if [[ -n $stamp ]]; then
         _ku_deploy_rotate "$dir" "$name" "$backup"
@@ -338,17 +346,22 @@ _ku_deploy_hash() {
 _ku_deploy_mktemp() {
     local made
     made=$(mktemp -- "$2/.$3.ku-XXXXXXXX" 2> /dev/null) || return 1
-    KU_DEPLOY_TMPS+=("$made")
-    # The exit trap runs the cleanups registered last first, so this one goes last again
-    # whenever another, such as the unmount of partition 1, came after it: the temporary
-    # files must go while the mount still holds them.
-    if [[ ${KU_CLEANUP[*]: -1} != _ku_deploy_cleanup ]]; then
-        ku_cleanup_add _ku_deploy_cleanup
-    fi
+    _ku_deploy_track "$made"
     printf -v "$1" '%s' "$made"
 }
 
-# Forget the temporary file TMP, which was renamed or removed.
+# Have the exit trap remove FILE unless it is forgotten first (_ku_deploy_forget).
+_ku_deploy_track() {
+    KU_DEPLOY_TMPS+=("$1")
+    # The exit trap runs the cleanups registered last first, so this one goes last again
+    # whenever another, such as the unmount of partition 1, came after it: the files must go
+    # while the mount still holds them.
+    if [[ ${KU_CLEANUP[*]: -1} != _ku_deploy_cleanup ]]; then
+        ku_cleanup_add _ku_deploy_cleanup
+    fi
+}
+
+# Forget the temporary file TMP, which was renamed or removed, or a file that is to stay.
 _ku_deploy_forget() {
     local tmp
     local -a left=()

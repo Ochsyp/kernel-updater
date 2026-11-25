@@ -80,9 +80,10 @@ backups() {
 # backups, temporary files and whether kali.cfg exists. With CHANGE_AT above 0, the read of
 # grub.cfg's hash of that number appends an x to it, as a program writing the stick then would:
 # 1 is the check of every file before the first write, 2 the check that write makes itself.
+# With HOOK_FAILS set, the hook exits 4 once it logged.
 run_hooked() {
     export CHANGE_AT=$1 HOOK_LOG="$BATS_TEST_TMPDIR/hook.log" GRUB
-    export HASH_COUNT="$BATS_TEST_TMPDIR/hash.count"
+    export HASH_COUNT="$BATS_TEST_TMPDIR/hash.count" HOOK_FAILS=${HOOK_FAILS:-}
     shift
     : > "$HOOK_LOG"
     printf '0\n' > "$HASH_COUNT"
@@ -104,6 +105,7 @@ run_hooked() {
             [[ ! -e $GRUB/kali.cfg ]] || kali=1
             printf "hook: backups %s, temporary files %s, kali.cfg %s\n" "$backups" "$temps" \
                 "$kali" >> "$HOOK_LOG"
+            [[ -z ${HOOK_FAILS:-} ]] || ku_die "$KU_EX_WRITE" "the hook failed"
         }
         if [[ ${2:-} == --dry-run ]]; then
             KU_DRY_RUN=1
@@ -536,7 +538,7 @@ not changed, but multibootusb/grub/kali.cfg was written before it"* ]]
     [ -z "$(find "$P1" -name '.*.ku-*')" ]
 }
 
-@test "Loading the libraries sets no hook before a write; a command sets one for its own writes" {
+@test "Loading the libraries sets no hook for the writer" {
     # shellcheck disable=SC2016 # the code expands its own variables
     run_ku_lib 'printf "[%s]\n" "$KU_DEPLOY_BEFORE_WRITE"'
     [ "$status" -eq 0 ]
@@ -582,6 +584,17 @@ not changed, but multibootusb/grub/kali.cfg was written before it"* ]]
     run_hooked 0 --dry-run "$REL" "$BATS_TEST_TMPDIR/kali.cfg" "$(sha256 "$GRUB/grub.cfg")"
     [ "$status" -eq 0 ]
     [ ! -s "$HOOK_LOG" ]
+}
+
+@test "A hook that stops the run leaves no backup beside the target, and changes nothing" {
+    : > "$GRUB/grub.cfg.ku-20261101T000000Z.bak"
+    HOOK_FAILS=1 run_hooked 0 "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "$OLD"
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"the hook failed"* ]]
+    [ "$(< "$HOOK_LOG")" = "hook: backups 2, temporary files 0, kali.cfg 0" ]
+    [ "$(backups)" = grub.cfg.ku-20261101T000000Z.bak ]
+    cmp "$BATS_TEST_TMPDIR/old.cfg" "$GRUB/grub.cfg"
+    [ -z "$(find "$P1" -name '.*.ku-*')" ]
 }
 
 @test "A source or an export file that is a symlink exits 66 before anything changes" {

@@ -402,6 +402,8 @@ with the owner's original script.
   writer now runs the hook for the first file it writes, after that file's last check and
   verified backup, and before old backups rotate. Before, it ran once all files were checked,
   so a file that changed, or appeared, between that point and its write stopped the run with
-  nothing written, yet left a sealed backup that `migrate --rollback` would have undone.
+  nothing written, yet left a sealed backup that `migrate --rollback` would have undone. When
+  the seal fails, the exit trap removes the backup just made beside the target, so the stick
+  stays as it was.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
