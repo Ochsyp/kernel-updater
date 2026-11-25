@@ -113,6 +113,9 @@ keeps none:
   --output-dir DIR    output_dir for this run
   --rollback [STAMP]  undo the newest stage run that was not rolled back, which STAMP, the
                       name of its backup directory, may name
+  --write-fat         write a FAT partition 1 in this run, and only under VMware, when the
+                      stick's menu booted the running kernel, the volume was left clean, and
+                      you type that Windows let go of it; without it, FAT gets an export
   -n, --dry-run       print the plan, change nothing
   -y, --yes           answer yes to every question
 
@@ -155,6 +158,11 @@ ku_cmd_migrate() {
                 fi
                 ;;
             --rollback=*) rollback=1 stamp=${1#*=}; shift ;;
+            --write-fat)
+                # shellcheck disable=SC2034 # read by ku_deploy_resolve in disk.sh
+                KU_DK_WRITE_FAT=1
+                shift
+                ;;
             -n | --dry-run) KU_DRY_RUN=1; shift ;;
             -y | --yes)
                 # shellcheck disable=SC2034 # read by ku_ask

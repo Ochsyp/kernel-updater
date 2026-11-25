@@ -122,7 +122,9 @@ EOF
 # root key file in crypttab, devices named by UUID, and nothing hidden under /boot's mount.
 healthy_system() {
     local v
-    mkdir -p "$ROOT/boot" "$ROOT/etc" "$ROOT/run"
+    mkdir -p "$ROOT/boot" "$ROOT/etc" "$ROOT/run" "$ROOT/proc"
+    # The command line kali.cfg's entry boots.
+    printf 'BOOT_IMAGE=/vmlinuz root=/dev/mapper/kali--vg-root ro quiet\n' > "$ROOT/proc/cmdline"
     for v in "$V1" "$V2"; do
         printf 'kernel %s\n' "$v" > "$ROOT/boot/vmlinuz-$v"
         printf 'initrd %s\n' "$v" > "$ROOT/boot/initrd.img-$v"
@@ -712,9 +714,9 @@ others_ok() {
 @test "boot-menu names the hypervisor and which menu ends a linux line with the kernel's command line" {
     local line="the running kernel's command line ends" args="root=/dev/mapper/kali--vg-root ro"
     # Without a command line beside BOOT_IMAGE, nothing is told.
+    rm "$ROOT/proc/cmdline"
     run_check
     expect_item boot-menu skip "/proc/cmdline holds no command line beside BOOT_IMAGE"
-    mkdir -p "$ROOT/proc"
     printf 'BOOT_IMAGE=/vmlinuz\n' > "$ROOT/proc/cmdline"
     run_check
     expect_item boot-menu skip "/proc/cmdline holds no command line beside BOOT_IMAGE"

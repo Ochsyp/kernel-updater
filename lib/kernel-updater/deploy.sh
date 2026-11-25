@@ -136,6 +136,7 @@ ku_deploy_write() {
             rm -f -- "$backup" || :
             _ku_deploy_die "$KU_EX_WRITE" 1 "cannot back up $rel"
         fi
+        _ku_deploy_sync "$backup"
     fi
     if [[ -n $KU_DEPLOY_BEFORE_WRITE ]]; then
         hook=$KU_DEPLOY_BEFORE_WRITE
@@ -160,15 +161,22 @@ ku_deploy_write() {
         _ku_deploy_die "$KU_EX_WRITE" 0 \
             "cannot write a temporary file beside $rel; $rel was not $(_ku_deploy_kept "$stamp")"
     fi
+    _ku_deploy_sync "$tmp"
     _ku_deploy_replace "$target" "$rel" "$tmp" "$aside" "$stamp" "$expected"
-    # e. Read the target back from the stick, not from the pages the write left in memory.
-    got=""
-    if [[ ! -L $target && -f $target ]] && sync -f -- "$target"; then
-        got=$(_ku_deploy_hash "$target") || got=""
-    fi
-    if [[ $got != "$want" ]]; then
-        _ku_deploy_restore "$target" "$rel" "$backup" "$expected" \
-            "$rel does not read back as it was written"
+    # e. Read the target back from the stick, not from the pages the write left in memory: on a
+    # FAT partition 1 through a new mount, since vfat keeps what it knows of a file while the
+    # mount lasts.
+    if (( KU_DK_FAT_RW == 2 )) && [[ $root == "$KU_DK_ROOT" ]]; then
+        _ku_deploy_fat_back "$target" "$rel" "$backup" "$expected" "$want" "$aside"
+    else
+        got=""
+        if [[ ! -L $target && -f $target ]] && sync -f -- "$target"; then
+            got=$(_ku_deploy_hash "$target") || got=""
+        fi
+        if [[ $got != "$want" ]]; then
+            _ku_deploy_restore "$target" "$rel" "$backup" "$expected" \
+                "$rel does not read back as it was written"
+        fi
     fi
     # The old file, which waited aside, is in its backup too.
     if (( ${#KU_DEPLOY_ASIDE[@]} )); then
@@ -176,6 +184,7 @@ ku_deploy_write() {
             ku_log warning "cannot remove ${aside##*/}, the old $rel, beside it: remove it by hand"
         fi
         KU_DEPLOY_ASIDE=()
+        _ku_deploy_sync "$dir"
     fi
     ku_log info "wrote $rel${stamp:+; the old one is kept as $rel.ku-$stamp.bak}"
 }
@@ -195,6 +204,7 @@ _ku_deploy_replace() {
     if [[ -z $stamp ]]; then
         if mv -T -f -- "$tmp" "$target"; then
             _ku_deploy_forget "$tmp"
+            _ku_deploy_sync "$target"
             return 0
         fi
         _ku_deploy_discard "$tmp"
@@ -207,8 +217,10 @@ _ku_deploy_replace() {
         _ku_deploy_discard "$tmp"
         _ku_deploy_die "$KU_EX_WRITE" 0 "cannot move $rel aside to replace it; $rel was not changed"
     fi
+    _ku_deploy_sync "$aside"
     if mv -T -- "$tmp" "$target"; then
         _ku_deploy_forget "$tmp"
+        _ku_deploy_sync "$target"
         return 0
     fi
     _ku_deploy_discard "$tmp"
@@ -254,6 +266,11 @@ ku_deploy_files() {
         ku_deploy_write "$root" "${@:i:3}"
     done
     KU_DEPLOY_CHECKING=0
+    # A FAT partition 1 that --write-fat may write is mounted read-write only now.
+    if (( KU_DK_FAT_RW == 1 && ! KU_DRY_RUN )) && [[ $root == "$KU_DK_ROOT" ]] &&
+        ! ku_p1_fat_rw; then
+        _ku_deploy_die "$KU_EX_REFUSED" 1 "refusing to write the FAT partition 1: $KU_DK_PROBLEM"
+    fi
     while (( $# )); do
         ku_deploy_write "$root" "$1" "$2" "$3"
         if (( ! KU_DRY_RUN )); then
@@ -457,6 +474,51 @@ _ku_deploy_restore() {
     fi
     _ku_deploy_die "$KU_EX_WRITE" 0 \
         "$what, and restoring it failed too: copy $kept over $rel by hand"
+}
+
+# Read TARGET, REL on a FAT partition 1 that --write-fat writes, back through a new read-only
+# mount, mount it read-write again, and return 0 when it held WANT. When it did not, or could
+# not be read that way, put back what was there as _ku_deploy_restore does, BACKUP being the
+# backup of a target that held EXPECTED, or - for a new one. Exits 4 when partition 1 does not
+# mount read-write again, saying what is left to do by hand: remove the old file, which waits
+# aside as ASIDE, or put the old one back.
+_ku_deploy_fat_back() {
+    local target=$1 rel=$2 backup=$3 expected=$4 want=$5 aside=$6 got=""
+    local what="$rel does not read back as it was written" waits=""
+    if ku_p1_remount ro; then
+        if [[ ! -L $target && -f $target ]]; then
+            got=$(_ku_deploy_hash "$target") || got=""
+        fi
+    else
+        what="$rel cannot be read back through a new mount: $KU_DK_PROBLEM"
+    fi
+    if (( ! KU_DK_WRITABLE )) && ! ku_p1_remount rw; then
+        # With nothing mounted, the exit trap must not take the empty mount point for a free
+        # name to move the old file back to.
+        if (( ${#KU_DEPLOY_ASIDE[@]} )); then
+            waits="; the old one waits beside it as ${aside##*/}"
+        fi
+        KU_DEPLOY_ASIDE=()
+        if [[ $got == "$want" ]]; then
+            _ku_deploy_die "$KU_EX_WRITE" 0 "$rel was written and reads back as written, but" \
+                "partition 1 does not mount read-write again: $KU_DK_PROBLEM$waits"
+        elif [[ $backup == - ]]; then
+            _ku_deploy_die "$KU_EX_WRITE" 0 "$what, and partition 1 does not mount read-write" \
+                "again: $KU_DK_PROBLEM; remove $rel by hand"
+        fi
+        _ku_deploy_die "$KU_EX_WRITE" 0 "$what, and partition 1 does not mount read-write" \
+            "again: $KU_DK_PROBLEM; copy $rel${backup#"$target"} over $rel by hand$waits"
+    fi
+    if [[ $got != "$want" ]]; then
+        _ku_deploy_restore "$target" "$rel" "$backup" "$expected" "$what"
+    fi
+}
+
+# Flush the filesystem that holds PATH to the disk, so that what a step of a write did is on the
+# stick before the next one starts: a power loss then leaves the target as one step left it. A
+# failure does not stop the write, whose read-back finds out what reached the stick.
+_ku_deploy_sync() {
+    sync -f -- "$1" 2> /dev/null || :
 }
 
 # =======================================================

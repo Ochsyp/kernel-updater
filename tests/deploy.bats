@@ -400,11 +400,11 @@ EOF
 }
 
 @test "A run cut short after the new file took the name leaves it, and names the old one aside" {
-    # A TERM arrives during the sync before the read-back.
+    # A TERM arrives during the first sync of grub.cfg itself, once the new file took its name.
     export REAL_SYNC SYNC_DONE="$BATS_TEST_TMPDIR/sync.done"
     REAL_SYNC=$(command -v sync)
     mkstub sync <<'EOF'
-if [[ ! -e $SYNC_DONE ]]; then
+if [[ ! -e $SYNC_DONE && ${*: -1} == */grub.cfg ]]; then
     : > "$SYNC_DONE"
     kill -TERM "$PPID"
 fi

@@ -142,13 +142,86 @@ it since, such as MultiBootUSB adding an ISO from Windows: look at `grub.cfg` on
 you answer, since what changed outside the Kali submenu stays. Its entry then keeps the old
 value, so the tripwire keeps reporting the change until step 11 records it.
 
-In the VM, on a FAT partition 1, which kernel-updater only reads, or with `--deploy export`,
-the files go to `output_dir` instead: copy them in Windows, `kali.cfg` first, into
+On a FAT partition 1, the VM can write the files itself with `--write-fat`, as the next
+section shows. In the VM without it, on a FAT partition 1 without it, or with
+`--deploy export`, the files go to `output_dir` instead: copy them in Windows, `kali.cfg` first, into
 `BOOT:\multibootusb\grub\`, as `DEPLOY.txt` there says, then
 run `sudo kernel-updater check`, whose `deployed` item compares the stick with the export. Its
 `tripwire` item fails for the two files, when a baseline is stored, until step 11. Should a
 later stage or rollback write partition 1 itself while such an export is not copied, that
 write removes the export, which copied afterwards would undo it.
+
+### Writing a FAT partition 1 from the VM
+
+`--write-fat` lets one run write a FAT partition 1, and only under VMware, only when the
+stick's menu booted the running kernel, and only when the volume was left clean. Windows must
+not use the volume meanwhile: FAT has no journal, and two systems writing it at once corrupt
+it. Do steps A to D for each run that writes: the menu stage, finalize, and a rollback should
+you need one. `X:` stands for the drive letter Windows gives BOOT.
+
+A. In Windows, before you start the VM, keep a copy of the menu. In PowerShell:
+
+```powershell
+Copy-Item -Recurse X:\multibootusb\grub "$HOME\Desktop\stick-grub-$(Get-Date -f yyyyMMdd-HHmm)"
+```
+
+It prints nothing. It worked when `Get-ChildItem "$HOME\Desktop\stick-grub-*\grub.cfg"` lists
+a `grub.cfg` with today's time.
+
+B. In Windows, in PowerShell as administrator, take BOOT offline:
+
+```powershell
+mountvol X: /p
+```
+
+It prints nothing. It worked when `Test-Path X:\` prints `False` and Explorer shows no BOOT
+drive. BOOT comes back the next time you plug the stick in.
+
+C. Start the VM through the launcher. In Kali, see the plan first; it writes nothing:
+
+```bash
+sudo kernel-updater migrate --stage menu --write-fat -n
+```
+
+It worked when it prints `info: --write-fat: VMware, the stick's menu booted the running kernel,
+and partition 1 was unmounted cleanly` and the plan. A line that starts with `refusing to write
+the FAT partition 1:` says which check failed and what to do; `sudo kernel-updater check`
+shows in its `boot-menu` item which menu booted the kernel. Then write:
+
+```bash
+sudo kernel-updater migrate --stage menu --write-fat
+```
+
+Answer `y` to the plan's question, then type `BOOT is unmounted in Windows` at the next one. It
+worked when it ends with `info: wrote multibootusb/grub/kali.cfg` and `info: wrote
+multibootusb/grub/grub.cfg; the old one is kept as ...` and exits 0, as `echo $?` shows. For
+finalize, the second write, use `--stage finalize`; for a rollback, `--rollback --write-fat`.
+
+D. Shut the VM down, unplug the stick, plug it in again, and in PowerShell as administrator:
+
+```powershell
+chkdsk X:
+```
+
+It worked when it reports that Windows found no problems. Then boot the new entries, step 9.
+
+What can still go wrong, and how to get the old menu back:
+
+- `chkdsk X:` reports errors, as when Windows still used BOOT: run `chkdsk X: /f`, then E.
+- The stick stops at a GRUB prompt or shows a menu error, as after a power loss in the few
+  milliseconds between the two renames of `grub.cfg`: E from Windows.
+- The new entries do not boot: choose "... (legacy entries)", which stay until finalize, and
+  run `sudo kernel-updater migrate --rollback --write-fat` with steps A to D.
+- E. Put the menu you kept in step A back, in PowerShell, with the name of that copy in place
+  of `stick-grub-<stamp>`:
+
+  ```powershell
+  Copy-Item "$HOME\Desktop\stick-grub-<stamp>\*" X:\multibootusb\grub\ -Recurse -Force
+  ```
+
+  It prints nothing. It worked when `Get-FileHash X:\multibootusb\grub\grub.cfg` prints the same
+  hash as `Get-FileHash "$HOME\Desktop\stick-grub-<stamp>\grub.cfg"`, and the stick boots its
+  old menu. A `kali.cfg` the run wrote may stay beside it: the old `grub.cfg` does not read it.
 
 ## 9. Boot the new entries
 
