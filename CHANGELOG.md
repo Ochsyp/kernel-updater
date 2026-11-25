@@ -305,6 +305,11 @@ with the owner's original script.
   and after each write, and how to put the old menu back. `tests/fat/write.bats` covers every
   refusal, the writer on real FAT32 and FAT16, a failed rename or read-back, and a power loss
   after each step.
+- `tools/windows`: PowerShell scripts for the steps in Windows around `migrate --write-fat`.
+  They copy the stick's menu to the Desktop, take BOOT offline with `mountvol`, run `chkdsk`
+  read-only, and copy the saved menu back. Each finds BOOT by its label, asks for
+  administrator rights itself where it needs them, and refuses, changing nothing, when BOOT
+  is not there. `tests/tools.bats` runs their refusals under `pwsh`.
 
 ### Changed
 

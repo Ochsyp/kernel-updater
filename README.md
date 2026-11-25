@@ -697,6 +697,10 @@ bats tests/
   `ntfs` job of the tests workflow installs `ntfs-3g` and `dmsetup`, loads `ntfs3` and runs
   them with `sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs`, failing when any is
   skipped. Run them only on a machine you can spare, as root.
+- `tests/tools.bats` runs the Windows scripts in `tools/windows`, the steps around
+  `migrate --write-fat` that docs/migration.md lists, under `pwsh` with a stub `Get-Volume`:
+  each refuses, changing nothing, when BOOT is not there, is there twice, is not FAT or holds
+  no MultiBootUSB menu. It skips without `pwsh`.
 - `tests/fat` holds the same kind of tests for a FAT partition 1, as MultiBootUSB makes it:
   partition 1 made FAT32 with `mkfs.vfat` and the serial `5CA1-AB1E`, and `syslinux` installed
   in `multibootusb`, which writes its boot sector. On it they find partition 1 from `/boot` and

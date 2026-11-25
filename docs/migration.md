@@ -159,6 +159,23 @@ not use the volume meanwhile: FAT has no journal, and two systems writing it at 
 it. Do steps A to D for each run that writes: the menu stage, finalize, and a rollback should
 you need one. `X:` stands for the drive letter Windows gives BOOT.
 
+`tools/windows` holds steps A, B, D and E as scripts that find BOOT by its label, so you need
+not know its letter. Each refuses with a plain sentence and changes nothing when BOOT is not
+there, is there twice, is not FAT or holds no `multibootusb\grub\grub.cfg`. B and D ask
+Windows for administrator rights themselves and show their result in a window of their own.
+Run each from PowerShell in the checkout, for example:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\windows\stick-a-copy-menu.ps1
+```
+
+- `stick-a-copy-menu.ps1`: step A. It prints the copy's path and the SHA-256 of `grub.cfg` on
+  the stick and in the copy, and ends with `The copy matches the stick.`
+- `stick-b-take-offline.ps1`: step B. It ends with `BOOT is gone from Windows`.
+- `stick-d-chkdsk.ps1`: step D, without `/f`. It ends with `chkdsk found no problems`.
+- `stick-e-restore-menu.ps1`: E. It copies back the newest `stick-grub-*` folder on the Desktop
+  once you type `yes`, and prints both SHA-256 sums.
+
 A. In Windows, before you start the VM, keep a copy of the menu. In PowerShell:
 
 ```powershell
