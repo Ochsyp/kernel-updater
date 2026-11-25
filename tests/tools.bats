@@ -37,6 +37,20 @@ run_script() {
         exit \$LASTEXITCODE"
 }
 
+# Fail, naming them, when anything but pwsh's own folders is under HOME: pwsh on Linux keeps
+# its caches and settings there, under .cache, .local/share and .config, while a script that
+# refuses makes nothing, such as the Desktop copy of step A. Lists HOME in the TAP output.
+home_untouched() {
+    local left
+    (cd "$HOME" && find . -mindepth 1 -maxdepth 4 | sort) | sed 's/^/# HOME: /' >&3
+    left=$(cd "$HOME" && find . -mindepth 1 |
+        grep -v -E '^\./\.(cache|config|local|local/share)(/powershell(/.*)?)?$' || true)
+    if [[ -n $left ]]; then
+        printf 'Left in HOME:\n%s\n' "$left" >&2
+        return 1
+    fi
+}
+
 @test "Each Windows script refuses, changing nothing, when no drive labelled BOOT is there" {
     local name
     for name in "${SCRIPTS[@]}"; do
@@ -49,7 +63,7 @@ run_script() {
         [ "$status" -eq 1 ]
         [[ "$output" == "No drive labelled BOOT is mounted on this PC:"* ]]
     done
-    [ -z "$(ls -A "$HOME")" ]
+    home_untouched
 }
 
 @test "Each Windows script refuses two BOOT drives, an NTFS BOOT and one without the menu" {
@@ -66,5 +80,5 @@ run_script() {
         [[ "$output" == "BOOT (Q:) holds no multibootusb\\grub\\grub.cfg, so it is not the"* ]]
         [[ "$output" == *"MultiBootUSB stick. Nothing was changed." ]]
     done
-    [ -z "$(ls -A "$HOME")" ]
+    home_untouched
 }
