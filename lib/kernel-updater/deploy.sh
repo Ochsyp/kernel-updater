@@ -21,9 +21,11 @@ KU_DEPLOY_NOFOLLOW=""
 # first, and the files it wrote so far, which a later failure names.
 KU_DEPLOY_CHECKING=0 KU_DEPLOY_DONE=()
 
-# A command ku_deploy_files runs once every file passed its checks and before it writes the
-# first, outside a dry run; empty for none. migrate seals its backup there, so that a run the
-# checks stop leaves no backup a rollback would take for one that wrote something.
+# A command ku_deploy_write runs once, for the first file a run writes: after that file's last
+# check and its verified backup, and before its old backups rotate and its temporary file is
+# made; empty for none. It clears itself before it runs, and a dry run never reaches it. migrate
+# sets it only for its own writes and seals its backup there, so that a run stopped before it
+# changed anything leaves no backup a rollback would take for one that wrote something.
 KU_DEPLOY_BEFORE_WRITE=""
 
 # While a write has moved its target aside on NTFS: the target and the name it waits under,
@@ -63,7 +65,7 @@ KU_DEPLOY_WINDOWS_DIR="BOOT:\\multibootusb\\grub\\"
 # names the files written (_ku_deploy_die); so do a refusal and a change since the plan read it.
 ku_deploy_write() {
     local root=$1 rel=$2 source=$3 expected=$4 target dir name want got stamp="" backup=-
-    local tmp="" aside="" path rest
+    local tmp="" aside="" path rest hook
     if [[ $rel == /* || /$rel/ == *//* || /$rel/ == */./* || /$rel/ == */../* ]]; then
         _ku_deploy_die "$KU_EX_REFUSED" 1 \
             "refusing to write $rel: it is no plain path inside partition 1"
@@ -126,13 +128,29 @@ ku_deploy_write() {
         ku_log info "would write $rel${stamp:+, keeping the old one as $rel.ku-$stamp.bak}"
         return 0
     fi
-    # c. Keep the target as it was, and only its newest backups.
+    # c. Keep the target as it was, and only its newest backups. The first write of a run
+    # runs KU_DEPLOY_BEFORE_WRITE in between: every check passed, and nothing changed yet.
     if [[ -n $stamp ]]; then
         if ! _ku_deploy_copy "$target" "$backup" excl || ! got=$(_ku_deploy_hash "$backup") ||
             [[ $got != "$expected" ]]; then
             rm -f -- "$backup" || :
             _ku_deploy_die "$KU_EX_WRITE" 1 "cannot back up $rel"
         fi
+    fi
+    if [[ -n $KU_DEPLOY_BEFORE_WRITE ]]; then
+        hook=$KU_DEPLOY_BEFORE_WRITE
+        KU_DEPLOY_BEFORE_WRITE=""
+        # A hook that stops the run leaves the stick as it was: the exit trap removes the
+        # backup just made, as it removes a temporary file.
+        if [[ -n $stamp ]]; then
+            _ku_deploy_track "$backup"
+        fi
+        "$hook"
+        if [[ -n $stamp ]]; then
+            _ku_deploy_forget "$backup"
+        fi
+    fi
+    if [[ -n $stamp ]]; then
         _ku_deploy_rotate "$dir" "$name" "$backup"
     fi
     # d. Write a synced temporary file beside the target and put it in the target's place
@@ -213,7 +231,7 @@ _ku_deploy_replace() {
 # RELPATH SOURCE EXPECTED triples: migrate writes kali.cfg before the grub.cfg that sources
 # it. First it runs the checks of every triple, so that a refusal (3), a file that changed since
 # the plan read it (75) or a source that cannot be read (66) leaves the stick as it was. Then it
-# runs KU_DEPLOY_BEFORE_WRITE, when set and not in a dry run, writes them in turn and stops at
+# writes them in turn, the first one running KU_DEPLOY_BEFORE_WRITE, and stops at
 # the first failure, which exits as ku_deploy_write says while
 # no file was written yet, and else exits 4, naming the files written before it, since the
 # stick then changed. A RELPATH given twice is an error of the caller (1).
@@ -236,9 +254,6 @@ ku_deploy_files() {
         ku_deploy_write "$root" "${@:i:3}"
     done
     KU_DEPLOY_CHECKING=0
-    if [[ -n $KU_DEPLOY_BEFORE_WRITE ]] && (( ! KU_DRY_RUN )); then
-        "$KU_DEPLOY_BEFORE_WRITE"
-    fi
     while (( $# )); do
         ku_deploy_write "$root" "$1" "$2" "$3"
         if (( ! KU_DRY_RUN )); then
@@ -331,17 +346,22 @@ _ku_deploy_hash() {
 _ku_deploy_mktemp() {
     local made
     made=$(mktemp -- "$2/.$3.ku-XXXXXXXX" 2> /dev/null) || return 1
-    KU_DEPLOY_TMPS+=("$made")
-    # The exit trap runs the cleanups registered last first, so this one goes last again
-    # whenever another, such as the unmount of partition 1, came after it: the temporary
-    # files must go while the mount still holds them.
-    if [[ ${KU_CLEANUP[*]: -1} != _ku_deploy_cleanup ]]; then
-        ku_cleanup_add _ku_deploy_cleanup
-    fi
+    _ku_deploy_track "$made"
     printf -v "$1" '%s' "$made"
 }
 
-# Forget the temporary file TMP, which was renamed or removed.
+# Have the exit trap remove FILE unless it is forgotten first (_ku_deploy_forget).
+_ku_deploy_track() {
+    KU_DEPLOY_TMPS+=("$1")
+    # The exit trap runs the cleanups registered last first, so this one goes last again
+    # whenever another, such as the unmount of partition 1, came after it: the files must go
+    # while the mount still holds them.
+    if [[ ${KU_CLEANUP[*]: -1} != _ku_deploy_cleanup ]]; then
+        ku_cleanup_add _ku_deploy_cleanup
+    fi
+}
+
+# Forget the temporary file TMP, which was renamed or removed, or a file that is to stay.
 _ku_deploy_forget() {
     local tmp
     local -a left=()
