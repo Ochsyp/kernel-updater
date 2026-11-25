@@ -125,9 +125,9 @@ ku_ask() {
     return 1
 }
 
-# Ask PROMPT on the terminal as ku_ask does, but always: --yes does not answer it, since it asks
-# whether the person checked something outside this system. Returns 0 on "y" or "yes"; exits 10
-# on any other answer or when no terminal can be read.
+# Ask PROMPT, all words given, on the terminal as ku_ask does, but always: --yes does not answer
+# it, since it asks whether the person checked something outside this system. Returns 0 on "y"
+# or "yes"; exits 10 on any other answer or when no terminal can be read.
 ku_ask_person() {
     local answer=""
     if [[ -z $KU_TTY_FD ]] && ! { exec {KU_TTY_FD}< "$KU_TTY"; } 2> /dev/null; then
@@ -135,7 +135,7 @@ ku_ask_person() {
         ku_die "$KU_EX_DECLINED" "no terminal to answer on, which --yes does not do for this" \
             "question; nothing was changed"
     fi
-    printf '%s [y/N] ' "$1" >&2
+    printf '%s [y/N] ' "$*" >&2
     IFS= read -r answer <&"$KU_TTY_FD" || true
     answer=${answer%$'\r'}
     case ${answer,,} in

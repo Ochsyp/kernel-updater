@@ -105,6 +105,11 @@ setup() {
         [ "$status" -eq 10 ]
         [[ "$output" == *"declined; nothing was changed" ]]
     done
+    # A question given in several words is asked whole.
+    printf 'y\n' > "$KU_TTY"
+    run ku_ask_person "Write it now? Check" "the drive first"
+    [ "$status" -eq 0 ]
+    [ "$output" = "Write it now? Check the drive first [y/N] " ]
     KU_TTY="$BATS_TEST_TMPDIR/no-such-tty"
     run ku_ask_person "Write it now?"
     [ "$status" -eq 10 ]

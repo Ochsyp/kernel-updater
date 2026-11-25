@@ -115,3 +115,11 @@ scratch_repo() {
         [ "$status" -eq 0 ]
     done
 }
+
+@test "No Windows script takes BOOT offline before the VM starts" {
+    # Taken offline with mountvol /p, BOOT cannot be locked by VMware, and Windows then refuses
+    # the VM's writes to it (docs/migration.md, "Writing a FAT partition 1 from the VM").
+    [ ! -e "$REPO_DIR/tools/windows/stick-b-take-offline.ps1" ]
+    run grep -r -i -l mountvol "$REPO_DIR/tools/windows"
+    [ -z "$output" ]
+}

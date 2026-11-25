@@ -11,8 +11,7 @@
 
 load helpers
 
-# No step B: taken offline with mountvol /p, BOOT cannot be locked by VMware, which then cannot
-# write it (docs/migration.md).
+# No step B (tests/repo.bats checks that it stays gone).
 SCRIPTS=(stick-a-copy-menu stick-d-chkdsk stick-e-restore-menu)
 # A volume of the stub's, labelled BOOT, on the drive letter Q, with the filesystem given.
 fat_boot() {
@@ -51,12 +50,6 @@ home_untouched() {
         printf 'Left in HOME:\n%s\n' "$left" >&2
         return 1
     fi
-}
-
-@test "No script takes BOOT offline before the VM starts" {
-    [ ! -e "$REPO_DIR/tools/windows/stick-b-take-offline.ps1" ]
-    run grep -r -i -l mountvol "$REPO_DIR/tools/windows"
-    [ -z "$output" ]
 }
 
 @test "Each Windows script refuses, changing nothing, when no drive labelled BOOT is there" {

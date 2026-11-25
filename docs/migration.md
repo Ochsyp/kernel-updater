@@ -194,8 +194,10 @@ B. Start the VM through the launcher. Then, in Windows, check that VMware holds 
 Test-Path X:\
 ```
 
-It worked when it prints `False`. When it prints `True`, Windows still has BOOT: shut the VM
-down, close what uses BOOT, plug the stick in again if it stays, and start the VM again.
+It worked when it prints `False`; Explorer then cannot open BOOT either. When it prints `True`,
+Windows still has BOOT: shut the VM down, close what uses BOOT, plug the stick in again if it
+stays, and start the VM again. VMware's own log, `vmware.log` beside the VM's `.vmx`, says the
+same at each start: `Successfully locked volume` for each volume it took from Windows.
 
 C. In Kali, see the plan first; it writes nothing:
 
@@ -233,7 +235,9 @@ What can still go wrong, and how to get the old menu back:
 
 - VMware shows "The operation on file ... failed" with Retry, Cancel and Continue while the run
   writes: Windows refused the write, as when BOOT was taken offline before the VM started.
-  Choose Cancel; nothing reached BOOT. Check with steps A and D, then start again from A.
+  Choose Cancel, which powers the VM off. When Windows refused every write, as then, nothing
+  reached BOOT; check that with steps A and D (the same SHA-256 and file count as before, and no
+  problems), then start again from A.
 - `chkdsk X:` reports errors, as when Windows still used BOOT: run `chkdsk X: /f`, then E.
 - The stick stops at a GRUB prompt or shows a menu error, as after a power loss in the few
   milliseconds between the two renames of `grub.cfg`: E from Windows.
