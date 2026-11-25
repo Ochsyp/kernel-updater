@@ -75,6 +75,44 @@ backups() {
     (cd "$GRUB" && find . -maxdepth 1 -name 'grub.cfg.ku-*.bak' | sed 's#^\./##' | sort)
 }
 
+# Run ku_deploy_files on partition 1 with the TRIPLES given, after --dry-run when that comes
+# first, and with a hook that logs to HOOK_LOG what partition 1 holds when it runs: grub.cfg's
+# backups, temporary files and whether kali.cfg exists. With CHANGE_AT above 0, the read of
+# grub.cfg's hash of that number appends an x to it, as a program writing the stick then would:
+# 1 is the check of every file before the first write, 2 the check that write makes itself.
+run_hooked() {
+    export CHANGE_AT=$1 HOOK_LOG="$BATS_TEST_TMPDIR/hook.log" GRUB
+    export HASH_COUNT="$BATS_TEST_TMPDIR/hash.count"
+    shift
+    : > "$HOOK_LOG"
+    printf '0\n' > "$HASH_COUNT"
+    # shellcheck disable=SC2016 # the code expands its own variables
+    run_ku_lib '
+        eval "_ku_real_hash() $(declare -f _ku_deploy_hash | tail -n +2)"
+        _ku_deploy_hash() {
+            local n
+            _ku_real_hash "$@" || return 1
+            [[ $1 == */grub.cfg ]] || return 0
+            n=$(( $(< "$HASH_COUNT") + 1 ))
+            printf "%s\n" "$n" > "$HASH_COUNT"
+            (( n != CHANGE_AT )) || printf x >> "$1"
+        }
+        hook() {
+            local backups temps kali=0
+            backups=$(find "$GRUB" -maxdepth 1 -name "grub.cfg.ku-*.bak" | wc -l)
+            temps=$(find "$GRUB" -maxdepth 1 -name ".*.ku-*" | wc -l)
+            [[ ! -e $GRUB/kali.cfg ]] || kali=1
+            printf "hook: backups %s, temporary files %s, kali.cfg %s\n" "$backups" "$temps" \
+                "$kali" >> "$HOOK_LOG"
+        }
+        if [[ ${2:-} == --dry-run ]]; then
+            KU_DRY_RUN=1
+            set -- "$1" "${@:3}"
+        fi
+        KU_DEPLOY_BEFORE_WRITE=hook
+        ku_deploy_files "$@"' "$P1" "$@"
+}
+
 @test "A write replaces the target byte for byte, CRLF and all, and keeps a backup beside it" {
     write_grub "$BATS_TEST_TMPDIR/grub.cfg" "$OLD"
     [ "$status" -eq 0 ]
@@ -496,6 +534,54 @@ not changed, but multibootusb/grub/kali.cfg was written before it"* ]]
     # No backup of grub.cfg was made for it, and no temporary file is left.
     [ "$(backups)" = "$(printf 'grub.cfg.ku-%s.bak\n' 20261110T120001Z 20261110T120002Z)" ]
     [ -z "$(find "$P1" -name '.*.ku-*')" ]
+}
+
+@test "Loading the libraries sets no hook before a write; a command sets one for its own writes" {
+    # shellcheck disable=SC2016 # the code expands its own variables
+    run_ku_lib 'printf "[%s]\n" "$KU_DEPLOY_BEFORE_WRITE"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "A target that changes after the checks of ku_deploy_files exits 75, and the hook never ran" {
+    run_hooked 1 "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "$OLD"
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"refusing to write $REL: it changed since the plan read it; nothing"* ]]
+    [ ! -s "$HOOK_LOG" ]
+    [ -z "$(backups)" ]
+    cmp <(cat "$BATS_TEST_TMPDIR/old.cfg"; printf 'x') "$GRUB/grub.cfg"
+}
+
+@test "A target that changes just before its backup exits 4, and the hook never ran" {
+    run_hooked 2 "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "$OLD"
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"cannot back up $REL; nothing was changed"* ]]
+    [ ! -s "$HOOK_LOG" ]
+    [ -z "$(backups)" ]
+    cmp <(cat "$BATS_TEST_TMPDIR/old.cfg"; printf 'x') "$GRUB/grub.cfg"
+}
+
+@test "The hook runs once, after the first file's backup, before its temporary file and rotation" {
+    local kali=(multibootusb/grub/kali.cfg "$BATS_TEST_TMPDIR/kali.cfg" -)
+    : > "$GRUB/grub.cfg.ku-20261101T000000Z.bak"
+    : > "$GRUB/grub.cfg.ku-20261101T000001Z.bak"
+    # grub.cfg first: its backup is made, the two older ones not yet rotated, nothing else written.
+    run_hooked 0 "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "$OLD" "${kali[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(< "$HOOK_LOG")" = "hook: backups 3, temporary files 0, kali.cfg 0" ]
+    [ "$(backups)" = "$(printf 'grub.cfg.ku-%s.bak\n' 20261101T000001Z 20261110T120001Z)" ]
+    cmp "$BATS_TEST_TMPDIR/kali.cfg" "$GRUB/kali.cfg"
+    # A new file first: the hook runs before its temporary file, and once.
+    rm "$GRUB/kali.cfg" "$GRUB"/grub.cfg.ku-*.bak
+    cp "$BATS_TEST_TMPDIR/old.cfg" "$GRUB/grub.cfg"
+    run_hooked 0 "${kali[@]}" "$REL" "$BATS_TEST_TMPDIR/grub.cfg" "$OLD"
+    [ "$status" -eq 0 ]
+    [ "$(< "$HOOK_LOG")" = "hook: backups 0, temporary files 0, kali.cfg 0" ]
+    cmp "$BATS_TEST_TMPDIR/grub.cfg" "$GRUB/grub.cfg"
+    # A dry run runs no hook.
+    run_hooked 0 --dry-run "$REL" "$BATS_TEST_TMPDIR/kali.cfg" "$(sha256 "$GRUB/grub.cfg")"
+    [ "$status" -eq 0 ]
+    [ ! -s "$HOOK_LOG" ]
 }
 
 @test "A source or an export file that is a symlink exits 66 before anything changes" {
