@@ -397,5 +397,11 @@ with the owner's original script.
 - The container test of a real apt lock in `tests/container/cleanup.bats` passes perl's `fcntl`
   a variable. Perl refused the direct result of `pack`, so the test stopped before it took the
   lock and never reached the check it is there for.
+- `migrate` seals its backup only in its own writes, and only right before the first change to
+  the stick. Loading the libraries no longer sets the writer's hook for every caller. The
+  writer now runs the hook for the first file it writes, after that file's last check and
+  verified backup, and before old backups rotate. Before, it ran once all files were checked,
+  so a file that changed, or appeared, between that point and its write stopped the run with
+  nothing written, yet left a sealed backup that `migrate --rollback` would have undone.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

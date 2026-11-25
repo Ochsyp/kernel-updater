@@ -716,36 +716,36 @@ EOF
     [[ "$stderr" == *"or leave them out of previous_variants; nothing was changed"* ]]
 }
 
-@test "A grub.cfg changed right after the writer's checks leaves no backup a rollback would take" {
+@test "A kali.cfg that appears right after the writer's checks leaves no backup to roll back" {
     system_done
     legacy_kernel
-    # dd appends to the stick's grub.cfg right after the first time the writer hashes it, which
-    # is its check of every file before the first write.
+    # dd makes kali.cfg on the stick right after the writer first hashes grub.cfg, which is its
+    # check of every file before the first write, as another program writing the stick would.
     export REAL_DD DD_DONE="$BATS_TEST_TMPDIR/dd.done" DD_GRUB="$GRUB/grub.cfg"
     REAL_DD=$(command -v dd)
     mkstub dd <<'EOF'
 "$REAL_DD" "$@" || exit
 case " $* " in
     *" of="*) exit 0 ;;
-    *" if=$DD_GRUB "*" bs=1M "*)
+    *" if=$DD_GRUB "*"bs=1M "*)
         if [[ ! -e $DD_DONE ]]; then
             : > "$DD_DONE"
-            printf 'x' >> "$DD_GRUB"
+            printf 'other\n' > "${DD_GRUB%/*}/kali.cfg"
         fi
         ;;
 esac
 EOF
     run_ku migrate --stage menu --yes
     [ "$status" -eq 75 ]
-    [[ "$stderr" == *"refusing to write multibootusb/grub/grub.cfg: it changed since the plan \
-read it; nothing was changed"* ]]
-    [ -e "$DD_DONE" ]
-    [ ! -e "$GRUB/kali.cfg" ]
+    [[ "$stderr" == *"refusing to write multibootusb/grub/kali.cfg: it exists, but the plan \
+expected none; nothing was changed"* ]]
+    [ "$(< "$GRUB/kali.cfg")" = other ]
+    cmp "$BATS_TEST_TMPDIR/grub.before" "$GRUB/grub.cfg"
     # The run wrote nothing, so it leaves no backup, and a rollback finds nothing to undo.
     [ -z "$(backups)" ]
     run_ku migrate --rollback --yes
     [ "$status" -eq 66 ]
-    cmp <(cat "$BATS_TEST_TMPDIR/grub.before"; printf 'x') "$GRUB/grub.cfg"
+    cmp "$BATS_TEST_TMPDIR/grub.before" "$GRUB/grub.cfg"
 }
 
 @test "A grub.cfg changed while menu asks exits 75 and writes nothing, and a new run writes it" {

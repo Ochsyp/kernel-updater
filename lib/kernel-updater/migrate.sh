@@ -36,10 +36,6 @@ KU_MG_CHANGED=0
 # recorded, by their names there: a write of migrate leaves their baseline entries as they were.
 KU_MG_DRIFTED=()
 
-# ku_deploy_files seals the stage's backup only once its checks passed (_ku_mg_seal).
-# shellcheck disable=SC2034 # read by ku_deploy_files in deploy.sh
-KU_DEPLOY_BEFORE_WRITE=_ku_mg_seal
-
 # The root= of the running kernel's command line, once _ku_mg_cmdline_root read it; the title
 # of the Kali submenu, once _ku_mg_title read it; --deploy and --output-dir, which hold for this
 # run even after detect loads the configuration anew; and the output_dir the configuration
@@ -1062,7 +1058,7 @@ _ku_mg_deploy() {
     if [[ $KU_DK_DEPLOY == export ]]; then
         _ku_mg_export "$tmp/kali.cfg" "$tmp/grub.cfg"
     else
-        ku_deploy_files "$KU_DK_ROOT" "$KU_MG_KALI" "$tmp/kali.cfg" "$2" "$KU_MG_GRUB" \
+        _ku_mg_deploy_files "$KU_DK_ROOT" "$KU_MG_KALI" "$tmp/kali.cfg" "$2" "$KU_MG_GRUB" \
             "$tmp/grub.cfg" "$3"
         _ku_mg_retire_export kali.cfg "$4" grub.cfg "$5"
     fi
@@ -1077,7 +1073,7 @@ _ku_mg_kali_deploy() {
         _ku_mg_export "$1"
         return 0
     fi
-    ku_deploy_files "$KU_DK_ROOT" "$KU_MG_KALI" "$1" "$2"
+    _ku_mg_deploy_files "$KU_DK_ROOT" "$KU_MG_KALI" "$1" "$2"
     _ku_mg_retire_export kali.cfg "$3"
     if ! _ku_mg_baseline_set "$KU_MG_KALI" "$2" "$3"; then
         ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
@@ -1641,7 +1637,7 @@ _ku_mg_finalize_deploy() {
             "the stick's boot code for check's tripwire"
         return 0
     fi
-    ku_deploy_files "$KU_DK_ROOT" "$KU_MG_GRUB" "$1/grub.cfg" "$2"
+    _ku_mg_deploy_files "$KU_DK_ROOT" "$KU_MG_GRUB" "$1/grub.cfg" "$2"
     _ku_mg_retire_export grub.cfg "$3"
     _ku_mg_finalize_baseline "$2" "$3"
 }
@@ -2180,7 +2176,7 @@ _ku_mg_rollback_write() {
         _ku_mg_export "$1/grub.cfg"
         return 0
     fi
-    ku_deploy_files "$KU_DK_ROOT" "$KU_MG_GRUB" "$1/grub.cfg" "$2"
+    _ku_mg_deploy_files "$KU_DK_ROOT" "$KU_MG_GRUB" "$1/grub.cfg" "$2"
     _ku_mg_retire_export grub.cfg "$3"
     if ! _ku_mg_baseline_set "$KU_MG_GRUB" "$2" "$3"; then
         ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
@@ -2632,21 +2628,31 @@ _ku_mg_backup_drop() {
 }
 
 # Seal the backup before an export, which writes nothing on the stick. A write to partition 1
-# leaves sealing to ku_deploy_files, which calls _ku_mg_seal once its checks passed: a stage the
-# writer stops (75 or 3) then leaves an unsealed backup, which the exit trap removes, instead of
-# one a later --rollback would undo although the stage wrote nothing.
+# leaves sealing to ku_deploy_write, which calls _ku_mg_seal before it changes the first file:
+# a stage the writer stops before that (75, 3 or 4) then leaves an unsealed backup, which the
+# exit trap removes, instead of one a later --rollback would undo although the stage wrote
+# nothing.
 _ku_mg_seal_export() {
     if [[ $KU_DK_DEPLOY == export ]]; then
         _ku_mg_manifest
     fi
 }
 
-# KU_DEPLOY_BEFORE_WRITE of ku_deploy_files: seal this run's backup when it has one that is not
-# sealed yet. A rollback, which makes no backup, passes through.
+# The KU_DEPLOY_BEFORE_WRITE of migrate's writes: seal this run's backup when it has one that
+# is not sealed yet. A rollback, which makes no backup, passes through.
 _ku_mg_seal() {
     if [[ -n $KU_MG_BACKUP ]] && (( ! KU_MG_SEALED )); then
         _ku_mg_manifest
     fi
+}
+
+# ku_deploy_files with _ku_mg_seal as the hook of its first write, so that only migrate's own
+# writes seal its backup, and no other caller of the writer runs it.
+# shellcheck disable=SC2034 # KU_DEPLOY_BEFORE_WRITE is read by ku_deploy_write in deploy.sh
+_ku_mg_deploy_files() {
+    KU_DEPLOY_BEFORE_WRITE=_ku_mg_seal
+    ku_deploy_files "$@"
+    KU_DEPLOY_BEFORE_WRITE=""
 }
 
 # Write the MANIFEST of the backup directory: "SHA256  NAME" for each file the stage put in
