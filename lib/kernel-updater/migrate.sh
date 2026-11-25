@@ -115,7 +115,7 @@ keeps none:
                       name of its backup directory, may name
   --write-fat         write a FAT partition 1 in this run, and only under VMware, when the
                       stick's menu booted the running kernel, the volume was left clean, and
-                      you type that Windows let go of it; without it, FAT gets an export
+                      you answer y that Windows no longer has it; without it, FAT is exported
   -n, --dry-run       print the plan, change nothing
   -y, --yes           answer yes to every question
 

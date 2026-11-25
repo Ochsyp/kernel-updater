@@ -310,6 +310,13 @@ with the owner's original script.
   read-only, and copy the saved menu back. Each finds BOOT by its label, asks for
   administrator rights itself where it needs them, and refuses, changing nothing, when BOOT
   is not there. `tests/tools.bats` runs their refusals under `pwsh`.
+- `--write-fat` no longer has you take BOOT offline in Windows before the VM starts.
+  `mountvol X: /p` left the volume offline, so VMware could not lock it, and Windows refused the
+  VM's first write to it ("The device is not ready"). VMware locks and dismounts BOOT itself
+  while the VM runs. Step B in `docs/migration.md` now checks that with `Test-Path X:\`, and
+  `tools/windows/stick-b-take-offline.ps1` is gone. The question before the first write is a
+  y/N question, which `--yes` does not answer, instead of a sentence to type. The refusal of a
+  volume that was not unmounted cleanly no longer points to `mountvol`.
 
 ### Changed
 

@@ -45,9 +45,8 @@ KU_DK_SHARED+=" again"
 KU_DK_FAT="partition 1 is FAT, which kernel-updater writes only with migrate --write-fat"
 # 1 when the run asks to write a FAT partition 1 (migrate --write-fat); 1 once
 # ku_deploy_resolve let a writer write it, which it reads through a read-only mount of its own
-# until ku_p1_fat_rw mounts that read-write, and 2 from then on; and what a person types first.
+# until ku_p1_fat_rw mounts that read-write, and 2 from then on.
 KU_DK_WRITE_FAT=0 KU_DK_FAT_RW=0
-KU_DK_FAT_PHRASE="BOOT is unmounted in Windows"
 # How many linux lines end with the running kernel's command line, as ku_boot_menu counted
 # them: in the stick's menu, and in this system's /boot/grub/grub.cfg.
 KU_DK_MENU_STICK=0 KU_DK_MENU_OWN=0
@@ -834,8 +833,9 @@ ku_fat_clean() {
         KU_DK_PROBLEM="the volume is marked dirty, as after an unplug without an eject: let"
         KU_DK_PROBLEM+=" Windows check it with chkdsk X: /f, then run again"
     elif (( !(entry & clean) )); then
-        KU_DK_PROBLEM="the volume was not unmounted cleanly, as while Windows uses it: unmount"
-        KU_DK_PROBLEM+=" BOOT in Windows with mountvol X: /p as administrator, then run again"
+        KU_DK_PROBLEM="the volume was not unmounted cleanly, as while Windows uses it: shut the"
+        KU_DK_PROBLEM+=" VM down, close what uses BOOT in Windows, start the VM again through the"
+        KU_DK_PROBLEM+=" launcher, and run again"
     elif (( !(entry & sound) )); then
         KU_DK_PROBLEM="the volume has disk errors marked: let Windows check it with chkdsk X: /f,"
         KU_DK_PROBLEM+=" then run again"
@@ -858,7 +858,7 @@ _ku_fat_refuse() {
 # stick's menu and none of /boot/grub/grub.cfg, so that the menu it writes is the one that
 # boots; and the volume was left clean (ku_fat_clean). Then sets KU_DK_DEPLOY to direct and
 # KU_DK_FAT_RW to 1, with KU_DK_ROOT on a read-only mount of its own, which ku_p1_fat_rw mounts
-# read-write before the first write, once the person typed that Windows let go of the volume.
+# read-write before the first write, once the person said that Windows no longer has BOOT.
 # Returns 1 with KU_DK_PROBLEM set when partition 1 does not mount.
 _ku_deploy_resolve_fat() {
     local name=$1 virt="" out
@@ -910,13 +910,14 @@ _ku_deploy_resolve_fat() {
 }
 
 # Before the first write to a FAT partition 1 that ku_deploy_resolve let a writer write: ask
-# the person to type KU_DK_FAT_PHRASE, which --yes does not answer, check again that the volume
-# is clean, and mount it read-write in the place of the read-only mount. Exits 10 on another
-# answer. Returns 1 with KU_DK_PROBLEM set when it stays read-only, or is no longer mounted.
+# the person whether Windows no longer has BOOT, which VMware locks while the VM runs, and
+# which --yes does not answer (ku_ask_person); check again that the volume is clean; and mount
+# it read-write in the place of the read-only mount. Exits 10 on any answer but yes. Returns 1
+# with KU_DK_PROBLEM set when it stays read-only, or is no longer mounted.
 ku_p1_fat_rw() {
     (( KU_DK_FAT_RW == 1 )) || return 0
-    ku_ask_phrase "$KU_DK_FAT_PHRASE" "Unmount BOOT in Windows first, with mountvol X: /p as" \
-        "administrator. Type '$KU_DK_FAT_PHRASE' to write partition 1:"
+    ku_ask_person "Write the FAT partition 1 now? In Windows, Test-Path on BOOT's drive must" \
+        "print False while this VM runs"
     ku_fat_clean "$KU_DK_PART" || return 1
     ku_p1_remount rw || return 1
     KU_DK_FAT_RW=2
