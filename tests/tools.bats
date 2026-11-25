@@ -66,6 +66,62 @@ home_untouched() {
     home_untouched
 }
 
+# Run the script NAME under pwsh on Linux, with partition 1's files in the folder STICK as the
+# drive Q:, which Get-Volume names BOOT on a disk on BUS, USB by default, and with ANSWER, yes by
+# default, as what Read-Host returns. The Desktop is HOME's.
+run_on_stick() {
+    local name=$1 stick=$2 bus=${3:-USB} answer=${4:-yes}
+    run pwsh -NoProfile -NonInteractive -Command "
+        New-PSDrive -Name Q -PSProvider FileSystem -Root '$stick' -Scope Global | Out-Null
+        function global:Get-Volume { $(fat_boot) }
+        function global:Get-Partition { [CmdletBinding()] param(\$DriveLetter)
+            [pscustomobject]@{ DriveLetter = \$DriveLetter } }
+        function global:Get-Disk { [CmdletBinding()] param([Parameter(ValueFromPipeline)]\$Partition)
+            process { [pscustomobject]@{ BusType = '$bus' } } }
+        function global:Read-Host { param(\$Prompt) Write-Host \"\${Prompt}: $answer\"; '$answer' }
+        & '$REPO_DIR/tools/windows/$name.ps1'
+        exit \$LASTEXITCODE"
+}
+
+@test "Step A copies the stick's menu to the Desktop and checks it; E copies it back after a yes" {
+    [[ $(uname -s) == Linux ]] || skip "takes HOME's Desktop, which only Linux has"
+    local stick="$BATS_TEST_TMPDIR/stick" copy name
+    mkdir -p "$stick/multibootusb/grub/i386-pc" "$HOME/Desktop"
+    printf 'menuentry "Old" {\r\n}\r\n' > "$stick/multibootusb/grub/grub.cfg"
+    printf 'module\n' > "$stick/multibootusb/grub/i386-pc/linux.mod"
+    cp "$stick/multibootusb/grub/grub.cfg" "$BATS_TEST_TMPDIR/old.cfg"
+    run_on_stick stick-a-copy-menu "$stick"
+    [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+    [[ "$output" == *"Copied BOOT (Q:) multibootusb\\grub to: $HOME/Desktop/stick-grub-"* ]]
+    [[ "$output" == *"Files: 2 on the stick, 2 in the copy"* ]]
+    [[ "$output" == *"The copy matches the stick. Next: step B." ]]
+    copy=$(find "$HOME/Desktop" -mindepth 1 -maxdepth 1)
+    [[ "$copy" == "$HOME/Desktop/stick-grub-"* ]]
+    cmp "$BATS_TEST_TMPDIR/old.cfg" "$copy/grub.cfg"
+    cmp "$stick/multibootusb/grub/i386-pc/linux.mod" "$copy/i386-pc/linux.mod"
+    # The write changes grub.cfg and adds kali.cfg; E puts grub.cfg back only after a yes.
+    printf 'menuentry "New" {\r\n}\r\n' > "$stick/multibootusb/grub/grub.cfg"
+    printf 'kali\n' > "$stick/multibootusb/grub/kali.cfg"
+    run_on_stick stick-e-restore-menu "$stick" USB no
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Not copied. Nothing was changed." ]]
+    grep -q New "$stick/multibootusb/grub/grub.cfg"
+    run_on_stick stick-e-restore-menu "$stick"
+    [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+    [[ "$output" == *"This copies $copy over BOOT (Q:) multibootusb\\grub."* ]]
+    [[ "$output" == *"The stick's grub.cfg is the saved one again."* ]]
+    cmp "$BATS_TEST_TMPDIR/old.cfg" "$stick/multibootusb/grub/grub.cfg"
+    [ -f "$stick/multibootusb/grub/kali.cfg" ]
+    # Folders go back in place, not into themselves.
+    [ ! -e "$stick/multibootusb/grub/i386-pc/i386-pc" ]
+    # A BOOT that is not on a USB disk is no stick, for every script.
+    for name in "${SCRIPTS[@]}"; do
+        run_on_stick "$name" "$stick" SATA
+        [ "$status" -eq 1 ]
+        [ "$output" = "BOOT (Q:) is not on a USB disk, so it is not the stick. Nothing was changed." ]
+    done
+}
+
 @test "Each Windows script refuses two BOOT drives, an NTFS BOOT and one without the menu" {
     local name
     for name in "${SCRIPTS[@]}"; do
