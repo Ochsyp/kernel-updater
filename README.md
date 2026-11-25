@@ -254,9 +254,9 @@ file as `NAME=<value>`.
 
 `--write-fat` lets this run write a FAT partition 1, which every run without it exports, and
 only as the Partition 1 section below says: under VMware, when the stick's menu booted the
-running kernel, the volume was left clean, and you type `BOOT is unmounted in Windows` at its
-question, which `--yes` does not answer. Otherwise it refuses (3), or exits 10 on another
-answer, and writes nothing. On NTFS it changes nothing and says so.
+running kernel, the volume was left clean, and you answer `y` to its question whether Windows
+no longer has BOOT, which `--yes` does not answer. Otherwise it refuses (3), or exits 10 on any
+other answer, and writes nothing. On NTFS it changes nothing and says so.
 [docs/migration.md](docs/migration.md#writing-a-fat-partition-1-from-the-vm) lists what to do in
 Windows before and after.
 `--deploy` and `--output-dir` stand in for `deploy` and `output_dir` for one run; an export
@@ -436,8 +436,10 @@ Windows to copy, and says why.
   writes is the one that booted it; and the volume was left clean: its boot sector is not
   marked dirty, and the FAT's entry 1 keeps the clean-shutdown bit, which Windows clears while
   it uses the volume, and the bit for no disk errors (FAT32 and FAT16; FAT12 is refused). The
-  plan is read through a read-only mount of its own. Before the first write the run asks you to
-  type `BOOT is unmounted in Windows`, checks the volume once more, and mounts it read-write
+  plan is read through a read-only mount of its own. VMware locks and dismounts BOOT in Windows
+  while the VM runs; taken offline in Windows beforehand, it cannot, and Windows then refuses
+  the VM's writes. Before the first write the run asks whether Windows no longer has BOOT, a
+  y/N question that `--yes` does not answer, checks the volume once more, and mounts it read-write
   with `vfat` and `flush` in the same place. The writer below then syncs the filesystem after
   each step: the backup, the temporary file, the move aside, the rename and the removal of the
   old file. It reads each file back through a new read-only mount, so that the read comes from

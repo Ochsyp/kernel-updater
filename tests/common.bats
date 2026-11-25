@@ -88,26 +88,32 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "ku_ask_phrase takes the phrase alone, blanks around it aside, and never --yes" {
+@test "ku_ask_person returns 0 on yes alone, and --yes never answers it" {
     KU_TTY="$BATS_TEST_TMPDIR/tty"
     local answer
-    for answer in "BOOT is unmounted" "  BOOT is unmounted"$'\t' $'BOOT is unmounted\r'; do
-        printf '%s\n' "$answer" > "$KU_TTY"
-        run ku_ask_phrase "BOOT is unmounted" "Type it:"
-        [ "$status" -eq 0 ]
-        [ "$output" = "Type it: " ]
-    done
+    # --yes is set: the person still answers on the terminal.
     KU_ASSUME_YES=1
-    for answer in y yes "boot is unmounted" "BOOT is  unmounted" ""; do
+    for answer in y Y yes YES $'y\r'; do
         printf '%s\n' "$answer" > "$KU_TTY"
-        run ku_ask_phrase "BOOT is unmounted" "Type it:"
-        [ "$status" -eq 10 ]
-        [[ "$output" == *"declined: the answer was not 'BOOT is unmounted'; nothing was changed" ]]
+        run ku_ask_person "Write it now?"
+        [ "$status" -eq 0 ]
+        [ "$output" = "Write it now? [y/N] " ]
     done
+    for answer in n no "" maybe "yes please"; do
+        printf '%s\n' "$answer" > "$KU_TTY"
+        run ku_ask_person "Write it now?"
+        [ "$status" -eq 10 ]
+        [[ "$output" == *"declined; nothing was changed" ]]
+    done
+    # A question given in several words is asked whole.
+    printf 'y\n' > "$KU_TTY"
+    run ku_ask_person "Write it now? Check" "the drive first"
+    [ "$status" -eq 0 ]
+    [ "$output" = "Write it now? Check the drive first [y/N] " ]
     KU_TTY="$BATS_TEST_TMPDIR/no-such-tty"
-    run ku_ask_phrase "BOOT is unmounted" "Type it:"
+    run ku_ask_person "Write it now?"
     [ "$status" -eq 10 ]
-    [[ "$output" == *"no terminal to type the answer on, which --yes does not give;"* ]]
+    [[ "$output" == *"no terminal to answer on, which --yes does not do for this question;"* ]]
 }
 
 @test "ku_ask returns 1 on a no, and each question reads the next answer of the terminal" {

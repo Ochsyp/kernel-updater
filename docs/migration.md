@@ -156,22 +156,25 @@ write removes the export, which copied afterwards would undo it.
 `--write-fat` lets one run write a FAT partition 1, and only under VMware, only when the
 stick's menu booted the running kernel, and only when the volume was left clean. Windows must
 not use the volume meanwhile: FAT has no journal, and two systems writing it at once corrupt
-it. Do steps A to D for each run that writes: the menu stage, finalize, and a rollback should
-you need one. `X:` stands for the drive letter Windows gives BOOT.
+it. VMware sees to that itself: when the VM starts, it locks and dismounts every Windows volume
+on the part of the stick it gives the VM, BOOT among them, and holds them until the VM is off.
+Do not take BOOT offline in Windows yourself, as with `mountvol X: /p`: VMware can then not
+lock it, and Windows refuses the VM's writes to it ("The device is not ready"). Do steps A to D
+for each run that writes: the menu stage, finalize, and a rollback should you need one. `X:`
+stands for the drive letter Windows gives BOOT.
 
-`tools/windows` holds steps A, B, D and E as scripts that find BOOT by its label, so you need
-not know its letter. Each refuses with a plain sentence and changes nothing when BOOT is not
-there, is there twice, is not FAT or holds no `multibootusb\grub\grub.cfg`. B and D ask
-Windows for administrator rights themselves and show their result in a window of their own.
-Run each from PowerShell in the checkout, for example:
+`tools/windows` holds steps A, D and E as scripts that find BOOT by its label, so you need not
+know its letter. Each refuses with a plain sentence and changes nothing when BOOT is not there,
+is there twice, is not on USB, is not FAT or holds no `multibootusb\grub\grub.cfg`. D asks
+Windows for administrator rights itself and shows its result in a window of its own. Run each
+from PowerShell in the checkout, for example:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\windows\stick-a-copy-menu.ps1
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\windows\stick-a-copy-menu.ps1
 ```
 
 - `stick-a-copy-menu.ps1`: step A. It prints the copy's path and the SHA-256 of `grub.cfg` on
   the stick and in the copy, and ends with `The copy matches the stick.`
-- `stick-b-take-offline.ps1`: step B. It ends with `BOOT is gone from Windows`.
 - `stick-d-chkdsk.ps1`: step D, without `/f`. It ends with `chkdsk found no problems`.
 - `stick-e-restore-menu.ps1`: E. It copies back the newest `stick-grub-*` folder on the Desktop
   once you type `yes`, and prints both SHA-256 sums.
@@ -183,20 +186,20 @@ Copy-Item -Recurse X:\multibootusb\grub "$HOME\Desktop\stick-grub-$(Get-Date -f 
 ```
 
 It prints nothing. It worked when `Get-ChildItem "$HOME\Desktop\stick-grub-*\grub.cfg"` lists
-a `grub.cfg` with today's time.
+a `grub.cfg` with today's time. Then close every Explorer window and program that uses BOOT.
 
-B. In Windows, in PowerShell as administrator, take BOOT offline:
+B. Start the VM through the launcher. Then, in Windows, check that VMware holds BOOT:
 
 ```powershell
-mountvol X: /p
+Test-Path X:\
 ```
 
-It prints nothing. It worked when `Test-Path X:\` prints `False` and Explorer shows no BOOT
-drive. BOOT should come back the next time you plug the stick in. If it does not, open Disk
-Management (`diskmgmt.msc`), right-click BOOT on the stick, and set it online, or give it its
-drive letter again with "Change Drive Letter and Paths".
+It worked when it prints `False`; Explorer then cannot open BOOT either. When it prints `True`,
+Windows still has BOOT: shut the VM down, close what uses BOOT, plug the stick in again if it
+stays, and start the VM again. VMware's own log, `vmware.log` beside the VM's `.vmx`, says the
+same at each start: `Successfully locked volume` for each volume it took from Windows.
 
-C. Start the VM through the launcher. In Kali, see the plan first; it writes nothing:
+C. In Kali, see the plan first; it writes nothing:
 
 ```bash
 sudo kernel-updater migrate --stage menu --write-fat -n
@@ -211,12 +214,16 @@ shows in its `boot-menu` item which menu booted the kernel. Then write:
 sudo kernel-updater migrate --stage menu --write-fat
 ```
 
-Answer `y` to the plan's question, then type `BOOT is unmounted in Windows` at the next one. It
-worked when it ends with `info: wrote multibootusb/grub/kali.cfg` and `info: wrote
-multibootusb/grub/grub.cfg; the old one is kept as ...` and exits 0, as `echo $?` shows. For
-finalize, the second write, use `--stage finalize`; for a rollback, `--rollback --write-fat`.
+Answer `y` to the plan's question, then `y` to `Write the FAT partition 1 now? In Windows,
+Test-Path on BOOT's drive must print False while this VM runs`, which `--yes` does not answer,
+once step B printed `False`. It worked when it ends with `info: wrote multibootusb/grub/kali.cfg`
+and `info: wrote multibootusb/grub/grub.cfg; the old one is kept as ...` and exits 0, as
+`echo $?` shows. For finalize, the second write, use `--stage finalize`; for a rollback,
+`--rollback --write-fat`. Where `sudo` does not find `kernel-updater`, as when its
+`secure_path` lacks `/usr/local/bin`, type `sudo /usr/local/bin/kernel-updater` instead.
 
-D. Shut the VM down, unplug the stick, plug it in again, and in PowerShell as administrator:
+D. Shut the VM down; BOOT comes back in Windows once VMware lets go of it. Then, in PowerShell
+as administrator:
 
 ```powershell
 chkdsk X:
@@ -226,6 +233,11 @@ It worked when it reports that Windows found no problems. Then boot the new entr
 
 What can still go wrong, and how to get the old menu back:
 
+- VMware shows "The operation on file ... failed" with Retry, Cancel and Continue while the run
+  writes: Windows refused the write, as when BOOT was taken offline before the VM started.
+  Choose Cancel, which powers the VM off. When Windows refused every write, as then, nothing
+  reached BOOT; check that with steps A and D (the same SHA-256 and file count as before, and no
+  problems), then start again from A.
 - `chkdsk X:` reports errors, as when Windows still used BOOT: run `chkdsk X: /f`, then E.
 - The stick stops at a GRUB prompt or shows a menu error, as after a power loss in the few
   milliseconds between the two renames of `grub.cfg`: E from Windows.

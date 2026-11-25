@@ -11,7 +11,8 @@
 
 load helpers
 
-SCRIPTS=(stick-a-copy-menu stick-b-take-offline stick-d-chkdsk stick-e-restore-menu)
+# No step B (tests/repo.bats checks that it stays gone).
+SCRIPTS=(stick-a-copy-menu stick-d-chkdsk stick-e-restore-menu)
 # A volume of the stub's, labelled BOOT, on the drive letter Q, with the filesystem given.
 fat_boot() {
     printf "[pscustomobject]@{ FileSystemLabel = 'BOOT'; DriveLetter = '%s'; FileSystem = '%s' }" \
@@ -58,7 +59,7 @@ home_untouched() {
         [ "$status" -eq 1 ]
         [[ "$output" == "No drive labelled BOOT is mounted on this PC: plug the stick in,"* ]]
         [[ "$output" == *"Nothing was changed." ]]
-        # One without a drive letter, as mountvol /p leaves it, is not there either.
+        # One without a drive letter, as an offline volume has, is not there either.
         run_script "$name" "[pscustomobject]@{ FileSystemLabel = 'BOOT'; DriveLetter = \$null }"
         [ "$status" -eq 1 ]
         [[ "$output" == "No drive labelled BOOT is mounted on this PC:"* ]]
@@ -94,7 +95,7 @@ run_on_stick() {
     [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
     [[ "$output" == *"Copied BOOT (Q:) multibootusb\\grub to: $HOME/Desktop/stick-grub-"* ]]
     [[ "$output" == *"Files: 2 on the stick, 2 in the copy"* ]]
-    [[ "$output" == *"The copy matches the stick. Next: step B." ]]
+    [[ "$output" == *"The copy matches the stick. Next: start the VM through the launcher." ]]
     copy=$(find "$HOME/Desktop" -mindepth 1 -maxdepth 1)
     [[ "$copy" == "$HOME/Desktop/stick-grub-"* ]]
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$copy/grub.cfg"

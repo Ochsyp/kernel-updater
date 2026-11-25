@@ -414,6 +414,13 @@ with the owner's original script.
 
 ### Fixed
 
+- `--write-fat` no longer has you take BOOT offline in Windows before the VM starts.
+  `mountvol X: /p` left the volume offline, so VMware could not lock it, and Windows refused the
+  VM's first write to it ("The device is not ready"). VMware locks and dismounts BOOT itself
+  while the VM runs. Step B in `docs/migration.md` now checks that with `Test-Path X:\`, and
+  `tools/windows/stick-b-take-offline.ps1` is gone. The question before the first write is a
+  y/N question, which `--yes` does not answer, instead of a sentence to type. The refusal of a
+  volume that was not unmounted cleanly no longer points to `mountvol`.
 - The container test of a real apt lock in `tests/container/cleanup.bats` passes perl's `fcntl`
   a variable. Perl refused the direct result of `pack`, so the test stopped before it took the
   lock and never reached the check it is there for.

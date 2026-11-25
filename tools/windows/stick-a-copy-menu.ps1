@@ -31,4 +31,4 @@ Write-Host "grub.cfg SHA-256 in the copy:  $copySum"
 if ($onStick -ne $inCopy -or $stickSum -ne $copySum) {
     Stop-Step "The copy differs from the stick: do not go on. Delete $target and run this again."
 }
-Write-Host 'The copy matches the stick. Next: step B.'
+Write-Host 'The copy matches the stick. Next: start the VM through the launcher.'

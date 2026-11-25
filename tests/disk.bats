@@ -505,8 +505,9 @@ fat_volume() {
     fat_volume "$vol" 32 00 ff ff ff 07
     run_ku_lib "$code" "$vol"
     [ "$status" -eq 1 ]
-    [[ "$output" == "the volume was not unmounted cleanly, as while Windows uses it: unmount BOOT"* ]]
-    [[ "$output" == *"in Windows with mountvol X: /p as administrator, then run again" ]]
+    [[ "$output" == "the volume was not unmounted cleanly, as while Windows uses it: shut the VM"* ]]
+    [[ "$output" == *"down, close what uses BOOT in Windows, start the VM again through the launcher,"* ]]
+    [[ "$output" == *"and run again" && "$output" != *mountvol* ]]
     fat_volume "$vol" 32 00 ff ff ff 0b
     run_ku_lib "$code" "$vol"
     [[ "$output" == "the volume has disk errors marked: let Windows check it with chkdsk X: /f,"* ]]
