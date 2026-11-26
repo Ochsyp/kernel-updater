@@ -1092,15 +1092,16 @@ _ku_mg_kali_deploy() {
 
 # Export the FILEs to output_dir with ku_export. When --output-dir took the export elsewhere
 # than the output_dir the configuration names, warn that check's deployed item, to which
-# DEPLOY.txt points, and a later write, which removes an export it makes stale, read that one
-# alone.
+# DEPLOY.txt points, reads that one alone, and that a later write, which removes an export it
+# makes stale, reads this one only when given the same --output-dir.
 _ku_mg_export() {
     ku_export "$(ku_path "${KU_CONF[output_dir]}")" "$@"
     if [[ ${KU_CONF[output_dir]} != "$KU_MG_CONF_OUTPUT" ]]; then
         ku_log warning "--output-dir took this export away from the output_dir of the" \
-            "configuration, the only one check's deployed item and later runs of migrate read:" \
-            "once Windows copied the files, compare them with SHA256SUMS yourself, as check" \
-            "cannot, then remove the export, which no later write removes when it makes it stale"
+            "configuration, the only one check's deployed item reads: once Windows copied the" \
+            "files, compare them with SHA256SUMS yourself, as check cannot, then remove the" \
+            "export, which a later write removes when it makes it stale only when given the" \
+            "same --output-dir"
     fi
 }
 
@@ -2362,14 +2363,36 @@ _ku_mg_p1_sources_kali() {
     ku_menu_sources_kali "$KU_MG_TMP/p1-grub.cfg"
 }
 
-# Return 0 when output_dir holds an export whose SHA256SUMS lists one of the NAMEs, given as NAME
-# HASH pairs, with another SHA-256 than its HASH: an export from an earlier run that a write of
-# those files to partition 1 makes stale, and that, copied after the write, would undo it.
-# Returns 1 otherwise, also when output_dir holds no export.
+# Print the output_dirs an export of an earlier run may wait in, one per line: the one the
+# configuration names, which check's deployed item and DEPLOY.txt point at, and the one
+# --output-dir gave this run, when it is another.
+_ku_mg_export_dirs() {
+    local conf=${KU_MG_CONF_OUTPUT:-${KU_CONF[output_dir]}}
+    printf '%s\n' "$conf"
+    if [[ ${KU_CONF[output_dir]} != "$conf" ]]; then
+        printf '%s\n' "${KU_CONF[output_dir]}"
+    fi
+}
+
+# Return 0 when an output_dir of _ku_mg_export_dirs holds an export that a write of the NAMEs,
+# given as NAME HASH pairs, makes stale (_ku_mg_stale_in). Returns 1 otherwise.
 _ku_mg_stale_export() {
+    local dir
+    while IFS= read -r dir; do
+        _ku_mg_stale_in "$dir" "$@" && return 0
+    done < <(_ku_mg_export_dirs)
+    return 1
+}
+
+# Return 0 when the output_dir DIR holds an export whose SHA256SUMS lists one of the NAMEs,
+# given as NAME HASH pairs, with another SHA-256 than its HASH: an export from an earlier run
+# that a write of those files to partition 1 makes stale, and that, copied after the write,
+# would undo it. Returns 1 otherwise, also when DIR holds no export.
+_ku_mg_stale_in() {
     local sums line
     local -A want=()
-    sums=$(ku_path "${KU_CONF[output_dir]}")/SHA256SUMS
+    sums=$(ku_path "$1")/SHA256SUMS
+    shift
     [[ -f $sums && ! -L $sums && -r $sums ]] || return 1
     while (( $# >= 2 )); do
         want[$1]=$2
@@ -2385,21 +2408,30 @@ _ku_mg_stale_export() {
     return 1
 }
 
-# After a write to partition 1 of the NAMEs, given as NAME HASH pairs, remove the export in
-# output_dir that _ku_mg_stale_export finds stale, so that check's deployed item no longer asks
-# for it to be copied, and no DEPLOY.txt says to: SHA256SUMS first, then DEPLOY.txt and the
-# files SHA256SUMS listed, as far as they are regular files, never anything else there, and only
-# from an output_dir of root's closed to group and others, as ku_export takes one. Only warns
-# when that fails, as the write is done; with --dry-run it only says that it would.
+# After a write to partition 1 of the NAMEs, given as NAME HASH pairs, remove each export in an
+# output_dir of _ku_mg_export_dirs that _ku_mg_stale_in finds stale, so that check's deployed
+# item no longer asks for it to be copied, and no DEPLOY.txt says to: SHA256SUMS first, then
+# DEPLOY.txt and the files SHA256SUMS listed, as far as they are regular files, never anything
+# else there, and only from an output_dir of root's closed to group and others, on a path no
+# other user can change, as ku_export takes one. Only warns when that fails, as the write is
+# done; with --dry-run it only says that it would.
 _ku_mg_retire_export() {
-    local dir info owner mode line name
+    local out
+    while IFS= read -r out; do
+        _ku_mg_stale_in "$out" "$@" || continue
+        if (( KU_DRY_RUN )); then
+            ku_log info "dry run: would remove the export in output_dir, which this write" \
+                "makes stale"
+        else
+            _ku_mg_retire_in "$(ku_path "$out")"
+        fi
+    done < <(_ku_mg_export_dirs)
+}
+
+# Remove the stale export in the output_dir DIR, as _ku_mg_retire_export says.
+_ku_mg_retire_in() {
+    local dir=$1 info owner mode line name
     local -a names=()
-    _ku_mg_stale_export "$@" || return 0
-    if (( KU_DRY_RUN )); then
-        ku_log info "dry run: would remove the export in output_dir, which this write makes stale"
-        return 0
-    fi
-    dir=$(ku_path "${KU_CONF[output_dir]}")
     while IFS= read -r line || [[ -n $line ]]; do
         if [[ $line =~ ^[0-9a-f]{64}\ [\ *]([A-Za-z0-9][A-Za-z0-9._+-]*)$ ]]; then
             names+=("${BASH_REMATCH[1]}")
@@ -2408,7 +2440,7 @@ _ku_mg_retire_export() {
     info=$(stat -L -c '%u %a' -- "$dir" 2> /dev/null) || info=""
     read -r owner mode <<< "$info"
     if [[ -L $dir || $owner != 0 || ! $mode =~ ^[0-7]+$ ]] || (( (8#$mode & 8#077) != 0 )) ||
-        ! rm -f -- "$dir/SHA256SUMS"; then
+        ! ku_p1_root_only "$dir" || ! rm -f -- "$dir/SHA256SUMS"; then
         ku_log warning "output_dir holds an export from an earlier run that this write makes" \
             "stale, and it cannot be removed: do not copy it, and remove it by hand"
         return 0
@@ -2624,8 +2656,8 @@ _ku_mg_backup_drop() {
         KU_MG_BACKUP=""
         return 0
     fi
-    for name in MANIFEST stage deploy written kernel-img.conf kernel-img.conf.absent \
-        root-links.list grub.cfg kali.cfg kali.cfg.absent; do
+    for name in MANIFEST MANIFEST.new stage deploy written kernel-img.conf \
+        kernel-img.conf.absent root-links.list grub.cfg kali.cfg kali.cfg.absent; do
         rm -f -- "$KU_MG_BACKUP/$name" || :
     done
     if ! rmdir -- "$KU_MG_BACKUP" 2> /dev/null &&
@@ -2635,13 +2667,15 @@ _ku_mg_backup_drop() {
     KU_MG_BACKUP=""
 }
 
-# Seal the backup before an export, which writes nothing on the stick. A write to partition 1
-# leaves sealing to ku_deploy_write, which calls _ku_mg_seal before it changes the first file:
-# a stage the writer stops before that (75, 3 or 4) then leaves an unsealed backup, which the
-# exit trap removes, instead of one a later --rollback would undo although the stage wrote
-# nothing.
+# Seal the backup before an export, which writes nothing on the stick, once output_dir passed
+# its checks or was made (ku_export_dir): an output_dir that cannot serve then stops the stage
+# with an unsealed backup, which the exit trap removes. A write to partition 1 leaves sealing to
+# ku_deploy_write, which calls _ku_mg_seal before it changes the first file: a stage the writer
+# stops before that (75, 3 or 4) then leaves an unsealed backup too, instead of one a later
+# --rollback would undo although the stage wrote nothing.
 _ku_mg_seal_export() {
     if [[ $KU_DK_DEPLOY == export ]]; then
+        ku_export_dir "$(ku_path "${KU_CONF[output_dir]}")"
         _ku_mg_manifest
     fi
 }
@@ -2664,10 +2698,12 @@ _ku_mg_deploy_files() {
 }
 
 # Write the MANIFEST of the backup directory: "SHA256  NAME" for each file the stage put in
-# it, as sha256sum writes them, so that a rollback trusts only a whole backup. Then flush the
-# filesystem that holds it, so that the backup is on the disk before the stage changes what it
-# may restore, which a crash could otherwise leave changed beside an empty backup. From then on
-# the backup stays, whatever happens.
+# it, as sha256sum writes them, so that a rollback trusts only a whole backup. It goes to
+# MANIFEST.new first, which is flushed to the disk and then renamed, so that a power loss
+# leaves either no MANIFEST, a backup --rollback passes over, or a whole one, never a truncated
+# one that would stop every --rollback. The rename is flushed too, so that the backup is on
+# the disk before the stage changes what it may restore, which a crash could otherwise leave
+# changed beside an empty backup. From then on the backup stays, whatever happens.
 _ku_mg_manifest() {
     local name hash sums=""
     for name in stage deploy written kernel-img.conf kernel-img.conf.absent root-links.list \
@@ -2676,7 +2712,9 @@ _ku_mg_manifest() {
         hash=$(ku_sha256 "$KU_MG_BACKUP/$name") || _ku_mg_backup_fail
         sums+="$hash  $name"$'\n'
     done
-    printf '%s' "$sums" > "$KU_MG_BACKUP/MANIFEST" || _ku_mg_backup_fail
+    printf '%s' "$sums" > "$KU_MG_BACKUP/MANIFEST.new" || _ku_mg_backup_fail
+    sync -f -- "$KU_MG_BACKUP" || _ku_mg_backup_fail
+    mv -T -f -- "$KU_MG_BACKUP/MANIFEST.new" "$KU_MG_BACKUP/MANIFEST" || _ku_mg_backup_fail
     sync -f -- "$KU_MG_BACKUP" || _ku_mg_backup_fail
     KU_MG_SEALED=1
 }

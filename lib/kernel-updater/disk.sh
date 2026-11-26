@@ -4,8 +4,8 @@
 #
 # Finds the stick's partition 1, the FAT or NTFS partition MultiBootUSB boots from, through the
 # disk that holds /boot, checks that it is the one the configuration names, reaches its root to
-# read it, or to write it when it is NTFS, and picks how a writer deploys to it. Defines
-# functions and settings only.
+# read it, or to write it when it is NTFS, or FAT under migrate --write-fat, and picks how a
+# writer deploys to it. Defines functions and settings only.
 # -------------------------------------------------------
 
 # Seams for the tests, which come from the environment only with KU_TEST=1, as those of
@@ -217,7 +217,8 @@ ku_p1_locate() {
 # ku_disk_find first, but for KU_P1_DIR and a reader's p1_path. Returns 0 once a root is
 # reached: a writer may write there while KU_DK_PROBLEM stays empty, and KU_DK_WRITABLE is
 # then 1, but after a dry run's read-only mount. Returns 1 with KU_DK_PROBLEM set when no root
-# is reached, and always for rw on a FAT partition 1, which nothing writes.
+# is reached, and always for rw on a FAT partition 1: only --write-fat writes one, by
+# remounting its own read-only mount read-write (ku_p1_remount).
 ku_p1_open() {
     local mode=$1
     if ! ku_p1_close; then
@@ -497,7 +498,8 @@ _ku_p1_options() {
 
 # Mount partition 1 on p1/ in a new private directory in /run, read-only for MODE ro and plan,
 # trying the types in KU_P1_FSTYPES in turn, and read-write for rw, with ntfs3 alone; a FAT
-# partition 1 only ever read-only, with vfat, as root's alone (ku_p1_open refuses rw); always
+# partition 1 read-only, with vfat, as root's alone (ku_p1_open refuses rw; --write-fat later
+# remounts this mount read-write with ku_p1_remount); always
 # with nosuid, nodev and noexec. A dry run mounts read-only whatever MODE says. Never forced,
 # never removing the hibernation file, and never replaying and clearing the log Windows left:
 # ntfs3 replays that log on a read-write mount and has no option to refuse, so a read-write
@@ -654,9 +656,10 @@ ku_in_vm() {
 # through a mount of the partition, path through p1_path, and export leaves the files in
 # output_dir for Windows to copy. In a VM, where Windows may have partition 1 mounted on the
 # host, this system never writes partition 1 itself: auto and direct export there, and only
-# path writes, through the host. Elsewhere auto writes directly. Every mode exports a FAT
-# partition 1, which nothing writes, and auto says so as info. direct and path fall back to
-# export, with a warning that says why, when they get no root they may write: a read-only
+# path writes, through the host. Elsewhere auto writes directly. Without --write-fat every mode
+# exports a FAT partition 1, and auto says so as info; with it, _ku_deploy_resolve_fat decides.
+# direct and path fall back to export, with a warning that says why, when they get no root they
+# may write: a read-only
 # mount, a volume Windows left hibernated, unclean or marked dirty, which only a mount of its
 # own looks at, since a read-write mount that root made took the volume as it was, a failed
 # mount, or a p1_path that does not serve. A dry run keeps the mode it would use but mounts
