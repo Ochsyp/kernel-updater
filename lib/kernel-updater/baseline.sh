@@ -18,6 +18,8 @@ KU_BL_SAME=0 KU_BL_CHANGED=() KU_BL_NEW=() KU_BL_MISSING=()
 
 # The temporary file the baseline is written through, which the exit trap removes.
 KU_BL_TMP=""
+# 1 once _ku_baseline_cleanup is registered with the exit trap.
+KU_BL_CLEANUP=0
 
 # A GRUB 2 version as GRUB builds it into its modules: 2.02, 2.02~beta2 or 2.06-13+deb12u1.
 KU_GRUB_VERSION_RE='^2\.[0-9][0-9]([~+.-][0-9A-Za-z.~+-]*)?$'
@@ -228,7 +230,10 @@ _ku_baseline_write() {
     local file dir
     file=$(ku_path "$KU_BASELINE")
     dir=${file%/*}
-    ku_cleanup_add _ku_baseline_cleanup
+    if (( ! KU_BL_CLEANUP )); then
+        ku_cleanup_add _ku_baseline_cleanup
+        KU_BL_CLEANUP=1
+    fi
     if ! mkdir -p -- "$dir" || ! chmod 0700 -- "$dir" ||
         ! KU_BL_TMP=$(mktemp -- "$dir/.baseline.XXXXXXXX") ||
         ! printf '%s\n' "$1" > "$KU_BL_TMP" || ! chmod 0600 -- "$KU_BL_TMP" ||
@@ -257,9 +262,7 @@ ku_baseline_update() {
     file=$(ku_path "$KU_BASELINE")
     [[ -e $file ]] || return 1
     stored=$(ku_baseline_read "$file") || return 1
-    while read -r hash name; do
-        [[ -z $name ]] || sums[$name]=$hash
-    done <<< "$stored"
+    _ku_baseline_sums "$stored" sums
     while (( $# )); do
         [[ $1 =~ ^[^[:cntrl:][:space:]/][^[:cntrl:]]*$ && $2 =~ ^[0-9a-f]{64}$ ]] || return 1
         sums[$1]=$2
@@ -450,6 +453,18 @@ ku_baseline_read() {
     printf '%s' "$out"
 }
 
+# Set the associative array named NAME from the baseline LINES, "SHA256  NAME" each, keeping
+# every byte of each name, blanks at its ends too, as a file name on NTFS may have them.
+_ku_baseline_sums() {
+    local -n _ku_bl_sums=$2
+    local line
+    while IFS= read -r line; do
+        [[ $line =~ ^([0-9a-f]{64})\ \ (.+)$ ]] || continue
+        # shellcheck disable=SC2004 # the nameref is an associative array, keyed by the name
+        _ku_bl_sums[${BASH_REMATCH[2]}]=${BASH_REMATCH[1]}
+    done <<< "$1"
+}
+
 # Compare the baseline lines CURRENT with STORED: set KU_BL_SAME to the number of entries
 # alike, and KU_BL_CHANGED, KU_BL_NEW and KU_BL_MISSING to the sorted names that differ, are
 # only in CURRENT, or are only in STORED.
@@ -457,12 +472,8 @@ ku_baseline_compare() {
     local hash name
     local -A old=() new=()
     KU_BL_SAME=0 KU_BL_CHANGED=() KU_BL_NEW=() KU_BL_MISSING=()
-    while read -r hash name; do
-        [[ -z $name ]] || old[$name]=$hash
-    done <<< "$1"
-    while read -r hash name; do
-        [[ -z $name ]] || new[$name]=$hash
-    done <<< "$2"
+    _ku_baseline_sums "$1" old
+    _ku_baseline_sums "$2" new
     while IFS= read -r name; do
         if [[ -z $name ]]; then
             continue

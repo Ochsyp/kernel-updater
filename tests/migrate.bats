@@ -684,7 +684,8 @@ backups() {
     # The dry run took the first stamp for the backup grub.cfg would have had.
     local dir="$ROOT$BACKUPS/20261112T090002Z"
     [ "$(< "$dir/stage")" = menu ]
-    [ "$(< "$dir/deploy")" = direct ]
+    # The way the files reached partition 1 is in the plan and the log, not in the backup.
+    [ ! -e "$dir/deploy" ]
     cmp "$BATS_TEST_TMPDIR/grub.before" "$dir/grub.cfg"
     [ ! -e "$dir/kali.cfg" ]
     private_output
@@ -728,7 +729,7 @@ backups() {
     [ "$(cut -c 67- "$ROOT/root/out/SHA256SUMS")" = $'kali.cfg\ngrub.cfg' ]
     cmp "$BATS_TEST_TMPDIR/grub.before" "$GRUB/grub.cfg"
     [ ! -e "$GRUB/kali.cfg" ]
-    [ "$(< "$ROOT$BACKUPS/20261112T090001Z/deploy")" = export ]
+    [ ! -e "$ROOT$BACKUPS/20261112T090001Z/deploy" ]
     # The initrds the links reach count: V2's holds overlayroot, and V1's, on the .old links,
     # which previous_variants may give a live entry too, does not.
     mkstub lsinitramfs <<'EOF'

@@ -113,7 +113,9 @@ sudo ./install.sh
 `/etc/kernel/{preinst,prerm,postinst}.d` and last apt-guard's configuration to
 `/etc/apt/apt.conf.d/50kernel-updater`, and lists every file with its SHA-256 in
 `/var/lib/kernel-updater/install.manifest`. Run it again after updating the checkout: it
-replaces what changed and removes the files the checkout no longer has. Before it changes a
+replaces what changed and removes the files the checkout no longer has, puts back a file whose
+owner or mode changed, and warns about each folder the files go in that a user other than root
+can change. Before it changes a
 file, the manifest lists both its old and its new contents, so a run cut short can be run
 again or undone with `--uninstall`. It refuses with exit 3, before changing anything, when a
 file in its way was not installed by it or has changed since; move that file away and run it

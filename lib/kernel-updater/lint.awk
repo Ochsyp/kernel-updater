@@ -3,7 +3,8 @@
 #
 # Reads the GRUB config named by ENVIRON KU_LINT_CFG and prints LINE, SEVERITY, RULE and
 # MESSAGE, tab-separated, per finding. KU_LINT_CMDS and KU_LINT_MODS list the name files, one
-# path per line; KU_LINT_FLOOR is the oldest GRUB to support. KU_LINT_SAME_UUID, when set, is
+# path per line; KU_LINT_FLOOR is the oldest GRUB to support; KU_LINT_EXACT is 1 when the lists
+# are the stick's own, so that an unknown name is an error. KU_LINT_SAME_UUID, when set, is
 # a UUID without dashes that a filesystem and its LUKS container share. Messages never quote
 # identifiers.
 # -------------------------------------------------------
@@ -260,7 +261,7 @@ function check_param(w, ln,    key, m, opts, i, o) {
 # Track MultiBootUSB's "#start NAME" and "#end NAME" markers. Its uninstaller deletes what lies
 # between them, so the first encrypted entry inside a marked block is reported at the marker.
 function markers(s, ln) {
-    if (s ~ /^[ \t]*#start[ \t]/) { marked = ln; marked_reported = 0 }
+    if (s ~ /^[ \t]*#start([ \t]|$)/) { marked = ln; marked_reported = 0 }
     else if (s ~ /^[ \t]*#end[ \t]/) marked = 0
 }
 

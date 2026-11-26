@@ -188,8 +188,7 @@ ku_cmd_cleanup() {
         ku_log info "dry run: nothing was changed"
         return 0
     fi
-    ku_ask "Run the cleanup as planned? Purged packages cannot be rolled back." ||
-        ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
+    ku_confirm "Run the cleanup as planned? Purged packages cannot be rolled back."
     _ku_cl_recheck
     # From here on the run changes the system, and the exit handler syncs whatever ends it.
     ku_cleanup_add _ku_cl_interrupted
@@ -815,7 +814,7 @@ _ku_cl_simulate() {
 # install or configure none. Returns 1 otherwise, with KU_CL_WHY saying how it differs: the
 # simulation failed, or names packages to install or configure, more to remove, or fewer.
 _ku_cl_exact_set() {
-    local name status=0
+    local name key status=0
     local -a extra=() missing=()
     local -A planned=() simulated=()
     KU_CL_WHY=""
@@ -825,15 +824,19 @@ _ku_cl_exact_set() {
         KU_CL_WHY="apt-get cannot simulate the purge (status $status)"
         return 1
     fi
+    # apt names a package of the native architecture without it, and dpkg may name it with.
     for name in "${KU_CL_SET[@]}"; do
-        planned[$name]=1
+        _ku_cl_bare "$name" key
+        planned[$key]=1
     done
     for name in "${KU_CL_SIM[@]}"; do
-        simulated[$name]=1
-        [[ -n ${planned[$name]+set} ]] || extra+=("$name")
+        _ku_cl_bare "$name" key
+        simulated[$key]=1
+        [[ -n ${planned[$key]+set} ]] || extra+=("$name")
     done
     for name in "${KU_CL_SET[@]}"; do
-        [[ -n ${simulated[$name]+set} ]] || missing+=("$name")
+        _ku_cl_bare "$name" key
+        [[ -n ${simulated[$key]+set} ]] || missing+=("$name")
     done
     if (( ${#KU_CL_SIM_OTHER[@]} )); then
         KU_CL_WHY="apt would also install or configure $(ku_join "${KU_CL_SIM_OTHER[@]}")"

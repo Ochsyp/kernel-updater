@@ -176,7 +176,9 @@ _ki_install() {
             conflicts+=("$dest is no regular file")
         else
             cur=$(_ki_hash "$target")
-            if [[ $cur == "$new" && $(stat -c %a -- "$target") == "${KI_MODE[i]}" ]]; then
+            # The owner counts too: _ki_put leaves each file to the user that installs.
+            if [[ $cur == "$new" && $(stat -c '%u %a' -- "$target") == "$EUID ${KI_MODE[i]}" ]]
+            then
                 action[i]=keep
             elif [[ $cur == "$new" ]] || _ki_listed "$dest" "$cur"; then
                 action[i]=replace
@@ -205,6 +207,7 @@ _ki_install() {
         done
         ku_die "$KU_EX_REFUSED" "move those files away, then run install.sh again; nothing was changed"
     fi
+    _ki_check_dirs
     file=$(ku_path "$KI_MANIFEST")
     if (( ! KU_DRY_RUN )) && [[ ! -f $file || $(< "$file")$'\n' != "$manifest" ]]; then
         _ki_write "$file" "$both"
@@ -251,6 +254,27 @@ _ki_install() {
         ku_log warning "the hooks only warn until boot_fs_uuid is set in" \
             "/etc/kernel-updater.conf; examples/kernel-updater.conf shows how"
     fi
+}
+
+# Warn about each folder the files go in that a user other than the one who installs, root, can
+# change: as Debian's /usr/local while it is the group staff's. Such a user could swap a file
+# that root runs, from the kernel hooks and apt too. A warning, since staff counts as root's
+# equal on Debian.
+_ki_check_dirs() {
+    local dest dir info owner mode
+    local -A seen=()
+    for dest in "${KI_DEST[@]}"; do
+        dir=${dest%/*}
+        [[ -z ${seen[$dir]+set} ]] || continue
+        seen[$dir]=1
+        info=$(stat -L -c '%u %a' -- "$(ku_path "$dir")" 2> /dev/null) || continue
+        read -r owner mode <<< "$info"
+        if [[ $owner != "$EUID" || ! $mode =~ ^[0-7]+$ ]] ||
+            (( (8#$mode & 8#022) != 0 && (8#$mode & 8#1000) == 0 )); then
+            ku_log warning "$dir can be changed by a user other than root, who could then" \
+                "change what root runs from it"
+        fi
+    done
 }
 
 # Remove every file the manifest lists: the APT configuration first and the kernel hooks next,

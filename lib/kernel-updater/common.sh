@@ -27,9 +27,9 @@ else
 fi
 
 # How the lines that say what to run next name this tool: sudo and the path it was started
-# from, shell-quoted, which bin/kernel-updater sets as KU_SELF, or the installed path for code
-# started without it. Never the bare name: sudo's secure_path may lack /usr/local/bin, as on
-# Kali, and then answers "command not found".
+# from, resolved through any symlink and shell-quoted, which bin/kernel-updater sets as
+# KU_SELF, or the installed path for code started without it. Never the bare name: sudo's
+# secure_path may lack /usr/local/bin, as on Kali, and then answers "command not found".
 # shellcheck disable=SC2034 # read by the files that source this library
 printf -v KU_CMD 'sudo %q' "${KU_SELF:-/usr/local/bin/kernel-updater}"
 
@@ -68,7 +68,7 @@ ku_die() {
     exit "$code"
 }
 
-# Log MESSAGE as an error, point at --help, by the path the tool was started from and without
+# Log MESSAGE as an error, point at --help, by the resolved path of the tool and without
 # sudo, which --help needs not, and exit 64.
 ku_usage_error() {
     ku_log error "$*"
@@ -121,12 +121,9 @@ ku_ask() {
     if (( KU_ASSUME_YES )); then
         return 0
     fi
-    if [[ -z $KU_TTY_FD ]] && ! { exec {KU_TTY_FD}< "$KU_TTY"; } 2> /dev/null; then
-        KU_TTY_FD=""
-        ku_die "$KU_EX_DECLINED" "no terminal to confirm on; pass --yes to go ahead unattended"
-    fi
+    _ku_tty_open "no terminal to confirm on; pass --yes to go ahead unattended"
     printf '%s [y/N] ' "$1" >&2
-    IFS= read -r answer <&"$KU_TTY_FD" || true
+    _ku_tty_answer answer
     case ${answer,,} in
         y | yes) return 0 ;;
     esac
@@ -138,18 +135,31 @@ ku_ask() {
 # or "yes"; exits 10 on any other answer or when no terminal can be read.
 ku_ask_person() {
     local answer=""
-    if [[ -z $KU_TTY_FD ]] && ! { exec {KU_TTY_FD}< "$KU_TTY"; } 2> /dev/null; then
-        KU_TTY_FD=""
-        ku_die "$KU_EX_DECLINED" "no terminal to answer on, which --yes does not do for this" \
-            "question; nothing was changed"
-    fi
+    _ku_tty_open "no terminal to answer on, which --yes does not do for this question;" \
+        "nothing was changed"
     printf '%s [y/N] ' "$*" >&2
-    IFS= read -r answer <&"$KU_TTY_FD" || true
-    answer=${answer%$'\r'}
+    _ku_tty_answer answer
     case ${answer,,} in
         y | yes) return 0 ;;
     esac
     ku_die "$KU_EX_DECLINED" "declined; nothing was changed"
+}
+
+# Open KU_TTY for the answers, once, or exit 10 with MESSAGE, all words given, when it cannot be
+# read.
+_ku_tty_open() {
+    if [[ -z $KU_TTY_FD ]] && ! { exec {KU_TTY_FD}< "$KU_TTY"; } 2> /dev/null; then
+        KU_TTY_FD=""
+        ku_die "$KU_EX_DECLINED" "$*"
+    fi
+}
+
+# Read the next answer from the terminal into the variable NAME, without the carriage return
+# a CRLF line, as from a file of answers, ends in; empty when nothing can be read.
+_ku_tty_answer() {
+    local line=""
+    IFS= read -r line <&"$KU_TTY_FD" || true
+    printf -v "$1" '%s' "${line%$'\r'}"
 }
 
 # Ask PROMPT as ku_ask does and return 0 on "y" or "yes". Exits 10 on any other answer or when

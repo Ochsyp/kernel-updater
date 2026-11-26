@@ -51,7 +51,7 @@ KU_DK_WRITE_FAT=0 KU_DK_FAT_RW=0
 # them: in the stick's menu, and in this system's /boot/grub/grub.cfg.
 KU_DK_MENU_STICK=0 KU_DK_MENU_OWN=0
 # The private mount's directory in /run, 1 while partition 1 may be mounted on its p1/, and 1
-# once the exit trap removes that mount.
+# once the exit trap is set to remove that mount.
 KU_DK_MOUNT_DIR="" KU_DK_MOUNTED=0 KU_DK_CLEANUP=0
 # How ku_deploy_resolve has a writer deploy, direct, path or export, and why it exports when it
 # does.

@@ -160,11 +160,11 @@ _ku_check_collect() {
         out=$(ku_probe_boot_luks "$KU_CK_SOURCE") || status=$?
         KU_CK_LUKS=$status
         if (( status == 0 )); then
-            while IFS=$'\t' read -r name value relative; do
+            while IFS=$'\t' read -r name value kdf; do
                 case $name in
                     version) KU_CK_LUKS_VERSION=$value ;;
                     uuid) KU_CK_LUKS_UUID=$value ;;
-                    keyslot) KU_CK_LUKS_KDFS+=("$relative") ;;
+                    keyslot) KU_CK_LUKS_KDFS+=("$kdf") ;;
                 esac
             done <<< "$out"
         fi
@@ -644,7 +644,7 @@ _ku_check_boot_ext() {
         return 0
     fi
     # The scale of KU_CK_EXT_INCOMPAT: 2.06 is 206.
-    level=$(( ${floor%%.*} * 100 + 10#${floor#*.} ))
+    level=$(ku_grub_level "$floor")
     while IFS= read -r feature; do
         if [[ $feature == FEATURE_I* ]]; then
             since=0
@@ -774,10 +774,7 @@ _ku_check_partition() {
     _ku_check_kali_cfg
     _ku_check_kali_menu
     _ku_check_boot_menu
-    if ! ku_p1_close; then
-        ku_log warning "the read-only mount of partition 1 stays on $KU_DK_MOUNT_DIR/p1:" \
-            "unmount it and remove $KU_DK_MOUNT_DIR by hand"
-    fi
+    _ku_baseline_close
 }
 
 # p1-identity: partition 1, found through the disk that holds /boot, must be the FAT or NTFS
@@ -831,7 +828,7 @@ _ku_check_grub_version() {
     level=$(ku_grub_level "$version")
     # The highest floor grub_floor takes that the stick's GRUB reaches.
     fit=$(ku_grub_floor_for "$version")
-    if (( level < 10#${floor/./} )); then
+    if (( level < $(ku_grub_level "$floor") )); then
         _ku_check_add fail grub-version "the stick's GRUB $version is older than grub_floor" \
             "$floor, so lint and check trust features it lacks:" \
             "${fit:+set grub_floor = $fit or }update the stick's GRUB"
