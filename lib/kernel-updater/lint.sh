@@ -22,10 +22,12 @@ Usage: kernel-updater lint [--floor VERSION] [--grub-dir DIR]... [--strict] [--p
 
 Checks GRUB config files for errors GRUB reports only at boot: syntax errors (through
 grub-script-check from grub-common, when it is installed), unknown commands and modules,
-malformed or misused LUKS and filesystem UUIDs, kernel parameters that do nothing, and
-hard-coded drives. Findings name the kind of identifier, never its value.
+malformed or misused LUKS and filesystem UUIDs, kernel parameters that do nothing,
+hard-coded drives, and encrypted entries between MultiBootUSB's #start and #end markers.
+Findings name the kind of identifier, never its value.
 
-  --floor VERSION  oldest GRUB the files must run on: 2.02 (the default), 2.06, 2.12 or 2.14
+  --floor VERSION  oldest GRUB the files must run on: 2.02, 2.06, 2.12 or 2.14; grub_floor,
+                   2.02 unless set, by default
   --grub-dir DIR   take command and module names from DIR/command.lst and DIR/moddep.lst
                    instead of GRUB 2.02's; repeat it for each platform, for example the
                    stick's multibootusb/grub/i386-pc and multibootusb/grub/x86_64-efi
@@ -34,7 +36,7 @@ hard-coded drives. Findings name the kind of identifier, never its value.
 
 Unknown names are errors with GRUB 2.02's lists or --grub-dir, and warnings with a newer
 --floor and no --grub-dir. Exits 0 when no file has an error, 2 when one has, 64 on a usage
-error and 66 when a FILE or a list cannot be read.
+error, 66 when a FILE or a list cannot be read and 78 on a bad configuration.
 EOF
 }
 

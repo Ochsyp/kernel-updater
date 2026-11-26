@@ -11,7 +11,7 @@ release, such as `uname -r` prints, and where it shows `PACKAGE`, a package name
 Unlock and mount `/boot` with its passphrase, as for any kernel update. The passphrase stays the
 only way into `/boot`: nothing in this runbook adds a key file for it or unlocks it
 automatically. While `/boot` is not mounted, the hooks refuse kernel installs and removals, and
-`migrate` and `cleanup` exit 66.
+`cleanup` and the detect, system and menu stages of `migrate` exit 66.
 
 ## Routine use
 
@@ -100,15 +100,15 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
   [When a new kernel fails](#when-a-new-kernel-fails); `cleanup` refuses while the kernel is
   half-configured. When the message says that the running kernel is not installed, boot one
   that is.
-- **"... after dpkg began to change its database"**, with exit 4 when apt-get failed, or 130
-  or 129 when Ctrl-C or a closed terminal cut the purge short. Run `sudo dpkg --configure -a`,
+- **"... after dpkg began to change its database"**, with exit 4 when apt-get failed, or 130, 129 or
+  143 when Ctrl-C, a closed terminal or a kill cut the purge short. Run `sudo dpkg --configure -a`,
   then `sudo /usr/local/bin/kernel-updater check`, then `cleanup` again, which plans anew from what
   is left. When a purge cut short says that nothing was purged instead, only run `cleanup` again.
 - **Exit 4 after "the purge ran, but the check of the links and kernels after it fails".** Run
   `sudo /usr/local/bin/kernel-updater check` and settle what fails before the next reboot.
-- **Exit 75.** Another kernel-updater run, apt or dpkg is running, and the message names its PID
-  and command; or the system changed while the question waited. Wait until the other run is
-  done.
+- **Exit 75.** Another kernel-updater run, apt or dpkg is running, and for apt and dpkg the message
+  names the PID and command; or the system changed while the question waited. Wait until the other
+  run is done.
 - **Exit 66 or 78.** `/boot` is not mounted, or it is not the one the configuration names:
   unlock and mount the stick's `/boot`. A 78 that names a key or a line of
   `/etc/kernel-updater.conf` means that the file needs a fix.
@@ -250,7 +250,7 @@ set default="kali>kali-default"
 - GRUB's `fallback` only applies to an automatic boot, and only to failures inside GRUB, not to
   a kernel that fails once it runs.
 - MultiBootUSB may rewrite `grub.cfg` when it adds an ISO, which can drop the line.
-- After an edit, run `kernel-updater lint` on the file, or on a copy of it, then
+- After an edit, run `/usr/local/bin/kernel-updater lint` on the file, or on a copy of it, then
   `sudo /usr/local/bin/kernel-updater baseline`, which shows that `grub.cfg` changed and records it
   once you confirm; until then check's `tripwire` item fails.
 - To undo it, remove the line, then lint the file and record the baseline again.

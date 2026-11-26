@@ -243,8 +243,9 @@ setup() {
     run ku_config_load "$REPO_DIR/examples/kernel-updater.conf"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    KU_CONF[grub_floor]=2.14
+    # It sets no key, so that migrate's detect stage fills grub_floor from the stick's GRUB.
     ku_config_load "$REPO_DIR/examples/kernel-updater.conf"
+    [ "${#KU_CONF_SET[@]}" -eq 0 ]
     [ "${KU_CONF[grub_floor]}" = 2.02 ]
 }
 

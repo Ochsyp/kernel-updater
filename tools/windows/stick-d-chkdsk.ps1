@@ -1,7 +1,8 @@
-# Step D: after the VM is shut down and the stick plugged in again, run chkdsk on BOOT
-# read-only, without /f, as administrator, which Windows asks you to allow, and print its
-# result. Changes nothing. Exits 1, saying why, when BOOT is not there or chkdsk reports
-# problems.
+# Step D: after the VM is shut down and BOOT is back in Windows, run chkdsk on BOOT read-only,
+# without /f, as administrator, and print its result. Changes nothing. Started without
+# administrator rights, it starts itself again as administrator, which Windows asks you to
+# allow, in a window of its own that shows the result and its exit status; the first one then
+# exits 0. Exits 1, saying why, when BOOT is not there or chkdsk reports problems.
 param([switch]$Window)
 
 . (Join-Path $PSScriptRoot 'stick.ps1')

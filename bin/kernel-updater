@@ -69,7 +69,7 @@ Commands:
 Options:
   -c, --config FILE  read FILE instead of /etc/kernel-updater.conf
   -n, --dry-run      print what would change, change nothing
-  -y, --yes          answer yes to every confirmation
+  -y, --yes          answer yes to every question but the one migrate --write-fat asks
   -v, --verbose      also print debug messages
   -q, --quiet        print only warnings and errors
       --porcelain    print results as tab-separated fields
