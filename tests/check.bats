@@ -904,6 +904,20 @@ others_ok() {
     expect_item kali-cfg skip "multibootusb/grub/kali.cfg does not exist yet"
 }
 
+@test "kali-cfg warns about the LUKS UUID given to search --fs-uuid unless /boot's UUIDs match" {
+    local b01=5ca1ab1e-0000-4000-8000-000000000b01
+    printf '%s\n' 'cryptomount: cryptodisk' 'search: search' >> "$GRUB/i386-pc/command.lst"
+    write_kali_cfg "cryptomount -u ${b01//-/}" "search --no-floppy --fs-uuid --set=root $b01"
+    # boot_luks_uuid names another container: the search can never match.
+    run_check
+    expect_item kali-cfg warn "multibootusb/grub/kali.cfg has 1 warning(s) (fs-uuid-is-luks)"
+    # /boot's filesystem has its container's UUID, as on some sticks: nothing to warn about.
+    sed -i "s/^boot_luks_uuid = .*/boot_luks_uuid = $b01/" "$ROOT/etc/kernel-updater.conf"
+    run_check
+    expect_item kali-cfg ok \
+        "multibootusb/grub/kali.cfg passes lint with the stick's command and module lists"
+}
+
 @test "kali-menu skips before the migration, warns about legacy entries and fails half-done" {
     # Each change of grub.cfg or kali.cfg trips the tripwire too, so only the item is looked at.
     run_check

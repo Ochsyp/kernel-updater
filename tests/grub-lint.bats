@@ -59,6 +59,33 @@ setup() {
     [[ "$output" == *cryptouuid-dashes* ]]
 }
 
+@test "fs-uuid-is-luks stays quiet for the UUID the config gives both /boot and its container" {
+    local b01=5ca1ab1e-0000-4000-8000-000000000b01 b09=5ca1ab1e-0000-4000-8000-000000000b09
+    {
+        printf 'menuentry "%s" {\n\tcryptomount -u %s\n' same "${b01//-/}"
+        printf '\tsearch --no-floppy --fs-uuid --set=root %s\n}\n' "$b01"
+        printf 'menuentry "%s" {\n\tcryptomount -u %s\n' other "${b09//-/}"
+        printf '\tsearch --no-floppy --fs-uuid --set=root %s\n}\n' "$b09"
+    } > "$BATS_TEST_TMPDIR/s.cfg"
+    # Without the config, both entries pass the container's UUID to search --fs-uuid.
+    run_ku lint --porcelain "$BATS_TEST_TMPDIR/s.cfg"
+    [ "$status" -eq 0 ]
+    [ "$(cut -f 2,4 <<< "$output")" = "$(printf '3\tfs-uuid-is-luks\n7\tfs-uuid-is-luks')" ]
+    [[ "$output" == *"the LUKS container's UUID, which matches only when the filesystem inside"* ]]
+    [[ "$output" == *"has the same UUID; set boot_fs_uuid and boot_luks_uuid if it has" ]]
+    # boot_fs_uuid and boot_luks_uuid name the same UUID: only the other entry is reported.
+    printf 'boot_fs_uuid = %s\nboot_luks_uuid = %s\n' "$b01" "${b01^^}" > "$BATS_TEST_TMPDIR/k.conf"
+    run_ku -c "$BATS_TEST_TMPDIR/k.conf" lint --porcelain "$BATS_TEST_TMPDIR/s.cfg"
+    [ "$status" -eq 0 ]
+    [ "$(cut -f 2,4 <<< "$output")" = "$(printf '7\tfs-uuid-is-luks')" ]
+    # Different UUIDs in the config change nothing.
+    printf 'boot_fs_uuid = %s\nboot_luks_uuid = %s\n' "$b01" 5ca1ab1e-0000-4000-8000-000000000c01 \
+        > "$BATS_TEST_TMPDIR/k.conf"
+    run_ku -c "$BATS_TEST_TMPDIR/k.conf" lint --porcelain "$BATS_TEST_TMPDIR/s.cfg"
+    [ "$(grep -c fs-uuid-is-luks <<< "$output")" -eq 2 ]
+    [[ "$output$stderr" != *5ca1ab1e* ]]
+}
+
 @test "Warnings alone exit 0, and 2 with --strict" {
     printf 'menuentry "x" {\n\tlinux /vmlinuz noswap\n}\n' > "$BATS_TEST_TMPDIR/w.cfg"
     run_ku lint "$BATS_TEST_TMPDIR/w.cfg"

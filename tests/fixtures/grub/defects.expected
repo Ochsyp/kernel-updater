@@ -5,7 +5,7 @@
 22	error	cryptomount-uuid	cryptomount -u is given a UUID with dashes, which GRUB older than 2.12 never matches
 23	error	cryptouuid-dashes	cryptouuid/ device name has dashes, which GRUB older than 2.12 never matches
 24	warning	cryptouuid-dashes	cryptouuid/ device name has dashes, which GRUB older than 2.12 never matches
-24	warning	fs-uuid-is-luks	search --fs-uuid is given the LUKS container's UUID instead of the filesystem's inside it, so it never matches
+24	warning	fs-uuid-is-luks	search --fs-uuid is given the LUKS container's UUID, which matches only when the filesystem inside has the same UUID; set boot_fs_uuid and boot_luks_uuid if it has
 25	warning	arch-param	cryptdevice= is mkinitcpio (Arch) syntax; Debian's initramfs ignores it and unlocks from the crypttab in the initrd
 25	warning	live-boot-param	noswap does nothing on an installed system; systemd.swap=0 keeps swap off
 25	warning	overlayroot-option	overlayroot ignores the unknown option 'resurce'; tmpfs takes recurse and swap
