@@ -19,7 +19,8 @@
 # marked "overlayroot-rw:"); at other times udev's init-bottom has moved /dev under the root.
 #
 # Install as root, then rebuild the initrd of the kernel /boot/vmlinuz points at, and of no
-# other: the previous kernel's is the fallback (docs/migration.md, "Live and forensic mode"):
+# other: the previous kernel's is the fallback, which needs the script only when
+# previous_variants names live or forensic (docs/migration.md, "Live and forensic mode"):
 #   install -m 0755 overlayroot-rw /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
 #   v=$(readlink /boot/vmlinuz); update-initramfs -u -k "${v##*vmlinuz-}"
 # The tests set OVERLAYROOT_RW_MOUNTS, OVERLAYROOT_RW_LOG and OVERLAYROOT_RW_KMSG in place of

@@ -363,8 +363,11 @@ v=$(readlink /boot/vmlinuz); sudo update-initramfs -u -k "${v##*vmlinuz-}"
 
 Each rebuild here takes the newest kernel's initrd alone, as the runbook's
 [Rebuild one kernel's initrd](runbook.md#rebuild-one-kernels-initrd) does. Leave the previous
-kernel's alone: it is the fallback, and its entries do not use overlayroot. The next kernel
-update builds the new kernel's initrd with the script in it.
+kernel's alone: it is the fallback, and with the default `previous_variants` its entries do not
+use overlayroot. Only when `previous_variants` names `live` or `forensic` does it need the same
+change, and then only once the newest kernel booted with it: the same line with
+`/boot/vmlinuz.old` in place of `/boot/vmlinuz`. The next kernel update builds the new kernel's
+initrd with the script in it.
 
 It worked when a boot of the forensic entry logs in, `findmnt -no FSTYPE,OPTIONS /` prints
 `overlay rw,...`, and `/run/overlayroot-rw.log` has the line `the overlay is mounted
@@ -386,8 +389,9 @@ sudo /usr/local/bin/kernel-updater check --porcelain | grep '^initrd'
 ```
 
 It is whole when the line reads `initrd`, `ok` and `2 initrd(s) hold their modules, cryptsetup,
-the cryptroot configuration and key files`, tab-separated, the count being that of the installed
-kernels; a `fail` names the kernel and what its initrd lacks. For full proof, boot it once: in
+the cryptroot configuration`, tab-separated, followed by `and key files` when `/etc/crypttab`
+names one; the count is that of the installed kernels. A `fail` names the kernel and what its
+initrd lacks. For full proof, boot it once: in
 the stick's menu, open the Kali submenu and choose "Kali GNU/Linux (previous kernel)", unlock
 `/boot` and log in; `uname -r` then prints the older version. `sudo reboot` and "Kali GNU/Linux"
 bring the newest kernel back. Should it not boot, rebuild that kernel's initrd as the runbook's
