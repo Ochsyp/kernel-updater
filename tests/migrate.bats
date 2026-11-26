@@ -1135,6 +1135,62 @@ read it; nothing was changed"* ]]
     private_output
 }
 
+@test "A write given --output-dir still removes the stale export in the configured output_dir" {
+    local out="$ROOT/root/kernel-updater/out"
+    system_done
+    run_ku migrate --stage menu --deploy export --yes
+    [ "$status" -eq 0 ]
+    cp "$out/kali.cfg" "$out/grub.cfg" "$GRUB/"
+    # check's deployed item reads the configured output_dir, whatever --output-dir says.
+    run_ku migrate --stage finalize --output-dir /root/elsewhere --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"plan: output_dir holds an export from an earlier run that lists other"* ]]
+    [[ "$stderr" == *"info: removed the export in output_dir, which this write made stale"* ]]
+    [ -z "$(find "$out" -mindepth 1)" ]
+    private_output
+}
+
+@test "An export's output_dir is checked before the backup is sealed, and in a dry run" {
+    system_done
+    mkdir -p "$ROOT/root/kernel-updater/out"
+    # output_dir is open to group and others.
+    mkstub stat <<'EOF'
+case " $* " in
+    *" %u %a "*) echo "0 755" ;;
+    *) echo 600 ;;
+esac
+EOF
+    run_ku migrate --stage menu --deploy export -n
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"must be owned by root and closed to group and others"* ]]
+    run_ku migrate --stage menu --deploy export --yes
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"must be owned by root and closed to group and others"* ]]
+    # No sealed backup is left that a rollback would undo, as the run changed nothing.
+    [ -z "$(backups)" ]
+    [ -z "$(ls -A "$ROOT/root/kernel-updater/out")" ]
+    cmp "$BATS_TEST_TMPDIR/grub.before" "$GRUB/grub.cfg"
+    [ ! -e "$GRUB/kali.cfg" ]
+}
+
+@test "A backup's MANIFEST is synced under another name before it takes its own" {
+    export SEEN="$BATS_TEST_TMPDIR/sync.seen" BACKUP_ROOT="$ROOT$BACKUPS"
+    # Each sync notes which MANIFEST names the backups hold at that moment.
+    mkstub sync <<'EOF'
+for f in "$BACKUP_ROOT"/*/MANIFEST*; do
+    [[ ! -e $f ]] || printf '%s\n' "${f##*/}" >> "$SEEN"
+done
+EOF
+    detected
+    run_ku migrate --stage system --yes
+    [ "$status" -eq 0 ]
+    # A power loss before the rename leaves no MANIFEST, which --rollback passes over, and never
+    # a truncated one, which would stop every --rollback.
+    [ "$(grep -m 1 -x -E 'MANIFEST(\.new)?' "$SEEN")" = MANIFEST.new ]
+    [ -f "$ROOT$BACKUPS/20261112T090001Z/MANIFEST" ]
+    [ ! -e "$ROOT$BACKUPS/20261112T090001Z/MANIFEST.new" ]
+}
+
 @test "A write keeps the baseline entry of a file changed since, as the plan and a warning say" {
     local base="$ROOT/var/lib/kernel-updater/baseline" grub=multibootusb/grub/grub.cfg a b c
     local kali=multibootusb/grub/kali.cfg mod=multibootusb/grub/i386-pc/normal.mod
