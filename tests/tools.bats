@@ -103,7 +103,7 @@ run_on_stick() {
     # Without LOCALAPPDATA, A refuses and copies nothing.
     LOCALAPPDATA="" run_on_stick stick-a-copy-menu "$stick"
     [ "$status" -eq 1 ]
-    [[ "$output" == "LOCALAPPDATA is not set, so the menu has no folder to go to."* ]]
+    [[ "$output" == "LOCALAPPDATA is not set, so there is no folder for the copies of the menu."* ]]
     [[ "$output" == *"Nothing was changed." ]]
     [ ! -e "$LOCALAPPDATA/kernel-updater" ]
     # A makes the folder when it is missing.

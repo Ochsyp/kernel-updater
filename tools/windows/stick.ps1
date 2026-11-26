@@ -56,6 +56,17 @@ function Get-BootDrive {
     return $drive
 }
 
+# Return the folder where step A keeps its copies of the menu and E looks for them,
+# LOCALAPPDATA\kernel-updater\stick-grub, whether it exists or not, or stop when LOCALAPPDATA
+# is not set. Never the Desktop: nothing of these steps belongs there.
+function Get-CopyFolder {
+    if (-not $env:LOCALAPPDATA) {
+        Stop-Step ('LOCALAPPDATA is not set, so there is no folder for the copies of the menu. ' +
+            'Nothing was changed.')
+    }
+    return Join-Path (Join-Path $env:LOCALAPPDATA 'kernel-updater') 'stick-grub'
+}
+
 # Return $true when this PowerShell runs as administrator.
 function Test-Admin {
     $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
