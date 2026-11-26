@@ -479,5 +479,15 @@ with the owner's original script.
   - A backup's `MANIFEST` is written as `MANIFEST.new`, flushed, then renamed, so a power loss
     never leaves a truncated one that would stop every `--rollback`.
   - Comments that said nothing writes a FAT partition 1 now name `--write-fat`.
+- cleanup and check close three small gaps.
+  - cleanup checks apt's and dpkg's locks once more right before it removes or moves a module
+    tree. The keep tests before that take seconds, and a kernel install that started meanwhile
+    could otherwise lose a tree it was unpacking.
+  - A cleanup run that asks writes a quarantine entry's `seen` only after the yes, so a
+    declined run changes nothing, as it says.
+  - A quarantine entry that cannot be named, as when `date` prints no time, exits 3 while
+    nothing else changed, as the usage says, instead of 4.
+  - check's `boot-links` no longer counts a link as reaching a kernel or initrd in `/boot`
+    when that file is itself a symlink, which GRUB cannot follow off the `/boot` filesystem.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

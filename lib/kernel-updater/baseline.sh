@@ -131,7 +131,8 @@ ku_cmd_baseline() {
 # baseline --show: print whether the disk and partition 1 match the configuration, the version
 # of the stick's GRUB and how its boot code differs from the stored baseline. Changes nothing
 # but a read-only mount of partition 1, which it removes, and says on stderr why it cannot
-# read a part. A partition 1 that the configuration does not name is not read at all.
+# read a part. A partition 1 that differs from what the configuration names is not read at all;
+# one found from /boot while the configuration names none is.
 _ku_baseline_show() {
     local disk part reach=1 status=0 current="" stored file
     if [[ -n $KU_P1_DIR ]]; then

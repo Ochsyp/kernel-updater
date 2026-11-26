@@ -379,8 +379,9 @@ name).
   `sudo mv -T ENTRY/tree PATH`, `PATH` being the path `origin` names, moves a tree back while
   nothing is there; one that no package owns then goes into the quarantine again on the next
   run. [docs/runbook.md](docs/runbook.md) has the steps.
-- **Expiry.** The first run that finds an entry, unless it is a dry run, writes its own time
-  into a `seen` file there. Once more than `quarantine_days` whole days, 30 by default, have
+- **Expiry.** The first run that finds an entry and goes ahead, after a yes or with nothing to
+  ask about, writes its own time into a `seen` file there; a dry run or a declined run writes
+  none. Once more than `quarantine_days` whole days, 30 by default, have
   passed since the newer of the entry's stamp and its `seen`, a run deletes it after the
   question: its tree with `rm -r --one-file-system`, then `origin` and `seen`, then the entry
   with `rmdir`, skipping a part it lacks. So no entry expires in the run that made it or in the

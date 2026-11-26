@@ -215,6 +215,19 @@ EOF
     [[ "${lines[0]}" == $'vmlinuz\t-\t0\t0' && "${lines[3]}" == $'initrd.img.old\t-\t0\t0' ]]
 }
 
+@test "A /boot link to a kernel that is itself a symlink does not reach a file in /boot" {
+    use_symlinks || skip "this platform cannot make symlinks"
+    local boot="$KU_ROOT/boot"
+    # GRUB follows the links on the /boot filesystem only, so a kernel that is a symlink out of
+    # /boot is no file GRUB can read, however -f sees it.
+    printf 'kernel\n' > "$KU_ROOT/vmlinuz-9.0.3+kali-amd64"
+    ln -s ../vmlinuz-9.0.3+kali-amd64 "$boot/vmlinuz-9.0.3+kali-amd64"
+    ln -s vmlinuz-9.0.3+kali-amd64 "$boot/vmlinuz"
+    run ku_probe_boot_links
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = $'vmlinuz\tvmlinuz-9.0.3+kali-amd64\t1\t0' ]
+}
+
 @test "crypttab and fstab entries skip comments and blank lines, and a missing key file is -" {
     local by_id=/dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0-part4
     {

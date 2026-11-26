@@ -180,7 +180,7 @@ ku_probe_boot_links() {
                 file=$target
             fi
             # GRUB follows the links on the /boot filesystem itself, so the file must be there.
-            if [[ $file != */* && -f $boot/$file && -s $boot/$file ]]; then
+            if [[ $file != */* && ! -L $boot/$file && -f $boot/$file && -s $boot/$file ]]; then
                 resolves=1
             fi
         fi
