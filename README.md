@@ -702,8 +702,8 @@ bats tests/
 - `tests/contrib.bats` runs `contrib/initramfs/overlayroot-rw` with stub `mount`, `umount` and
   `mkdir` and a mounts file in place of `/proc/mounts`: it leaves a root that is no overlay or
   is read-write alone, remounts a read-only overlay's layers read-write while it moves only the
-  top mounts, mounts `/dev` anew when it will not move, and leaves the root read-only when a
-  step fails.
+  top mounts, mounts `/dev` anew when it will not move, leaves the root read-only when a step
+  fails, and goes on, saying so, when it cannot edit the fstab or mount `/dev` anew.
 - `tests/tools.bats` runs the Windows scripts in `tools/windows`, the steps around
   `migrate --write-fat` that docs/migration.md lists, under `pwsh` with a stub `Get-Volume`:
   each refuses, changing nothing, when BOOT is not there, is there twice, is not FAT or holds

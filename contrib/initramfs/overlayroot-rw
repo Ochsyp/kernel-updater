@@ -8,12 +8,15 @@
 # mounts the same layers again read-write, and sets the "/" line of overlayroot's rewritten
 # fstab, when it has one, from ro to rw. The disk below stays read-only; only the RAM layer
 # takes writes. Otherwise, as in a normal boot or when overlayroot built no overlay, it does
-# nothing, and on any failure it leaves the root read-only, as it found it.
+# nothing. A step that fails before the read-only overlay is unmounted leaves the root as it
+# found it, and a failed read-write mount mounts the layers read-only again. Only when that
+# fails too does the root stay empty, and the boot stops there: the normal entry still boots.
 #
 # It moves only the top mounts under the root out and back, each with what is mounted inside it
 # (/root/dev takes /root/dev/pts along), and when /dev will not move, it mounts /dev and
-# /dev/pts anew in the new root. Each step goes to the kernel log (dmesg, marked
-# "overlayroot-rw:") and to /run/overlayroot-rw.log, which the booted system keeps.
+# /dev/pts anew in the new root. Each step goes to /run/overlayroot-rw.log, which the booted
+# system keeps. The steps taken while /root/dev is moved out also go to the kernel log (dmesg,
+# marked "overlayroot-rw:"); at other times udev's init-bottom has moved /dev under the root.
 #
 # Install as root, then rebuild the initrds (docs/migration.md, "Live and forensic mode"):
 #   install -m 0755 overlayroot-rw /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw

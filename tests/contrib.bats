@@ -19,11 +19,12 @@ setup() {
     R="$BATS_TEST_TMPDIR/root"
     mkdir -p "$R/etc"
     printf 'overlayroot\t/\toverlay\tro,%s 0 0\n' "$LAYERS" > "$R/etc/fstab"
-    # mount fails a move from MOUNT_FAIL_MOVE, and the read-write overlay with MOUNT_FAIL_RW=1;
-    # umount exits UMOUNT_STATUS, and UMOUNT_L_STATUS with -l.
+    # mount fails a move from MOUNT_FAIL_MOVE, the read-write overlay with MOUNT_FAIL_RW=1, and
+    # devtmpfs with MOUNT_FAIL_DEVTMPFS=1; umount exits UMOUNT_STATUS, and UMOUNT_L_STATUS with -l.
     mkstub mount <<'EOF'
 if [[ $1 == --move && $2 == "${MOUNT_FAIL_MOVE:-}" ]]; then exit 32; fi
 if [[ ${MOUNT_FAIL_RW:-} == 1 && $3 == -o && $4 == rw,* ]]; then exit 32; fi
+if [[ ${MOUNT_FAIL_DEVTMPFS:-} == 1 && $1 == -t && $2 == devtmpfs ]]; then exit 32; fi
 exit 0
 EOF
     mkstub umount <<'EOF'
@@ -137,6 +138,28 @@ calls() {
     grep -q -x 'the read-write overlay failed: mounting it read-only again' \
         "$BATS_TEST_TMPDIR/log"
     [ "$(cut -f 4 "$R/etc/fstab" | cut -d , -f 1)" = ro ]
+}
+
+@test "overlayroot-rw goes on when it cannot edit the fstab or mount /dev anew" {
+    mounts "ro,relatime,$LAYERS"
+    # sed -i fails: the read-write root stays, and the log says why the fstab is unchanged.
+    mkstub sed <<'EOF'
+[[ $1 == -i ]] && exit 4
+exit 0
+EOF
+    run_script
+    [ "$status" -eq 0 ]
+    calls | grep -q -x "mount -t overlay -o rw,$LAYERS overlayroot $R"
+    grep -q -x "cannot edit $R/etc/fstab" "$BATS_TEST_TMPDIR/log"
+    [ "$(cut -f 4 "$R/etc/fstab" | cut -d , -f 1)" = ro ]
+    # /dev will not move and devtmpfs will not mount: the script says so and still exits 0.
+    rm "$STUB_BIN/sed"
+    export MOUNT_FAIL_MOVE="$R/dev" MOUNT_FAIL_DEVTMPFS=1
+    : > "$BATS_TEST_TMPDIR/log"
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -x 'cannot mount /dev anew' "$BATS_TEST_TMPDIR/log"
+    [ "$(grep -c -x 'mounted /dev and /dev/pts anew' "$BATS_TEST_TMPDIR/log")" -eq 0 ]
 }
 
 @test "overlayroot-rw says so when overlayroot's fstab has no line for /" {
