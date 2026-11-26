@@ -776,11 +776,11 @@ EOF
     mkdir -p "$OUT"
     run_ku_lib "$code" "$BATS_TEST_TMPDIR/kali.cfg"
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"a user other than root can change the path to output_dir $OUT"* ]]
+    [[ "$stderr" == *"the path to output_dir $OUT holds a symlink, or a directory a user other"* ]]
     [ -z "$(ls -A "$OUT")" ]
     run_ku_lib "KU_DRY_RUN=1; $code" "$BATS_TEST_TMPDIR/kali.cfg"
     [ "$status" -eq 78 ]
-    [[ "$stderr" == *"a user other than root can change the path to output_dir $OUT"* ]]
+    [[ "$stderr" == *"the path to output_dir $OUT holds a symlink, or a directory a user other"* ]]
     # A dry run makes no output_dir: it checks the path to where it would make one.
     rmdir "$OUT"
     run_ku_lib "KU_DRY_RUN=1; $code" "$BATS_TEST_TMPDIR/kali.cfg"

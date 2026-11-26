@@ -468,10 +468,11 @@ with the owner's original script.
   an earlier `-k all` rebuilt: check's `initrd` item, and one boot of the previous kernel's entry.
 - Exports and migrate's backups are safer.
   - An export checks every directory on the path to `output_dir`, not only `output_dir`
-    itself, and refuses (78) when a user other than root could change it. That check, and
-    making `output_dir`, now come before migrate seals a stage's backup, and in a dry run too.
-    Before, a bad `output_dir` stopped only the real run, after the backup was sealed, leaving
-    one that `--rollback` would undo although the run changed nothing.
+    itself, and refuses (78) when it holds a symlink or a user other than root could change
+    it. That check, and making `output_dir`, now come before migrate seals a stage's backup,
+    and in a dry run too. Before, a bad `output_dir` stopped only the real run, after the
+    backup was sealed, leaving one that `--rollback` would undo although the run changed
+    nothing.
   - An export that fails partway removes the old `DEPLOY.txt` along with the old `SHA256SUMS`.
   - A write given `--output-dir` also removes a stale export from the `output_dir` the
     configuration names, which check's `deployed` item reads.

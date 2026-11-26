@@ -666,8 +666,9 @@ ku_export_dir() {
             up=${up%/*}
         done
         if ! ku_p1_root_only "${up:-/}"; then
-            ku_die "$KU_EX_CONFIG" "a user other than root can change the path to output_dir" \
-                "$dir, so what root writes there could land elsewhere; nothing was exported"
+            ku_die "$KU_EX_CONFIG" "the path to output_dir $dir holds a symlink, or a" \
+                "directory a user other than root can change, so what root writes there could" \
+                "land elsewhere: name a path of root's without symlinks; nothing was exported"
         fi
     else
         if ! mkdir -p -- "${dir%/*}/" || ! (umask 077 && mkdir -- "$dir"); then
@@ -678,9 +679,9 @@ ku_export_dir() {
 }
 
 # Exit 78 unless DIR is a directory, not a symlink, owned by root and closed to group and
-# others, since what it holds goes onto the stick, and unless no user but root can change the
-# path to it (ku_p1_root_only), since one who could might swap DIR for a symlink between these
-# checks and root's writes and removals there.
+# others, since what it holds goes onto the stick, and unless the path to it holds no symlink
+# and no directory a user other than root can change (ku_p1_root_only), since such a user might
+# swap DIR for a symlink between these checks and root's writes and removals there.
 _ku_export_check_dir() {
     local info owner mode
     if [[ -L $1 || ! -d $1 ]]; then
@@ -694,8 +695,9 @@ _ku_export_check_dir() {
             "others (mode 0700); nothing was exported"
     fi
     if ! ku_p1_root_only "$1"; then
-        ku_die "$KU_EX_CONFIG" "a user other than root can change the path to output_dir $1," \
-            "so what root writes there could land elsewhere; nothing was exported"
+        ku_die "$KU_EX_CONFIG" "the path to output_dir $1 holds a symlink, or a directory a" \
+            "user other than root can change, so what root writes there could land elsewhere:" \
+            "name a path of root's without symlinks; nothing was exported"
     fi
 }
 
