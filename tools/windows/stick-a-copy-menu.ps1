@@ -1,16 +1,25 @@
-# Step A: before the VM starts, copy the stick's multibootusb\grub folder to a dated folder on
-# the Desktop, and print its path and the SHA-256 of grub.cfg on the stick and in the copy.
-# Writes nothing on the stick. Exits 1, saying why, when BOOT is not there or the copy differs.
+# Step A: before the VM starts, copy the stick's multibootusb\grub folder to a dated folder in
+# LOCALAPPDATA\kernel-updater\stick-grub, which it makes when it is missing, and print its path
+# and the SHA-256 of grub.cfg on the stick and in the copy. Writes nothing on the stick or the
+# Desktop. Exits 1, saying why, when BOOT is not there or the copy differs.
 
 . (Join-Path $PSScriptRoot 'stick.ps1')
 
 $drive = Get-BootDrive
 $source = "$drive\multibootusb\grub"
-$desktop = [Environment]::GetFolderPath('Desktop')
-if (-not $desktop -or -not (Test-Path -LiteralPath $desktop -PathType Container)) {
-    Stop-Step 'This account has no Desktop folder to copy the menu to. Nothing was changed.'
+$folder = Get-CopyFolder
+# New-Item -Force stays quiet when a file on the way has a folder's name, so the test after it
+# is what counts.
+$why = 'a file is in the way'
+try {
+    New-Item -ItemType Directory -Path $folder -Force -ErrorAction Stop | Out-Null
+} catch {
+    $why = $_.Exception.Message.TrimEnd('.')
 }
-$target = Join-Path $desktop ('stick-grub-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
+    Stop-Step ('Cannot make {0}: {1}. The stick was not changed.' -f $folder, $why)
+}
+$target = Join-Path $folder ('stick-grub-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 if (Test-Path -LiteralPath $target) {
     Stop-Step "$target exists already: run this again in a second. Nothing was changed."
 }

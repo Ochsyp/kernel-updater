@@ -173,20 +173,35 @@ from PowerShell in the checkout, for example:
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\windows\stick-a-copy-menu.ps1
 ```
 
-- `stick-a-copy-menu.ps1`: step A. It prints the copy's path and the SHA-256 of `grub.cfg` on
-  the stick and in the copy, and ends with `The copy matches the stick.`
+- `stick-a-copy-menu.ps1`: step A. It copies the menu to a dated `stick-grub-*` folder in
+  `%LOCALAPPDATA%\kernel-updater\stick-grub`, which it makes when it is missing, never to the
+  Desktop. It prints the copy's path and the SHA-256 of `grub.cfg` on the stick and in the copy,
+  and ends with `The copy matches the stick.`
 - `stick-d-chkdsk.ps1`: step D, without `/f`. It ends with `chkdsk found no problems`.
-- `stick-e-restore-menu.ps1`: E. It copies back the newest `stick-grub-*` folder on the Desktop
-  once you type `yes`, and prints both SHA-256 sums.
+- `stick-e-restore-menu.ps1`: E. It copies back the newest `stick-grub-*` folder in
+  `%LOCALAPPDATA%\kernel-updater\stick-grub` once you type `yes`, and prints both SHA-256 sums.
 
-A. In Windows, before you start the VM, keep a copy of the menu. In PowerShell:
+A. In Windows, before you start the VM, keep a copy of the menu, never on the Desktop. In
+PowerShell, first make the folder for it, which prints the folder:
 
 ```powershell
-Copy-Item -Recurse X:\multibootusb\grub "$HOME\Desktop\stick-grub-$(Get-Date -f yyyyMMdd-HHmm)"
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\kernel-updater\stick-grub"
 ```
 
-It prints nothing. It worked when `Get-ChildItem "$HOME\Desktop\stick-grub-*\grub.cfg"` lists
-a `grub.cfg` with today's time. Then close every Explorer window and program that uses BOOT.
+Then copy the menu into it, which prints nothing:
+
+```powershell
+Copy-Item -Recurse X:\multibootusb\grub `
+    "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-$(Get-Date -f yyyyMMdd-HHmm)"
+```
+
+It worked when this lists a `grub.cfg` with today's time:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-*\grub.cfg"
+```
+
+Then close every Explorer window and program that uses BOOT.
 
 B. Start the VM through the launcher. Then, in Windows, check that VMware holds BOOT:
 
@@ -247,12 +262,18 @@ What can still go wrong, and how to get the old menu back:
   of `stick-grub-<stamp>`:
 
   ```powershell
-  Copy-Item "$HOME\Desktop\stick-grub-<stamp>\*" X:\multibootusb\grub\ -Recurse -Force
+  Copy-Item "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-<stamp>\*" `
+      X:\multibootusb\grub\ -Recurse -Force
   ```
 
-  It prints nothing. It worked when `Get-FileHash X:\multibootusb\grub\grub.cfg` prints the same
-  hash as `Get-FileHash "$HOME\Desktop\stick-grub-<stamp>\grub.cfg"`, and the stick boots its
-  old menu. A `kali.cfg` the run wrote may stay beside it: the old `grub.cfg` does not read it.
+  It prints nothing. It worked when `Get-FileHash X:\multibootusb\grub\grub.cfg` prints the
+  same hash as this, and the stick boots its old menu:
+
+  ```powershell
+  Get-FileHash "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-<stamp>\grub.cfg"
+  ```
+
+  A `kali.cfg` the run wrote may stay beside it: the old `grub.cfg` does not read it.
 
 ## 9. Boot the new entries
 

@@ -1,17 +1,22 @@
-# Step E, only if needed: copy the newest stick-grub-* folder that step A left on the Desktop
-# back over BOOT's multibootusb\grub, once you typed yes, and print the SHA-256 of grub.cfg in
-# the copy and on the stick. A kali.cfg the run wrote may stay beside it, which the old grub.cfg
-# does not read. Exits 1, saying why, when BOOT or the copy is not there, or the hashes differ.
+# Step E, only if needed: copy the newest stick-grub-* folder that step A left in
+# LOCALAPPDATA\kernel-updater\stick-grub back over BOOT's multibootusb\grub, once you typed
+# yes, and print the SHA-256 of grub.cfg in the copy and on the stick. A kali.cfg the run wrote
+# may stay beside it, which the old grub.cfg does not read. Exits 1, saying why, when BOOT or
+# the copy is not there, or the hashes differ.
 
 . (Join-Path $PSScriptRoot 'stick.ps1')
 
 $drive = Get-BootDrive
-$desktop = [Environment]::GetFolderPath('Desktop')
-$copies = @(Get-ChildItem -LiteralPath $desktop -Directory -Filter 'stick-grub-*' |
-    Sort-Object -Property Name)
+$folder = Get-CopyFolder
+$copies = @()
+if (Test-Path -LiteralPath $folder -PathType Container) {
+    $copies = @(Get-ChildItem -LiteralPath $folder -Directory -Filter 'stick-grub-*' |
+        Sort-Object -Property Name)
+}
 if ($copies.Count -eq 0) {
-    Stop-Step ('No stick-grub-* folder is on the Desktop, so there is nothing to put back. ' +
-        'Nothing was changed.')
+    Stop-Step (('No stick-grub-* folder is in {0}, so there is nothing to put back. A copy ' +
+        'that an older step A left on the Desktop must be moved into that folder first. ' +
+        'Nothing was changed.') -f $folder)
 }
 $from = $copies[-1].FullName
 if (-not (Test-Path -LiteralPath "$from\grub.cfg" -PathType Leaf)) {
