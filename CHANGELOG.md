@@ -317,8 +317,9 @@ with the owner's original script.
   moves only the top mounts under the root and mounts `/dev` anew when that will not move; when
   a step fails it leaves the root read-only, and only when the layers mount neither read-write
   nor read-only does that boot stop. It logs each step to `/run/overlayroot-rw.log`, and the
-  steps taken while `/dev` is in place to the kernel log too. `docs/migration.md` has a section "Live and forensic mode" with its
-  install and removal. `tests/contrib.bats` covers each path with stub mount commands.
+  steps taken while `/dev` is in place to the kernel log too. `docs/migration.md` has a section
+  "Live and forensic mode" with its install and removal. `tests/contrib.bats` covers each path
+  with stub mount commands.
 
 ### Changed
 
