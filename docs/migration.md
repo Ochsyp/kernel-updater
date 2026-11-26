@@ -334,10 +334,17 @@ The package `overlayroot` must be installed and in the initrd. To check, read-on
 dpkg -l overlayroot | tail -1; sudo lsinitramfs /boot/initrd.img | grep -c overlayroot
 ```
 
-An `ii  overlayroot` line and a number above 0 mean it is there; otherwise `sudo apt install
-overlayroot`, then `sudo update-initramfs -u -k all`. The menu stage refuses `live` and
-`forensic` while the initrd lacks it. After the finalize stage the menu stage no longer
-rewrites `kali.cfg`, so add them before finalize, or roll finalize back first.
+An `ii  overlayroot` line and a number above 0 mean it is there; otherwise
+`sudo apt install overlayroot`, then rebuild the initrd of the kernel `/boot/vmlinuz` points at,
+and of no other:
+
+```bash
+v=$(readlink /boot/vmlinuz); sudo update-initramfs -u -k "${v##*vmlinuz-}"
+```
+
+The menu stage refuses `live` and `forensic` while the initrd lacks it. After the finalize stage
+the menu stage no longer rewrites `kali.cfg`, so add them before finalize, or roll finalize back
+first.
 
 On some kernels, as 7.1.5 with overlayroot 0.18, overlayroot builds its layer read-only, since
 the entries keep `ro` on the kernel line, and overlayfs refuses to make it writable later: the
@@ -351,8 +358,16 @@ checkout:
 
 ```bash
 sudo install -m 0755 contrib/initramfs/overlayroot-rw /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
-sudo update-initramfs -u -k all
+v=$(readlink /boot/vmlinuz); sudo update-initramfs -u -k "${v##*vmlinuz-}"
 ```
+
+Each rebuild here takes the newest kernel's initrd alone, as the runbook's
+[Rebuild one kernel's initrd](runbook.md#rebuild-one-kernels-initrd) does. Leave the previous
+kernel's alone: it is the fallback, and with the default `previous_variants` its entries do not
+use overlayroot. Only when `previous_variants` names `live` or `forensic` does it need the same
+change, and then only once the newest kernel booted with it: the same line with
+`/boot/vmlinuz.old` in place of `/boot/vmlinuz`. The next kernel update builds the new kernel's
+initrd with the script in it.
 
 It worked when a boot of the forensic entry logs in, `findmnt -no FSTYPE,OPTIONS /` prints
 `overlay rw,...`, and `/run/overlayroot-rw.log` has the line `the overlay is mounted
@@ -363,8 +378,24 @@ overlay at /root: nothing to do`. To take it out again:
 
 ```bash
 sudo rm /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
-sudo update-initramfs -u -k all
+v=$(readlink /boot/vmlinuz); sudo update-initramfs -u -k "${v##*vmlinuz-}"
 ```
+
+Earlier versions of this guide said `update-initramfs -u -k all` in these steps, which rebuilds
+the previous kernel's initrd too, and that one has not booted since. To check it, read-only:
+
+```bash
+sudo /usr/local/bin/kernel-updater check --porcelain | grep '^initrd'
+```
+
+It is whole when the line reads `initrd`, `ok` and `2 initrd(s) hold their modules, cryptsetup,
+the cryptroot configuration`, tab-separated, followed by `and key files` when `/etc/crypttab`
+names one; the count is that of the installed kernels. A `fail` names the kernel and what its
+initrd lacks. For full proof, boot it once: in
+the stick's menu, open the Kali submenu and choose "Kali GNU/Linux (previous kernel)", unlock
+`/boot` and log in; `uname -r` then prints the older version. `sudo reboot` and "Kali GNU/Linux"
+bring the newest kernel back. Should it not boot, rebuild that kernel's initrd as the runbook's
+[Rebuild one kernel's initrd](runbook.md#rebuild-one-kernels-initrd) says.
 
 ## Routine use afterwards
 

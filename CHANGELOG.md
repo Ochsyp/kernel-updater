@@ -461,5 +461,10 @@ with the owner's original script.
   `/usr/local/bin`, as on Kali, and a bare name then gave `command not found`. The commands in
   `README.md`, `docs/migration.md` and `docs/runbook.md` name the full path too. The hint after
   a usage error names the same path, without `sudo`: `Try '/usr/local/bin/kernel-updater --help'.`
+- The live and forensic steps in `docs/migration.md` and the header of
+  `contrib/initramfs/overlayroot-rw` rebuild the initrd of the kernel `/boot/vmlinuz` points at,
+  and of no other, as the runbook says, instead of `update-initramfs -u -k all`, which rebuilt
+  the previous kernel's fallback initrd too. The guide says how to check a fallback initrd that
+  an earlier `-k all` rebuilt: check's `initrd` item, and one boot of the previous kernel's entry.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
