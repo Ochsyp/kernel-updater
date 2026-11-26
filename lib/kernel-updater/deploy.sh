@@ -47,10 +47,10 @@ KU_DEPLOY_WINDOWS_DIR="BOOT:\\multibootusb\\grub\\"
 # endings and all. EXPECTED is the SHA-256 the plan read from the target, or - for a target
 # that must not exist yet. In this order: exit 75, nothing changed, when the target exists
 # although the plan expected none, or, re-hashed, changed since the plan read it, as a run that
-# plans anew can then succeed; exit 3 when the target or
-# a directory between ROOT and it is a symlink, or when a user other than root could change the
-# path to it (ku_p1_root_only), which KU_P1_DIR needs not pass, as it stands in for a private
-# mount; copy the target to
+# plans anew can then succeed, a symlink where none was expected included; exit 3 when the
+# target or a directory between ROOT and it is a symlink, or when a user other than root could
+# change the path to it (ku_p1_root_only), which KU_P1_DIR needs not pass, as it stands in for a
+# private mount; copy the target to
 # RELPATH.ku-<UTC stamp>.bak beside it and keep that backup and the newest others, backups_keep
 # in all; write SOURCE to a temporary file in the same directory, sync it, put it in the
 # target's place (_ku_deploy_replace, which moves the target aside first) and sync the
@@ -80,10 +80,12 @@ ku_deploy_write() {
     target=$root/$rel
     dir=${target%/*}
     name=${target##*/}
-    # a. The target must hold what the plan read: nothing, or the bytes it hashed. A symlink
-    # is left to step b, and -f never lets a device or a pipe be read. Either way a mismatch is
-    # busy rather than refused: a run that plans anew from what the target holds now can
-    # succeed, as when the system changed while a question waited.
+    # a. The target must hold what the plan read: nothing, or the bytes it hashed. Where the
+    # plan read a file, a symlink is left to step b, and -f never lets a device or a pipe be
+    # read; where it read none, anything there, a symlink too, counts as a change. Either way a
+    # mismatch is busy rather than refused: a run that plans anew from what the target holds now
+    # can succeed, as when the system changed while a question waited, and that plan then
+    # refuses a symlink when it reads the target.
     if [[ $expected == - ]]; then
         if [[ -e $target || -L $target ]]; then
             _ku_deploy_die "$KU_EX_BUSY" 1 \
@@ -583,9 +585,10 @@ ku_deploy_read() {
 # owned by root with mode 0700. First removes the files of the earlier export, as its
 # SHA256SUMS lists them, that this one does not hold, so that no stale file is left for Windows
 # to copy. Exits 78 when DIR is no directory, or is owned by another user or open to group or
-# others; 66 when a FILE cannot be read; 3 when a FILE's name is not a plain file name or two
-# FILEs share one; and 4 when a write fails, which leaves no SHA256SUMS. With --dry-run it stops
-# after the checks of the FILEs and says what it would export.
+# others, or a user other than root can change the path to it; 66 when a FILE cannot be read; 3
+# when a FILE's name is not a plain file name or two FILEs share one; and 4 when a write fails,
+# which leaves no SHA256SUMS and no DEPLOY.txt. With --dry-run it stops after the checks of the
+# FILEs and of output_dir (ku_export_dir) and says what it would export.
 ku_export() {
     local dir=$1 file name hash sums="" list="" steps
     local -a names=()
@@ -610,23 +613,20 @@ ku_export() {
             ku_die "$KU_EX_NOINPUT" "cannot read $name to export it; nothing was exported"
         fi
     done
+    ku_export_dir "$dir"
     if (( KU_DRY_RUN )); then
         ku_log info "would export $# file(s) to $dir"
         return 0
     fi
-    if [[ ! -e $dir && ! -L $dir ]]; then
-        if ! mkdir -p -- "${dir%/*}/" || ! (umask 077 && mkdir -- "$dir"); then
-            ku_die "$KU_EX_WRITE" "cannot make output_dir $dir; nothing was exported"
-        fi
-    fi
-    _ku_export_check_dir "$dir"
     if ! _ku_export_clear "$dir" "${names[@]}"; then
         ku_die "$KU_EX_WRITE" "cannot remove the files of the earlier export in output_dir;" \
             "nothing was exported"
     fi
-    # A partial export must not pass for a whole one, so the old sums go first.
-    if ! rm -f -- "$dir/SHA256SUMS"; then
-        ku_die "$KU_EX_WRITE" "cannot remove the old SHA256SUMS in output_dir; nothing was exported"
+    # A partial export must not pass for a whole one, nor be copied as the old DEPLOY.txt says,
+    # so the old sums and steps go first.
+    if ! rm -f -- "$dir/SHA256SUMS" "$dir/DEPLOY.txt"; then
+        ku_die "$KU_EX_WRITE" "cannot remove the old SHA256SUMS and DEPLOY.txt in output_dir;" \
+            "nothing was exported"
     fi
     for file in "$@"; do
         name=${file##*/}
@@ -650,8 +650,38 @@ ku_export() {
         "DEPLOY.txt there says, then run '$KU_CMD check'"
 }
 
+# Make the output_dir DIR when it is missing, owned by root with mode 0700, and exit as
+# _ku_export_check_dir does unless it passes; 4 when it cannot be made. A dry run makes
+# nothing: it checks DIR when it exists, and else the path to the directory it would be made
+# in. ku_export calls it before anything else changes, and migrate before it seals the backup
+# of a stage that exports, so that an output_dir that cannot serve stops the run, and its dry
+# run, before there is a backup a rollback would undo.
+ku_export_dir() {
+    local dir=$1 up
+    if [[ -e $dir || -L $dir ]]; then
+        _ku_export_check_dir "$dir"
+    elif (( KU_DRY_RUN )); then
+        up=${dir%/*}
+        while [[ -n $up && ! -e $up && ! -L $up ]]; do
+            up=${up%/*}
+        done
+        if ! ku_p1_root_only "${up:-/}"; then
+            ku_die "$KU_EX_CONFIG" "the path to output_dir $dir holds a symlink, or a" \
+                "directory a user other than root can change, so what root writes there could" \
+                "land elsewhere: name a path of root's without symlinks; nothing was exported"
+        fi
+    else
+        if ! mkdir -p -- "${dir%/*}/" || ! (umask 077 && mkdir -- "$dir"); then
+            ku_die "$KU_EX_WRITE" "cannot make output_dir $dir; nothing was exported"
+        fi
+        _ku_export_check_dir "$dir"
+    fi
+}
+
 # Exit 78 unless DIR is a directory, not a symlink, owned by root and closed to group and
-# others, since what it holds goes onto the stick.
+# others, since what it holds goes onto the stick, and unless the path to it holds no symlink
+# and no directory a user other than root can change (ku_p1_root_only), since such a user might
+# swap DIR for a symlink between these checks and root's writes and removals there.
 _ku_export_check_dir() {
     local info owner mode
     if [[ -L $1 || ! -d $1 ]]; then
@@ -663,6 +693,11 @@ _ku_export_check_dir() {
     if [[ $owner != 0 || ! $mode =~ ^[0-7]+$ ]] || (( (8#$mode & 8#077) != 0 )); then
         ku_die "$KU_EX_CONFIG" "output_dir $1 must be owned by root and closed to group and" \
             "others (mode 0700); nothing was exported"
+    fi
+    if ! ku_p1_root_only "$1"; then
+        ku_die "$KU_EX_CONFIG" "the path to output_dir $1 holds a symlink, or a directory a" \
+            "user other than root can change, so what root writes there could land elsewhere:" \
+            "name a path of root's without symlinks; nothing was exported"
     fi
 }
 

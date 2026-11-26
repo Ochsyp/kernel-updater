@@ -759,6 +759,62 @@ not changed, but multibootusb/grub/kali.cfg was written before it"* ]]
     [ ! -e "$OUT" ]
 }
 
+@test "An export refuses an output_dir whose path a user can change, in a dry run too" {
+    # shellcheck disable=SC2016 # the code expands its own arguments
+    local code='ku_export "$(ku_path "${KU_CONF[output_dir]}")" "$@"'
+    # Root owns every directory, with mode 0755, and output_dir, with 0700, but output_dir's
+    # parent is a user's, who could swap output_dir for a symlink between root's checks and its
+    # writes.
+    export OUT OPEN="$ROOT/root/kernel-updater"
+    mkstub stat <<'EOF'
+case ${*: -1} in
+    "$OUT") echo "0 700" ;;
+    "$OPEN") echo "1000 755" ;;
+    *) echo "0 755" ;;
+esac
+EOF
+    mkdir -p "$OUT"
+    run_ku_lib "$code" "$BATS_TEST_TMPDIR/kali.cfg"
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"the path to output_dir $OUT holds a symlink, or a directory a user other"* ]]
+    [ -z "$(ls -A "$OUT")" ]
+    run_ku_lib "KU_DRY_RUN=1; $code" "$BATS_TEST_TMPDIR/kali.cfg"
+    [ "$status" -eq 78 ]
+    [[ "$stderr" == *"the path to output_dir $OUT holds a symlink, or a directory a user other"* ]]
+    # A dry run makes no output_dir: it checks the path to where it would make one.
+    rmdir "$OUT"
+    run_ku_lib "KU_DRY_RUN=1; $code" "$BATS_TEST_TMPDIR/kali.cfg"
+    [ "$status" -eq 78 ]
+    [ ! -e "$OUT" ]
+    # With the parent root's, both go ahead.
+    export OPEN=/none
+    run_ku_lib "KU_DRY_RUN=1; $code" "$BATS_TEST_TMPDIR/kali.cfg"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"would export 1 file(s) to $OUT"* ]]
+    [ ! -e "$OUT" ]
+    run_ku_lib "$code" "$BATS_TEST_TMPDIR/kali.cfg"
+    [ "$status" -eq 0 ]
+    cmp "$BATS_TEST_TMPDIR/kali.cfg" "$OUT/kali.cfg"
+}
+
+@test "An export that fails partway leaves neither the old SHA256SUMS nor the old DEPLOY.txt" {
+    # shellcheck disable=SC2016 # the code expands its own arguments
+    local code='ku_export "$(ku_path "${KU_CONF[output_dir]}")" "$@"'
+    run_ku_lib "$code" "$BATS_TEST_TMPDIR/kali.cfg" "$BATS_TEST_TMPDIR/grub.cfg"
+    [ "$status" -eq 0 ]
+    [ -f "$OUT/DEPLOY.txt" ]
+    # The next export cannot put grub.cfg in place, after kali.cfg went in.
+    export OUT
+    mkstub mv <<'EOF'
+[[ ${*: -1} != "$OUT/grub.cfg" ]] || exit 1
+exec "$REAL_MV" "$@"
+EOF
+    run_ku_lib "$code" "$BATS_TEST_TMPDIR/kali.cfg" "$BATS_TEST_TMPDIR/grub.cfg"
+    [ "$status" -eq 4 ]
+    [ ! -e "$OUT/SHA256SUMS" ]
+    [ ! -e "$OUT/DEPLOY.txt" ]
+}
+
 @test "ku_export_verify reports each exported file as same, differs or missing" {
     # shellcheck disable=SC2016 # the code expands its own arguments
     local verify='ku_export_verify "$1" || exit'
