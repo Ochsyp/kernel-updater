@@ -22,8 +22,8 @@ folded in, and no entry that fixes another one of this section.
   lock (75), confirmation on the terminal or `--yes` (10 when declined), `--dry-run`, and exit
   traps that run cleanups, exit 130, 143 or 129 on INT, TERM or HUP, and 1 on an unexpected
   failure. `--yes` answers every question but the one `migrate --write-fat` asks. A message that
-  says what to run next names the tool as `sudo` and the path it was started from,
-  shell-quoted, as `sudo /usr/local/bin/kernel-updater check`, since sudo's `secure_path` may
+  says what to run next names the tool as `sudo` and the resolved path of the script that
+  ran, shell-quoted, as `sudo /usr/local/bin/kernel-updater check`, since sudo's `secure_path` may
   lack `/usr/local/bin`; the hint after a usage error names the same path without `sudo`.
 - `/etc/kernel-updater.conf`: `key = value` lines that are parsed, never sourced, checked key by
   key, refused (78) when a key repeats, a line or value is bad, or, when the tool runs as root,
@@ -84,21 +84,22 @@ folded in, and no entry that fixes another one of this section.
   the checkout lacks a file.
 - Kernel hooks, armed while `boot_fs_uuid` is set and only warning until then: `preinst.d`,
   `prerm.d` and `postinst.d/00-kernel-updater` refuse (3) a kernel install, removal or configure
-  while `/boot` is not mounted or holds another filesystem than `boot_fs_uuid` names.
-  `postinst.d/kernel-updater`, after initramfs-tools, fails a kernel whose vmlinuz is missing or
-  empty, whose initrd is missing, unreadable, or lacks its modules, `cryptsetup`, the cryptroot
-  configuration or the key files crypttab names, or whose links in `/boot` are absolute or
-  dangle; `verify_action = warn` makes it only warn. The wrappers let everything through while
-  `/usr/local/bin/kernel-updater` is missing. A configuration they cannot use stops them with 78,
-  armed or not. `kernel-updater hook boot-guard|verify|apt-guard` runs them.
-- apt-guard, a `DPkg::Pre-Install-Pkgs` hook with protocol version 3, which refuses an apt run
-  before dpkg starts when it installs, removes or configures a versioned `linux-image`,
-  `linux-binary`, `linux-modules` or `linux-base` package (but for its `-dbg` and `-dbgsym`
-  packages), `linux-base`, `initramfs-tools`, `initramfs-tools-core` or `initramfs-tools-bin`
-  while `/boot` is not the filesystem `boot_fs_uuid` names, or unpacks or configures `grub-pc`
-  while `grub-pc/install_devices` names a device or `debconf-show` cannot read it. Any other run
-  passes without starting the tool, and every run passes while apt-guard is missing or not
-  executable. A refusal names the remedy for its cause.
+  while `/boot` is not mounted, holds another filesystem than `boot_fs_uuid` names, or `findmnt`
+  cannot read the mount table. `postinst.d/kernel-updater`, after initramfs-tools, fails (2) a
+  kernel whose vmlinuz is missing or empty, whose initrd is missing, unreadable, or lacks its
+  modules, `cryptsetup`, the cryptroot configuration or the key files crypttab names, or, while
+  linux-base keeps the links in `/boot`, whose links there are missing, absolute or dangle;
+  `verify_action = warn` makes it only warn. The wrappers let everything through while
+  `/usr/local/bin/kernel-updater` is missing or not executable. A configuration they cannot use
+  stops them with 78, armed or not. `kernel-updater hook boot-guard|verify|apt-guard` runs them.
+- apt-guard, a `DPkg::Pre-Install-Pkgs` hook with protocol version 3, armed as the kernel hooks are,
+  which refuses an apt run before dpkg starts when it installs, removes or configures a versioned
+  `linux-image`, `linux-binary`, `linux-modules` or `linux-base` package (but for its `-dbg` and
+  `-dbgsym` packages), `linux-base`, `initramfs-tools`, `initramfs-tools-core` or
+  `initramfs-tools-bin` while `/boot` is not the filesystem `boot_fs_uuid` names, or unpacks or
+  configures `grub-pc` while `grub-pc/install_devices` names a device or `debconf-show` cannot read
+  it. Any other run passes without starting the tool, and every run passes while apt-guard is
+  missing or not executable. A refusal names the remedy for its cause.
 - Partition 1, in `lib/kernel-updater/disk.sh`, FAT, as MultiBootUSB makes it, or NTFS.
   - It is found from the filesystem at `/boot`: `lsblk -s` walks up through the LUKS mapping to
     the one disk under it, refusing none or several, and takes its partition 1, never by a
@@ -115,12 +116,13 @@ folded in, and no entry that fixes another one of this section.
     is mounted nowhere else, and what a plan reads comes only from such a root, so while a
     desktop has partition 1 mounted for its user the tool asks to unmount it there. A dry run
     mounts read-only.
-  - `deploy` says how files reach it: `auto` writes natively and exports in a VM, where Windows
-    may have the volume mounted on the host; `direct` does the same; `export` leaves them in
-    `output_dir`; `path` writes through `p1_path`, in a VM too. `auto`, natively, and `direct`
-    fall back to an export when their own read-write mount cannot write, and `path` when
-    `p1_path` does not serve, each saying why. A FAT partition 1 is exported unless
-    `migrate --write-fat` writes it.
+  - `deploy` says how files reach it: `auto` writes natively and exports in a VM, where Windows may
+    have the volume mounted on the host; `direct` does the same; `export` leaves them in
+    `output_dir`; `path` writes through `p1_path`, in a VM too. `auto`, natively, and `direct` fall
+    back to an export when partition 1 cannot be written as they find or mount it, as when it is
+    mounted read-only or shared, or hibernated, unclean or marked dirty, or a tool or `ntfs3` is
+    missing, and `path` when `p1_path` does not serve, each saying why. A FAT partition 1 is
+    exported unless `migrate --write-fat` writes it.
 - A safe writer for partition 1, in `lib/kernel-updater/deploy.sh`. It exits 75 when a file
   changed since the plan read it, or one exists where the plan read none, a symlink included,
   before it wrote anything, and 3 when a symlink lies on its way or a user other than root could
@@ -133,12 +135,12 @@ folded in, and no entry that fixes another one of this section.
   filesystem after each step and reads each file back through a new read-only mount. Bytes stay
   as they are, CRLF included. `ku_deploy_read` copies a file from partition 1 for a plan, with
   the SHA-256 the write then expects.
-- Exports, also in `deploy.sh`: the files go to `output_dir`, a directory of root's with mode
-  0700 on a path no other user can change, which is checked, and made when missing, before
-  anything else changes, in a dry run too; then `SHA256SUMS` and a `DEPLOY.txt` that says how to
-  copy them from Windows. The old `SHA256SUMS` and `DEPLOY.txt` and the files of the earlier
-  export that the new one lacks go first, so a failed export leaves neither. A verifier compares
-  the stick with the export for check's `deployed` item.
+- Exports, also in `deploy.sh`: the files go to `output_dir`, a directory of root's with mode 0700
+  on a path no other user can change, which is checked, and made when missing, before anything else
+  changes; a dry run checks it, or the path to it, and makes nothing; then `SHA256SUMS` and a
+  `DEPLOY.txt` that says how to copy them from Windows. The old `SHA256SUMS` and `DEPLOY.txt` and
+  the files of the earlier export that the new one lacks go first, so a failed export leaves
+  neither. A verifier compares the stick with the export for check's `deployed` item.
 - `kernel-updater baseline [--show]`, which records, as root and after asking, the SHA-256 of the
   stick's boot code in `/var/lib/kernel-updater/baseline`: the files
   `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector.
@@ -151,9 +153,9 @@ folded in, and no entry that fixes another one of this section.
 - `kernel-updater migrate [--stage detect|system|menu|finalize|all]`, the one-time switch of the
   Kali entries to the links linux-base keeps in `/boot`, after which a kernel install or removal
   changes nothing on partition 1. Each stage runs as root under the lock, prints its plan, asks
-  once, changes nothing with `--dry-run`, does nothing when its result is in place, and exits 3
-  naming the stage to run first. `--deploy` and `--output-dir` hold for one run; `detect`, and
-  `all`, which runs it, take no `-c`.
+  before it changes anything (`system` asks a second question about grub-pc), changes nothing with
+  `--dry-run`, does nothing when its result is in place, and exits 3 naming the stage to run first.
+  `--deploy` and `--output-dir` hold for one run; `detect`, and `all`, which runs it, take no `-c`.
   - `detect` appends the identity of `/boot`, its LUKS container, the stick and the root device,
     and `grub_floor` from the stick's GRUB while the file sets none, to
     `/etc/kernel-updater.conf`, exiting 78 on a key set to another value.
@@ -163,15 +165,17 @@ folded in, and no entry that fixes another one of this section.
     the links at the newest and the previous kernel, moves the old links out of `/`, offers to
     empty grub-pc's install devices, and checks the result; it exits 75 when the kernels or links
     change while its question waits.
-  - `menu` writes `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`, with
-    entries that boot `/vmlinuz` and `/initrd.img` and, for the variants `previous_variants`
-    names, the `.old` links, keeping the legacy entries' kernel parameters, mended; and replaces
-    the Kali submenu of `grub.cfg` with a block that sources `kali.cfg`, the submenu following as
-    legacy entries. A byte guard, `grub-script-check` and `lint` with the stick's own lists check
-    both files first; `kali.cfg` is written before `grub.cfg`, or both are exported. Run again
-    while the legacy entries remain, it writes `kali.cfg` alone anew when it is missing or
-    differs. `live` and `forensic` need overlayroot in each initrd their entries boot. The plan
-    shows a kernel parameter that may name a device, a UUID or a key file as `NAME=<value>`.
+  - `menu` writes `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`, with entries
+    that boot `/vmlinuz` and `/initrd.img` and, for the variants `previous_variants` names, the
+    `.old` links, keeping the legacy entries' kernel parameters, mended; and replaces the Kali
+    submenu of `grub.cfg` with a block that sources `kali.cfg`, the submenu following as legacy
+    entries. First a byte guard checks that the new `grub.cfg` keeps every byte outside the submenu,
+    `grub-script-check`, which `menu` and `finalize` need (3 otherwise), checks both files, and
+    `lint` checks `kali.cfg` with the stick's own lists, or GRUB 2.02's when those cannot be read;
+    `kali.cfg` is written before `grub.cfg`, or both are exported. Run again while the legacy
+    entries remain, it writes `kali.cfg` alone anew when it is missing or differs. `live` and
+    `forensic` need overlayroot in each initrd their entries boot. The plan shows a kernel parameter
+    that may name a device, a UUID or a key file as `NAME=<value>`.
   - `finalize` removes the legacy entries.
   - A write sets the baseline entries of the files it wrote, but not that of a file that
     differed from a stored baseline before, as after a change from Windows, which the plan and a
@@ -181,42 +185,50 @@ folded in, and no entry that fixes another one of this section.
 - Backups of every `system`, `menu` and `finalize` run in `/var/backups/kernel-updater`, named by
   the UTC time of the run, or a second after the newest backup when the clock reads no later. A
   `MANIFEST` of SHA-256 sums seals each, written as `MANIFEST.new`, synced and renamed: for an
-  export once `output_dir` passed its checks, for a write right before the first change to the
-  stick, so a run stopped before it changed anything leaves no backup. `migrate --rollback
-  [STAMP]` undoes the newest run first, passes over a backup without a `MANIFEST`, renaming it
-  to `STAMP.failed`, refuses one that does not match its `MANIFEST`, and restores
-  `kernel-img.conf` and the links in `/`, `grub.cfg`, or the `kali.cfg` a second `menu` run
-  replaced, byte for byte, or exports the file. It refuses to put back a `grub.cfg` whose Kali
-  entries would boot no kernel `/boot` holds, and to undo a `system` run while partition 1's
-  `grub.cfg` still sources `kali.cfg`.
-- `migrate --write-fat`, which lets one run write a FAT partition 1 from the VM, and only under
-  VMware, when the running kernel's command line ends a `linux` line of the stick's menu and
-  none of `/boot/grub/grub.cfg`, the volume is not marked dirty and its FAT keeps the
-  clean-shutdown bit, nothing has it mounted, and you answer `y` to a question whether Windows
-  no longer has BOOT, which `--yes` does not answer. VMware locks BOOT itself while the VM runs,
-  so it must not be taken offline in Windows first. It refuses (3) otherwise and writes nothing.
-  The plan reads partition 1 through a read-only mount; the writes go through a read-write one
-  with `flush`.
+  export once `output_dir` passed its checks, otherwise right before the stage's first change, so a
+  run stopped before it changed anything leaves no backup. `migrate --rollback [STAMP]` undoes the
+  newest run first, passes over a backup without a `MANIFEST`, renaming it to `STAMP.failed`,
+  refuses one that does not match its `MANIFEST`, and restores `kernel-img.conf` and the links in
+  `/`, `grub.cfg`, or the `kali.cfg` a second `menu` run replaced, byte for byte, or exports the
+  file. It refuses to put back a `grub.cfg` whose Kali entries would boot no kernel `/boot` holds,
+  and to undo a `system` run whose `kernel-img.conf` put back would stop linux-base keeping the
+  links in `/boot` while partition 1's `grub.cfg` still sources `kali.cfg`.
+- `migrate --write-fat`, which lets one run write a FAT partition 1 from the VM, and only with
+  `deploy` `auto` or `direct`, under VMware, when the running kernel's command line ends a `linux`
+  line of the stick's menu and none of `/boot/grub/grub.cfg`, the volume is FAT16 or FAT32, not
+  marked dirty and its FAT keeps the clean-shutdown bit, and nothing has it mounted. It refuses (3)
+  otherwise and writes nothing, and exits 66 when partition 1 does not mount. Before the first write
+  it asks whether Windows no longer has BOOT, which `--yes` does not answer; any answer but `y`, or
+  no terminal, exits 10. VMware locks BOOT itself while the VM runs, so it must not be taken offline
+  in Windows first. The plan reads partition 1 through a read-only mount; the writes go through a
+  read-write one with `flush`.
 - `lib/kernel-updater/menu.awk`, which finds the Kali submenu of a GRUB config, braces counted
   outside quotes and comments only, with its entries and their kernel parameters.
 - `kernel-updater cleanup [--no-rc] [--no-autoremove] [--no-modules]`, which purges, in one
   apt-get run, the config files removed kernels left and the old kernels apt's autoremove names,
   once a simulation shows apt would remove exactly those.
-  - It refuses, in a dry run too, until the migration is finished, while an export waits to be
-    copied, or while one with a damaged `SHA256SUMS` waits to bring back entries that boot
-    kernels by version.
+  - It refuses (3), in a dry run too, until the migration is finished, or while an export, even one
+    with a damaged `SHA256SUMS`, waits to bring back a `grub.cfg` whose entries boot kernels by
+    version; and also while `boot_fs_uuid` or `boot_luks_uuid` is unset, apt-get,
+    apt-mark or dpkg-query is missing, the links are not kept in `/boot` or do not reach their
+    files, check's `kernels` item fails, or a dpkg run was interrupted.
   - It never purges the running kernel or one the links in `/boot` point at, and nothing while a
     reboot into a new kernel is pending. Held packages, debug builds, metapackages, and the
     config files of a kernel still installed through another package stay, and the plan says
     why; an old kernel marked manual stays with an `apt-mark auto` hint.
-  - A module tree no package owns is removed when empty and otherwise moved to
-    `/var/lib/kernel-updater/quarantine`, after a check of apt's and dpkg's locks right before
-    each `rmdir` or move. A quarantined tree can be moved back until it expires,
-    `quarantine_days` (30 by default, 0 keeps it) after a later run that went ahead first saw it
-    there; that run writes a `seen` mark, only after the yes when it asks.
+  - A module tree no package owns, of no kept kernel, without `.fresh-install`, and for whose
+    release neither `/boot` holds files, nor dpkg lists a package, nor dkms built modules, is
+    removed when empty and otherwise moved to `/var/lib/kernel-updater/quarantine`, after a check of
+    apt's and dpkg's locks right before each `rmdir` or move. A move needs GNU `mv --no-copy`
+    (coreutils 9.2 or later) and a tree on the quarantine's filesystem; otherwise the tree is only
+    listed. A
+    quarantined tree can be moved back until it expires, `quarantine_days` (30 by default, 0 keeps
+    it) after a later run that went ahead first saw it there, unless the clock reads earlier than an
+    entry was moved or seen; that run writes a `seen` mark, only after the yes when it asks.
   - It exits 75 while apt or dpkg holds its lock, which it finds in `/proc/locks`, or when the
     system changed while its question waited; 3 when a check refuses while nothing changed; and 4
-    once something changed. `--porcelain` prints the plan as tab-separated records.
+    once something changed. `--porcelain` prints the plan as tab-separated records once the
+    run ends with 0.
 - `tools/windows`: PowerShell scripts for the steps in Windows around `migrate --write-fat`.
   Step A copies the stick's menu to `%LOCALAPPDATA%\kernel-updater\stick-grub`, never to the
   Desktop; step D runs `chkdsk` read-only as administrator; step E copies the newest saved menu
@@ -225,19 +237,21 @@ folded in, and no entry that fixes another one of this section.
   entries. On kernels where overlayroot builds its RAM layer read-only and overlayfs refuses to
   make it writable later, their login fails on a read-only `/home`. Right after overlayroot, and
   only then, it mounts the same layers read-write, leaving the disk below read-only, and logs
-  each step to `/run/overlayroot-rw.log`. It is installed with a rebuild of the newest kernel's
-  initrd alone.
+  each step to `/run/overlayroot-rw.log`. It is installed with a rebuild of the initrd of the
+  kernel `/boot/vmlinuz` points at, and of the previous kernel's too only when
+  `previous_variants` names `live` or `forensic`.
 - Documentation: the README, `docs/migration.md`, the walkthrough of the migration with the
   steps in Windows around each FAT write and the way back, and `docs/runbook.md` for routine use,
   `cleanup`'s plan and refusals, the quarantine, a kernel that fails, a rebuild of one kernel's
   initrd and an optional GRUB default entry. `examples/grub.cfg`, a synthetic MultiBootUSB config
-  whose identifiers all start with `5ca1ab1e`. `LICENSE` (MIT), `SECURITY.md` and
+  whose identifiers are all built from `5ca1ab1e`. `LICENSE` (MIT), `SECURITY.md` and
   `CONTRIBUTING.md`.
-- The branch workflow: git hooks in `.githooks` that refuse commits and pushes to `main` and run
-  `privacy-scan`, which refuses CRLF line endings, disk and partition identifiers outside the
-  synthetic range, private addresses, `.lan` host names, home paths, e-mail addresses other than
-  GitHub's no-reply ones, and values in the untracked `.git/info/privacy-denylist`;
-  `.gitattributes`, which keeps every text file LF; a pull request template and this changelog.
+- The branch workflow: git hooks in `.githooks`, where `pre-commit` refuses commits on `main` and
+  runs `privacy-scan` on what is staged, and `pre-push` refuses pushes to `main`. `privacy-scan`
+  refuses CRLF line endings, disk and partition identifiers outside the synthetic range, private
+  addresses, `.lan` host names, home paths, e-mail addresses other than GitHub's no-reply ones, and
+  values in the untracked `.git/info/privacy-denylist`. `.gitattributes` keeps every text file LF; a
+  pull request template and this changelog.
 - Tests: a bats suite in `tests/` that runs without root or Kali, with stub tools, synthetic
   system trees and disk images, ShellCheck and syntax checks of every shell file, and repository
   checks; a container suite in `tests/container` with real dpkg, apt-get and linux-base runs on
