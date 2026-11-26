@@ -564,7 +564,7 @@ file must be owned by root and not writable by group or others. `examples/kernel
 | `output_dir` | Where an export goes, an absolute path: `/root/kernel-updater/out` by default. It must be a directory of root's closed to group and others (mode 0700), and holds the latest export only |
 | `backups_keep` | How many dated backups of each file the safe writer keeps beside it: 1 to 99, 5 by default |
 | `root_device` | What the entries of `kali.cfg` pass the kernel as `root=`: an absolute device path, such as `/dev/mapper/kali--vg-root`, or `UUID=` and a UUID. `migrate --stage detect` sets it from the running kernel's command line |
-| `menu_variants` | The entries `kali.cfg` gets, comma-separated, in order: `default`, which comes first and must be there, then any of `failsafe`, `live` and `forensic`; `default,failsafe` by default. `live` and `forensic` boot through overlayroot, so the menu stage refuses them while the initrd `/boot/initrd.img` points at lacks it, or the one `/boot/initrd.img.old` points at when `previous_variants` holds them |
+| `menu_variants` | The entries `kali.cfg` gets, comma-separated, in order: `default`, which comes first and must be there, then any of `failsafe`, `live` and `forensic`; `default,failsafe` by default. `live` and `forensic` boot through overlayroot, so the menu stage refuses them while the initrd `/boot/initrd.img` points at lacks it, or the one `/boot/initrd.img.old` points at when `previous_variants` holds them. Where the overlay comes up read-only and the login fails, `contrib/initramfs/overlayroot-rw` mounts it read-write ([docs/migration.md](docs/migration.md#live-and-forensic-mode)) |
 | `previous_variants` | The variants that also get an entry for the previous kernel, which boots `/vmlinuz.old` and `/initrd.img.old`: a comma-separated part of `menu_variants`; `default,failsafe` by default, of which a variant `menu_variants` lacks is left out unless this key is set |
 | `quarantine_days` | How many whole days a module tree `cleanup` moved into its quarantine stays there, counted from the later of the move and the first `cleanup` run after it that saw the tree there: 0 to 999, without a leading zero, 30 by default. A `cleanup` run after that deletes it, unless the clock reads earlier than an entry there was moved or seen. 0 keeps every tree until you delete it. See [cleanup](#cleanup) |
 
@@ -699,6 +699,11 @@ bats tests/
   `ntfs` job of the tests workflow installs `ntfs-3g` and `dmsetup`, loads `ntfs3` and runs
   them with `sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs`, failing when any is
   skipped. Run them only on a machine you can spare, as root.
+- `tests/contrib.bats` runs `contrib/initramfs/overlayroot-rw` with stub `mount`, `umount` and
+  `mkdir` and a mounts file in place of `/proc/mounts`: it leaves a root that is no overlay or
+  is read-write alone, remounts a read-only overlay's layers read-write while it moves only the
+  top mounts, mounts `/dev` anew when it will not move, leaves the root read-only when a step
+  fails, and goes on, saying so, when it cannot edit the fstab or mount `/dev` anew.
 - `tests/tools.bats` runs the Windows scripts in `tools/windows`, the steps around
   `migrate --write-fat` that docs/migration.md lists, under `pwsh` with a stub `Get-Volume`:
   each refuses, changing nothing, when BOOT is not there, is there twice, is not FAT or holds
