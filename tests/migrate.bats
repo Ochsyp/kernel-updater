@@ -992,6 +992,15 @@ read it; nothing was changed"* ]]
     run_ku migrate --stage menu --dry-run
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"GRUB 2.02's stand in"* && "$stderr" != *"lint warns"* ]]
+    # A /boot whose filesystem has its container's UUID: kali.cfg's search --fs-uuid is given
+    # that UUID and matches, so the plan holds no lint warning either.
+    export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 5ca1ab1e-0000-4000-8000-000000000c01"
+    sed -i 's/^boot_fs_uuid = .*/boot_fs_uuid = 5ca1ab1e-0000-4000-8000-000000000c01/' "$ROOT$CONF"
+    run_ku migrate --stage menu --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"lint warns"* ]]
+    export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 $BOOT_FS_UUID"
+    sed -i "s/^boot_fs_uuid = .*/boot_fs_uuid = $BOOT_FS_UUID/" "$ROOT$CONF"
     # A title with a quote, which kali.cfg's double quotes would not hold.
     sed "s/^submenu \"Kali GNU\/Linux amd64 (full install)\"/submenu \"Kali 'amd64'\"/" \
         "$BATS_TEST_TMPDIR/grub.before" > "$GRUB/grub.cfg"
