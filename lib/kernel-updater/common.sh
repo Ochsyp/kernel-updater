@@ -68,10 +68,11 @@ ku_die() {
     exit "$code"
 }
 
-# Log MESSAGE as an error, point at --help and exit 64.
+# Log MESSAGE as an error, point at --help, by the path the tool was started from and without
+# sudo, which --help needs not, and exit 64.
 ku_usage_error() {
     ku_log error "$*"
-    printf "Try 'kernel-updater --help'.\n" >&2 || true
+    printf "Try '%s --help'.\n" "${KU_CMD#sudo }" >&2 || true
     exit "$KU_EX_USAGE"
 }
 

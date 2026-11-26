@@ -459,6 +459,7 @@ with the owner's original script.
   path it was started from, shell-quoted, as `sudo /usr/local/bin/kernel-updater check`, instead
   of `kernel-updater check` or `sudo kernel-updater check`. sudo's `secure_path` may lack
   `/usr/local/bin`, as on Kali, and a bare name then gave `command not found`. The commands in
-  `README.md`, `docs/migration.md` and `docs/runbook.md` name the full path too.
+  `README.md`, `docs/migration.md` and `docs/runbook.md` name the full path too. The hint after
+  a usage error names the same path, without `sudo`: `Try '/usr/local/bin/kernel-updater --help'.`
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
