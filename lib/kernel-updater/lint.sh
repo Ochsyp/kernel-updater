@@ -121,8 +121,14 @@ ku_lint_findings() {
 # Print the findings for FILE as LINE<TAB>SEVERITY<TAB>RULE<TAB>MESSAGE lines sorted by line:
 # a rejection by grub-script-check when SYNTAX is 1, then those of lint.awk, which reads the
 # name lists CMD_LISTS and MOD_LISTS (newline-separated paths). Never echoes the file's text.
+# When boot_fs_uuid and boot_luks_uuid name the same UUID, /boot's filesystem has its
+# container's UUID, so lint.awk does not warn when search --fs-uuid is given that one.
 _ku_lint_file() {
-    local file=$1 floor=$2 syntax=$3 exact=$4 cmd_lists=$5 mod_lists=$6 out ln=1
+    local file=$1 floor=$2 syntax=$3 exact=$4 cmd_lists=$5 mod_lists=$6 out ln=1 same=""
+    local fs=${KU_CONF[boot_fs_uuid]-} luks=${KU_CONF[boot_luks_uuid]-}
+    if [[ -n $fs && ${fs//-/} == "${luks//-/}" ]]; then
+        same=${fs//-/}
+    fi
     {
         if (( syntax )) && ! out=$(LC_ALL=C grub-script-check "$file" 2>&1); then
             if [[ $out =~ line\ ([0-9]+) ]]; then
@@ -131,6 +137,6 @@ _ku_lint_file() {
             printf '%s\terror\tsyntax\tgrub-script-check rejects the file: a syntax error, or no commands at all\n' "$ln"
         fi
         KU_LINT_CFG=$file KU_LINT_CMDS=$cmd_lists KU_LINT_MODS=$mod_lists KU_LINT_FLOOR=$floor \
-            KU_LINT_EXACT=$exact "$KU_AWK" -f "$KU_LIBDIR/lint.awk"
+            KU_LINT_EXACT=$exact KU_LINT_SAME_UUID=$same "$KU_AWK" -f "$KU_LIBDIR/lint.awk"
     } | sort -t $'\t' -k1,1n -s
 }

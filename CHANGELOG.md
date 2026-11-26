@@ -442,5 +442,11 @@ with the owner's original script.
   nothing written, yet left a sealed backup that `migrate --rollback` would have undone. When
   the seal fails, the exit trap removes the backup just made beside the target, so the stick
   stays as it was.
+- lint's `fs-uuid-is-luks` warning, which `check`'s kali-cfg item and the menu stage's plan
+  show too, no longer fires for a stick whose `/boot` filesystem has the same UUID as its LUKS
+  container. There, `search --fs-uuid` with the container's UUID does match. When
+  `boot_fs_uuid` and `boot_luks_uuid` name the same UUID, lint leaves that one alone and still
+  warns about any other. The message now says the search matches only when the filesystem
+  inside has the same UUID.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

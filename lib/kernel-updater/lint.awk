@@ -3,12 +3,15 @@
 #
 # Reads the GRUB config named by ENVIRON KU_LINT_CFG and prints LINE, SEVERITY, RULE and
 # MESSAGE, tab-separated, per finding. KU_LINT_CMDS and KU_LINT_MODS list the name files, one
-# path per line; KU_LINT_FLOOR is the oldest GRUB to support. Messages never quote identifiers.
+# path per line; KU_LINT_FLOOR is the oldest GRUB to support. KU_LINT_SAME_UUID, when set, is
+# a UUID without dashes that a filesystem and its LUKS container share. Messages never quote
+# identifiers.
 # -------------------------------------------------------
 
 BEGIN {
     cfg = ENVIRON["KU_LINT_CFG"]
     exact = (ENVIRON["KU_LINT_EXACT"] == "1")
+    same_uuid = nodash(ENVIRON["KU_LINT_SAME_UUID"])
     load_lists(ENVIRON["KU_LINT_CMDS"], known_cmd)
     load_lists(ENVIRON["KU_LINT_MODS"], known_mod)
     # Built into GRUB's kernel, so command.lst does not list them.
@@ -213,8 +216,8 @@ function statement(nw, ln,    k, cmd, j, first, assign, form, fs, val) {
         if (fs && nw > k && val !~ /^-/ && !variable(val)) {
             if (!fs_uuid_form(val))
                 report(ln, "error", "fs-uuid-malformed", "search --fs-uuid is not given a filesystem UUID or volume serial")
-            else if (luks != "" && nodash(val) == luks)
-                report(ln, "warning", "fs-uuid-is-luks", "search --fs-uuid is given the LUKS container's UUID instead of the filesystem's inside it, so it never matches")
+            else if (luks != "" && nodash(val) == luks && luks != same_uuid)
+                report(ln, "warning", "fs-uuid-is-luks", "search --fs-uuid is given the LUKS container's UUID, which matches only when the filesystem inside has the same UUID; set boot_fs_uuid and boot_luks_uuid if it has")
         }
     } else if (cmd == "linux" || cmd == "linux16") {
         for (j = k + 2; j <= nw; j++) check_param(W[j], ln)
