@@ -1,0 +1,132 @@
+#!/bin/sh
+# overlayroot-rw: an initramfs-tools init-bottom script that makes overlayroot's RAM layer
+# writable when the kernel line says "ro", as live and forensic mode do.
+#
+# overlayroot builds its overlay read-only then, and overlayfs refuses to go read-write later
+# ("No changes allowed in reconfigure"), so the login of those modes fails on a read-only
+# /home. Right after overlayroot, and only when the root is its overlay mounted read-only, this
+# mounts the same layers again read-write, and sets the "/" line of overlayroot's rewritten
+# fstab, when it has one, from ro to rw. The disk below stays read-only; only the RAM layer
+# takes writes. Otherwise, as in a normal boot or when overlayroot built no overlay, it does
+# nothing, and on any failure it leaves the root read-only, as it found it.
+#
+# It moves only the top mounts under the root out and back, each with what is mounted inside it
+# (/root/dev takes /root/dev/pts along), and when /dev will not move, it mounts /dev and
+# /dev/pts anew in the new root. Each step goes to the kernel log (dmesg, marked
+# "overlayroot-rw:") and to /run/overlayroot-rw.log, which the booted system keeps.
+#
+# Install as root, then rebuild the initrds (docs/migration.md, "Live and forensic mode"):
+#   install -m 0755 overlayroot-rw /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
+#   update-initramfs -u -k all
+# The tests set OVERLAYROOT_RW_MOUNTS, OVERLAYROOT_RW_LOG and OVERLAYROOT_RW_KMSG in place of
+# /proc/mounts, the log and /dev/kmsg.
+PREREQ="overlayroot"
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+    prereqs) prereqs; exit 0 ;;
+esac
+
+mounts="${OVERLAYROOT_RW_MOUNTS:-/proc/mounts}"
+log="${OVERLAYROOT_RW_LOG:-/run/overlayroot-rw.log}"
+kmsg="${OVERLAYROOT_RW_KMSG:-/dev/kmsg}"
+root="${rootmnt:-/root}"
+
+# Note MESSAGE in the kernel log and in the log file.
+note() {
+    echo "overlayroot-rw: $*" >> "$kmsg" 2> /dev/null
+    echo "$*" >> "$log" 2> /dev/null
+}
+
+# The options of overlayroot's overlay at the root, if it is there.
+opts=""
+while read -r dev target type options _; do
+    if [ "$dev" = overlayroot ] && [ "$target" = "$root" ] && [ "$type" = overlay ]; then
+        opts=$options
+    fi
+done < "$mounts"
+if [ -z "$opts" ]; then
+    note "no overlayroot overlay at $root: nothing to do"
+    exit 0
+fi
+case ",$opts," in
+    *,ro,*) note "the overlay is read-only: $opts" ;;
+    *) note "the overlay is read-write already"; exit 0 ;;
+esac
+layers=$(echo "$opts" | tr ',' '\n' | grep -E '^(lowerdir|upperdir|workdir)=' | tr '\n' ',')
+layers=${layers%,}
+if [ -z "$layers" ]; then
+    note "no lowerdir, upperdir or workdir in its options: nothing done"
+    exit 0
+fi
+
+# The mounts under the root, and of them the top ones, which no other one holds.
+all=$(while read -r _ target _; do
+    case $target in "$root"/*) echo "$target" ;; esac
+done < "$mounts")
+tops=""
+for t in $all; do
+    inner=0
+    for s in $all; do
+        [ "$s" = "$t" ] && continue
+        case $t in "$s"/*) inner=1 ;; esac
+    done
+    [ "$inner" = 1 ] || tops="$tops $t"
+done
+moved="" newdev=0
+
+# Move the top mounts taken out back under the root.
+put_back() {
+    for t in $moved; do
+        mount --move "${t#"$root"}" "$t" || note "cannot move $t back"
+    done
+}
+
+for t in $tops; do
+    mkdir -p "${t#"$root"}"
+    if mount --move "$t" "${t#"$root"}"; then
+        moved="$moved $t"
+    elif [ "$t" = "$root/dev" ]; then
+        note "cannot move $root/dev out: it is mounted anew in the new root"
+        newdev=1
+    else
+        note "cannot move $t out: the root stays read-only"
+        put_back
+        exit 0
+    fi
+done
+if umount "$root" 2> /dev/null; then
+    note "the read-only overlay is unmounted"
+elif umount -l "$root"; then
+    note "the read-only overlay was busy: detached it"
+else
+    note "cannot unmount the read-only overlay, not even lazily: it stays"
+    put_back
+    exit 0
+fi
+if mount -t overlay -o "rw,$layers" overlayroot "$root"; then
+    note "the overlay is mounted read-write"
+    # overlayroot's fstab may name / "ro,...", which systemd would apply again.
+    fstab="$root/etc/fstab"
+    if ! grep -q -E '^overlayroot[[:space:]]+/[[:space:]]' "$fstab" 2> /dev/null; then
+        note "fstab: no overlayroot line, nothing to change"
+    elif sed -i -E 's#^(overlayroot[[:space:]]+/[[:space:]]+overlay[[:space:]]+)ro,#\1rw,#' \
+        "$fstab"; then
+        note "fstab: $(grep -E '^overlayroot[[:space:]]+/[[:space:]]' "$fstab" |
+            tr -s ' \t' ' ' | cut -d ' ' -f 1-4 | cut -d , -f 1)"
+    else
+        note "cannot edit $fstab"
+    fi
+else
+    note "the read-write overlay failed: mounting it read-only again"
+    mount -t overlay -o "ro,$layers" overlayroot "$root" || note "the overlay does not mount again"
+fi
+put_back
+if [ "$newdev" = 1 ]; then
+    if mount -t devtmpfs -o nosuid,mode=0755 udev "$root/dev" && mkdir -p "$root/dev/pts" &&
+        mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts "$root/dev/pts"; then
+        note "mounted /dev and /dev/pts anew"
+    else
+        note "cannot mount /dev anew"
+    fi
+fi
+exit 0

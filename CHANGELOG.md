@@ -310,6 +310,14 @@ with the owner's original script.
   read-only, and copy the saved menu back. Each finds BOOT by its label, asks for
   administrator rights itself where it needs them, and refuses, changing nothing, when BOOT
   is not there. `tests/tools.bats` runs their refusals under `pwsh`.
+- `contrib/initramfs/overlayroot-rw`, an opt-in initramfs-tools script for the live and forensic
+  entries. On kernels where overlayroot builds its RAM layer read-only and overlayfs refuses to
+  make it writable later, their login fails on a read-only `/home`. Right after overlayroot,
+  and only then, it mounts the same layers read-write, and leaves the disk below read-only. It
+  moves only the top mounts under the root and mounts `/dev` anew when that will not move; on
+  any failure it leaves the root read-only. It logs each step to the kernel log and to
+  `/run/overlayroot-rw.log`. `docs/migration.md` has a section "Live and forensic mode" with its
+  install and removal. `tests/contrib.bats` covers each path with stub mount commands.
 
 ### Changed
 

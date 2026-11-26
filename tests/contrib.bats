@@ -48,9 +48,10 @@ run_script() {
         sh "$SCRIPT" "$@"
 }
 
-# Print the calls of mount and umount the run made, in order.
+# Print the calls of mount and umount the run made, in order, without the stubs' %q escapes,
+# which put a backslash before each comma of the overlay's options.
 calls() {
-    grep -E '^(mount|umount) ' "$STUB_LOG" || true
+    grep -E '^(mount|umount) ' "$STUB_LOG" | sed 's/\\\(.\)/\1/g' || true
 }
 
 @test "overlayroot-rw names overlayroot as its prerequisite" {
@@ -125,14 +126,14 @@ calls() {
     run_script
     [ "$status" -eq 0 ]
     [ "$(calls | grep -c -- '-t overlay')" -eq 0 ]
-    [ "$(calls | grep -c -- '--move /')" -eq 3 ]
+    [ "$(calls | grep -c -E '^mount --move /(dev|media)')" -eq 3 ]
     # The read-write overlay fails: the same layers go back read-only.
     export UMOUNT_STATUS=0 UMOUNT_L_STATUS=0 MOUNT_FAIL_RW=1
     : > "$STUB_LOG"
     run_script
     [ "$status" -eq 0 ]
     calls | grep -q -x "mount -t overlay -o ro,$LAYERS overlayroot $R"
-    [ "$(calls | grep -c -- '--move /')" -eq 3 ]
+    [ "$(calls | grep -c -E '^mount --move /(dev|media)')" -eq 3 ]
     grep -q -x 'the read-write overlay failed: mounting it read-only again' \
         "$BATS_TEST_TMPDIR/log"
     [ "$(cut -f 4 "$R/etc/fstab" | cut -d , -f 1)" = ro ]

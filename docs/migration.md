@@ -295,6 +295,49 @@ No item should fail now: `kali-menu` and `tripwire` are `ok`, and `deployed` is 
 export you copied, or skips when `output_dir` holds none, as after a write of `migrate`, which
 removes an export it makes stale.
 
+## Live and forensic mode
+
+`menu_variants` in `/etc/kernel-updater.conf` can add two more entries for the newest kernel:
+`menu_variants = default,failsafe,live,forensic`. Both boot through overlayroot, which puts a
+layer in RAM over the root filesystem, so nothing a session changes reaches the disk:
+
+- live, `overlayroot=tmpfs:recurse=0`: the root alone gets the RAM layer;
+- forensic, `overlayroot=tmpfs`: every mounted filesystem gets one, and swap stays off.
+
+The package `overlayroot` must be installed and in the initrd. To check, read-only:
+
+```bash
+dpkg -l overlayroot | tail -1; sudo lsinitramfs /boot/initrd.img | grep -c overlayroot
+```
+
+An `ii  overlayroot` line and a number above 0 mean it is there; otherwise `sudo apt install
+overlayroot`, then `sudo update-initramfs -u -k all`. The menu stage refuses `live` and
+`forensic` while the initrd lacks it. After the finalize stage the menu stage no longer
+rewrites `kali.cfg`, so add them before finalize, or roll finalize back first.
+
+On some kernels, as 7.1.5 with overlayroot 0.18, overlayroot builds its layer read-only, since
+the entries keep `ro` on the kernel line, and overlayfs refuses to make it writable later: the
+login fails right after the password and comes back, because `/home` is read-only. The script
+`contrib/initramfs/overlayroot-rw` fixes that from the initramfs. It runs right after
+overlayroot, and only when the root is its overlay mounted read-only, it mounts the same layers
+again read-write. The disk below stays read-only, a normal boot is left alone, and on any
+failure the root stays read-only, as before. From the checkout:
+
+```bash
+sudo install -m 0755 contrib/initramfs/overlayroot-rw /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
+sudo update-initramfs -u -k all
+```
+
+It worked when a boot of the forensic entry logs in, `findmnt -no FSTYPE,OPTIONS /` prints
+`overlay rw,...`, and `/run/overlayroot-rw.log` ends with `the overlay is mounted read-write`.
+In a normal boot the log says `no overlayroot overlay at /root: nothing to do`. To take it out
+again:
+
+```bash
+sudo rm /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
+sudo update-initramfs -u -k all
+```
+
 ## Routine use afterwards
 
 Update as usual with `/boot` unlocked and mounted, `sudo apt full-upgrade`: nothing on the
