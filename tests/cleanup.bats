@@ -1850,6 +1850,63 @@ it"* ]]
     private_output
 }
 
+@test "A lock apt or dpkg takes after a tree's re-check began leaves it, removed or moved" {
+    local tree=/usr/lib/modules/9.0.9+kali-amd64
+    lock_line 4242 /var/lib/dpkg/lock-frontend apt-get > "$BATS_TEST_TMPDIR/held"
+    export DKMS_COUNT="$BATS_TEST_TMPDIR/dkms.count" HELD="$BATS_TEST_TMPDIR/held"
+    export LOCKS="$ROOT/proc/locks"
+    # The plan asks dkms once; the re-check before the action asks it again, and apt takes its
+    # lock meanwhile, after the first look at the locks.
+    mkstub dkms <<'EOF'
+n=$(( $(cat "$DKMS_COUNT" 2> /dev/null || echo 0) + 1 ))
+printf '%s\n' "$n" > "$DKMS_COUNT"
+(( n < 2 )) || cat "$HELD" > "$LOCKS"
+exit 0
+EOF
+    # An empty tree, which rmdir would remove.
+    module_tree /usr/lib/modules 9.0.9+kali-amd64
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: left $tree where it is: apt or dpkg is running: PID 4242 \
+(apt-get) holds /var/lib/dpkg/lock-frontend; run cleanup again once it is done"* ]]
+    [ -d "$ROOT$tree" ]
+    refute_line_match '^rmdir( |$)' "$STUB_LOG"
+    # A tree that would move into the quarantine: it stays, and so does no entry.
+    : > "$LOCKS"
+    rm "$DKMS_COUNT"
+    module_tree /usr/lib/modules 9.0.9+kali-amd64 kernel/a.ko
+    run_ku cleanup --yes
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"warning: left $tree where it is: apt or dpkg is running: PID 4242"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    [ -z "$(entries)" ]
+    refute_line_match '^mv --no-copy' "$STUB_LOG"
+    private_output
+}
+
+@test "A quarantine entry that cannot be named exits 3 while the run changed nothing else" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 base="$ROOT/var/lib/kernel-updater/quarantine"
+    local s stamp now=$DATE_NOW
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
+    # date prints no time to name the entry by.
+    export DATE_NOW=""
+    run_ku cleanup --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"date prints no time to name the quarantine entry by; nothing was"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+    # The quarantine holds an entry for this release of each of the next 10 seconds.
+    export DATE_NOW=$now
+    for s in 0 1 2 3 4 5 6 7 8 9; do
+        TZ=UTC0 printf -v stamp '%(%Y%m%dT%H%M%SZ)T' "$(( DATE_NOW + s ))"
+        (umask 077 && mkdir "$base/9.0.8+kali-amd64.$stamp")
+    done
+    run_ku cleanup --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"holds an entry for 9.0.8+kali-amd64 of each of the last 10 seconds;"* ]]
+    [[ "$stderr" == *"nothing was changed"* ]]
+    [ -f "$ROOT$tree/kernel/a.ko" ]
+}
+
 @test "With a merged /usr cleanup scans one modules directory, and both with a separate /lib" {
     module_tree /usr/lib/modules 9.0.8+kali-amd64
     ln -s usr/lib "$ROOT/lib"
@@ -2143,20 +2200,24 @@ was changed"* ]]
     [[ "$stderr" == *"plan: delete quarantine entry $a: 40 days old (quarantine_days 30)"*"plan: \
 then sync"*"dry run: nothing was changed"* ]]
     find "$ROOT" | sort | cmp - "$before"
-    # Without a terminal to ask on, or with a no, nothing expires either; a run that may change
-    # things writes seen as it plans, as its own bookkeeping.
+    # Without a terminal to ask on, or with a no, nothing expires either, and no seen is
+    # written: a run that asks writes seen only once it goes ahead, so a declined run changes
+    # nothing, as it says.
     run_ku cleanup
     [ "$status" -eq 10 ]
     [[ "$stderr" == *"no terminal to confirm on"* ]]
-    [ "$(< "$ROOT$Q/$b/seen")" = 20261114T120000Z ]
     printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
     run_ku cleanup
     [ "$status" -eq 10 ]
     [[ "$stderr" == *"declined; nothing was changed"* ]]
-    [ "$(< "$ROOT$Q/$a/tree/kernel/a.ko")" = module ]
-    [ -f "$ROOT$Q/$a/origin" ]
-    [ -f "$ROOT$Q/$a/seen" ]
+    find "$ROOT" | sort | cmp - "$before"
     refute_line_match '^(rm|rmdir|sync)( |$)' "$STUB_LOG"
+    # A yes writes it, and deletes the old entry.
+    printf 'y\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku cleanup
+    [ "$status" -eq 0 ]
+    [ "$(< "$ROOT$Q/$b/seen")" = 20261114T120000Z ]
+    [ ! -e "$ROOT$Q/$a" ]
 }
 
 @test "A quarantine entry that changed or went once the question was answered is left alone" {
