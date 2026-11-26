@@ -546,8 +546,10 @@ backups() {
     cmp "$BATS_TEST_TMPDIR/kernel-img.before" "$ROOT/etc/kernel-img.conf"
     [ -z "$(backups)" ]
     refute_line_match '^linux-update-symlinks' "$STUB_LOG"
-    # Without the other image, the lone kernel takes all four links.
+    # Without the other image, the lone kernel takes all four links; an uncompressed vmlinux
+    # of that same kernel is no other image.
     rm "$ROOT/boot/vmlinuz-$V1"
+    printf 'elf\n' > "$ROOT/boot/vmlinux-$V2"
     run_ku migrate --stage system --yes
     [ "$status" -eq 0 ]
     [ "$(boot_links vmlinuz vmlinuz.old initrd.img initrd.img.old)" = "$(printf '%s\n' \
@@ -700,6 +702,8 @@ backups() {
     run_ku migrate --stage menu --yes
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"kernel-img.conf does not have linux-base keep the links in /boot: run"* ]]
+    # The links in /boot are named too, as they are not there yet.
+    [[ "$stderr" == *"vmlinuz is missing or no symlink"* ]]
     system_done
     export GSC_FAIL=kali.cfg
     run_ku migrate --stage menu --yes

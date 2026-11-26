@@ -222,6 +222,26 @@ setup() {
     [ "$output" = mawk ]
 }
 
+@test "A file whose name starts with a dash reaches grub-script-check as a file" {
+    # grub-script-check takes such a name for an option, as its argument parser does.
+    mkstub grub-script-check <<'EOF'
+[[ $1 != -* ]] || { printf 'grub-script-check: unrecognized option\n' >&2; exit 64; }
+exit 0
+EOF
+    cp "$REPO_DIR/examples/grub.cfg" "$BATS_TEST_TMPDIR/-x.cfg"
+    cd "$BATS_TEST_TMPDIR"
+    run_ku lint --porcelain -- -x.cfg
+    [[ "$output" != *$'\tsyntax\t'* ]]
+}
+
+@test "A bare #start line marks the entries after it, as migrate's scan takes it" {
+    printf '%s\n' '#start' 'menuentry "Kali" {' \
+        '	cryptomount -u 5ca1ab1e000040008000000000000c01' '}' '#end' \
+        > "$BATS_TEST_TMPDIR/bare.cfg"
+    run_ku lint --porcelain "$BATS_TEST_TMPDIR/bare.cfg"
+    [[ "$output" == *$'\t1\twarning\tmbusb-marker\t'* ]]
+}
+
 @test "lint.awk gives the same findings under mawk and under gawk" {
     local awk_bin
     for awk_bin in mawk gawk; do

@@ -25,6 +25,25 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
+@test "The seams KU_ROOT, KU_TTY and KU_LOCKFILE count only with KU_TEST=1" {
+    # shellcheck disable=SC2016 # the inner script expands its own variables
+    local code='. "$1"; printf "%s|%s|%s\n" "$KU_ROOT" "$KU_TTY" "$KU_LOCKFILE"'
+    # A KU_ROOT left in root's environment, as with sudo -E, must not move what the hooks check.
+    run env -u KU_TEST KU_ROOT=/srv/root KU_TTY=/srv/tty KU_LOCKFILE=/srv/lock \
+        bash -c "$code" _ "$REPO_DIR/lib/kernel-updater/common.sh"
+    [ "$output" = "/|/dev/tty|/run/kernel-updater.lock" ]
+    run env KU_TEST=1 KU_ROOT=/srv/root KU_TTY=/srv/tty KU_LOCKFILE=/srv/lock \
+        bash -c "$code" _ "$REPO_DIR/lib/kernel-updater/common.sh"
+    [ "$output" = "/srv/root|/srv/tty|/srv/lock" ]
+}
+
+@test "ku_ask takes a yes that ends in a carriage return, as ku_ask_person does" {
+    printf 'y\r\n' > "$BATS_TEST_TMPDIR/tty"
+    run_ku_lib 'ku_ask "Go on?" && echo yes'
+    [ "$status" -eq 0 ]
+    [ "$output" = yes ]
+}
+
 @test "ku_lock maps flock's busy status to 75 and any other failure to 1" {
     KU_LOCKFILE="$BATS_TEST_TMPDIR/lock"
     mkstub flock <<< 'exit 1'

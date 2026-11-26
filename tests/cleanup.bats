@@ -279,6 +279,8 @@ if [[ " $* " == *" -s "* ]]; then
     purge=0
     for arg in "$@"; do
         if (( purge )) && [[ $arg != "${APT_SIM_SKIP:-}" ]]; then
+            # apt names a package of the native architecture without it, as with APT_BARE.
+            [[ -z ${APT_BARE:-} ]] || arg=${arg%%:*}
             printf 'Purg %s [9.0-1kali1]\n' "$arg"
         elif [[ $arg == purge ]]; then
             purge=1
@@ -1430,6 +1432,15 @@ versioned kernel package)"* ]]
     [ "$(apt_calls | tail -n 1)" = "apt-get -s $PURGE_OPTS linux-headers-8.9.9+kali-common \
 linux-image-$OLD" ]
     private_output
+}
+
+@test "A package dpkg names with its architecture matches apt's name without it" {
+    listed "linux-image-$V0:amd64" rc
+    export APT_BARE=1
+    run_ku cleanup -n
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"config files left: linux-image-$V0:amd64"* ]]
+    [[ "$stderr" != *"apt would also remove"* ]]
 }
 
 @test "A held candidate is skipped, and an old kernel marked manual is listed with a hint" {

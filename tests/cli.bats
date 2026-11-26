@@ -57,6 +57,12 @@ setup() {
     done
 }
 
+@test "--config= with no file after the = says it needs a file" {
+    run_ku --config= lint "$REPO_DIR/examples/grub.cfg"
+    [ "$status" -eq 64 ]
+    [[ "$stderr" == *"--config needs a file"* ]]
+}
+
 @test "-c with a file that does not exist exits 78" {
     run_ku -c "$BATS_TEST_TMPDIR/none.conf" lint "$REPO_DIR/examples/grub.cfg"
     [ "$status" -eq 78 ]

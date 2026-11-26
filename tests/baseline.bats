@@ -349,6 +349,19 @@ EOF
     [[ "$output" != *$'changed\t'* ]]
 }
 
+@test "Baseline names keep the blanks at their ends, as an NTFS file name may have them" {
+    local a b stored
+    a=$(printf 'a\n' | sha256sum | cut -d ' ' -f 1)
+    b=$(printf 'b\n' | sha256sum | cut -d ' ' -f 1)
+    # Two entries whose names differ only by a trailing blank.
+    stored=$(printf '%s  %s\n' "$a" 'multibootusb/x.cfg ' "$b" 'multibootusb/x.cfg')
+    # shellcheck disable=SC2016 # the code expands its own variables
+    run_ku_lib 'ku_baseline_compare "$1" "$1"; printf "%s|%s" "$KU_BL_SAME" \
+        "${#KU_BL_CHANGED[@]}"' "$stored"
+    [ "$status" -eq 0 ]
+    [ "$output" = "2|0" ]
+}
+
 @test "baseline exits 77 when not root, 75 while locked, and 64 on a usage error" {
     export ID_U=1000
     run_ku baseline --yes
