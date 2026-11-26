@@ -860,6 +860,7 @@ others_ok() {
     printf 'not a baseline\n' > "$ROOT/var/lib/kernel-updater/baseline"
     run_check
     expect_item tripwire fail "the stored baseline is damaged"
+    expect_item tripwire fail "run '$SUDO_KU baseline' to record it anew"
 }
 
 @test "deployed skips without an export and fails when a file differs or is missing" {

@@ -344,6 +344,7 @@ backups() {
     [[ "$stderr" == *"run '$SUDO_KU migrate --stage detect' first"* ]]
     [[ "$SUDO_KU" == "sudo /"*"/bin/kernel-updater" ]]
     # Library code without bin/kernel-updater names the installed path.
+    # shellcheck disable=SC2016 # the code expands its own variables
     run_ku_lib 'printf "%s\n" "$KU_CMD"'
     [ "$status" -eq 0 ]
     [ "$output" = "sudo /usr/local/bin/kernel-updater" ]
@@ -561,7 +562,7 @@ backups() {
     run_ku migrate --stage system --yes
     [ "$status" -eq 4 ]
     [[ "$stderr" == *"after the system stage, vmlinuz.old does not point at the files of $V2;"* ]]
-    [[ "$stderr" == *"initrd.img.old does not point at the files of $V2; 'kernel-updater"* ]]
+    [[ "$stderr" == *"initrd.img.old does not point at the files of $V2; '$SUDO_KU "* ]]
     # Run again, the stage takes .old links on another kernel that would boot for its result,
     # as linux-base keeps them from then on, but not links on one that would not boot.
     export LUS_OLD=""

@@ -640,7 +640,7 @@ EOF
     : > "$ROOT/var/lib/dpkg/updates/0003"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"dpkg was interrupted: run 'dpkg --configure -a', then 'kernel-updater"* ]]
+    [[ "$stderr" == *"dpkg was interrupted: run 'dpkg --configure -a', then '$SUDO_KU "* ]]
     [[ "$stderr" == *"check'; nothing was changed"* ]]
     [ -z "$output" ]
 }

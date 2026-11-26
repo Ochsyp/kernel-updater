@@ -16,6 +16,7 @@ TESTS_DIR="$BATS_TEST_DIRNAME"
 REPO_DIR=$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)
 # How the tool's advice names it when run_ku starts it: sudo and the real path of
 # bin/kernel-updater, as sudo's secure_path may lack the directory it is in.
+# shellcheck disable=SC2034 # read by the .bats files
 SUDO_KU="sudo $(printf '%q' "$(readlink -f "$REPO_DIR/bin/kernel-updater")")"
 
 # Create the per-test stub directory and the log every stub appends its call to.

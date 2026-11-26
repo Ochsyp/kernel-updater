@@ -455,5 +455,10 @@ with the owner's original script.
   when there is none. The manual steps A and E in `docs/migration.md` use the same folder. A
   copy left on the Desktop by an earlier step A is not found any more: move it into that folder
   to keep it as the way back.
+- Every message that says what to run next, and `DEPLOY.txt`, names the tool as `sudo` and the
+  path it was started from, shell-quoted, as `sudo /usr/local/bin/kernel-updater check`, instead
+  of `kernel-updater check` or `sudo kernel-updater check`. sudo's `secure_path` may lack
+  `/usr/local/bin`, as on Kali, and a bare name then gave `command not found`. The commands in
+  `README.md`, `docs/migration.md` and `docs/runbook.md` name the full path too.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

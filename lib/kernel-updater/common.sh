@@ -26,6 +26,13 @@ else
     KU_ROOT=/ KU_TTY=/dev/tty KU_LOCKFILE=/run/kernel-updater.lock
 fi
 
+# How the lines that say what to run next name this tool: sudo and the path it was started
+# from, shell-quoted, which bin/kernel-updater sets as KU_SELF, or the installed path for code
+# started without it. Never the bare name: sudo's secure_path may lack /usr/local/bin, as on
+# Kali, and then answers "command not found".
+# shellcheck disable=SC2034 # read by the files that source this library
+printf -v KU_CMD 'sudo %q' "${KU_SELF:-/usr/local/bin/kernel-updater}"
+
 # Functions ku_on_exit runs when the process ends, in reverse order of registration.
 KU_CLEANUP=()
 

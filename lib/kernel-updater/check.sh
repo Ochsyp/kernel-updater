@@ -849,18 +849,18 @@ _ku_check_tripwire() {
     local file stored current detail
     file=$(ku_path "$KU_BASELINE")
     if [[ ! -e $file ]]; then
-        _ku_check_add warn tripwire "no baseline is stored: run 'kernel-updater baseline' to" \
+        _ku_check_add warn tripwire "no baseline is stored: run '$KU_CMD baseline' to" \
             "record one"
     elif ! stored=$(ku_baseline_read "$file"); then
-        _ku_check_add fail tripwire "the stored baseline is damaged: run 'kernel-updater" \
-            "baseline' to record it anew"
+        _ku_check_add fail tripwire "the stored baseline is damaged: run" \
+            "'$KU_CMD baseline' to record it anew"
     elif ! current=$(ku_baseline_hash "$KU_DK_ROOT"); then
         _ku_check_add fail tripwire "cannot hash the stick's boot code"
     else
         ku_baseline_compare "$stored" "$current"
         if (( ${#KU_BL_CHANGED[@]} + ${#KU_BL_NEW[@]} + ${#KU_BL_MISSING[@]} )); then
             _ku_check_add fail tripwire "$(ku_baseline_summary) since the baseline was" \
-                "recorded: if you made those changes, run 'kernel-updater baseline' to" \
+                "recorded: if you made those changes, run '$KU_CMD baseline' to" \
                 "record them"
         else
             detail="the $KU_BL_SAME entries of the baseline match"
@@ -986,7 +986,7 @@ _ku_check_kali_menu() {
         _ku_check_add skip kali-menu "not migrated yet: grub.cfg does not source kali.cfg"
     elif (( ! exists )); then
         _ku_check_add fail kali-menu "grub.cfg sources multibootusb/grub/kali.cfg, which is" \
-            "missing, so the Kali entries are gone from the menu: 'kernel-updater migrate" \
+            "missing, so the Kali entries are gone from the menu: '$KU_CMD migrate" \
             "--stage menu' writes it anew, once a rollback of the finalize stage, when it ran," \
             "brought the legacy entries back"
     elif (( ! sources )); then
@@ -997,7 +997,7 @@ _ku_check_kali_menu() {
         _ku_check_add fail kali-menu "the braces or quotes of grub.cfg do not balance"
     elif (( legacy )); then
         _ku_check_add warn kali-menu "grub.cfg sources kali.cfg, and its legacy Kali entries" \
-            "remain: run 'kernel-updater migrate --stage finalize' after the boot tests"
+            "remain: run '$KU_CMD migrate --stage finalize' after the boot tests"
     else
         _ku_check_add ok kali-menu "grub.cfg sources multibootusb/grub/kali.cfg, and no legacy" \
             "Kali entries remain"

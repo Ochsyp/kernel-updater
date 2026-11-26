@@ -311,7 +311,7 @@ _ku_mg_stage_detect() {
     ku_config_load "$file"
     _ku_mg_options
     ku_log info "migrate detect: appended ${#add[@]} key(s) to /etc/kernel-updater.conf; next:" \
-        "'kernel-updater check', then 'kernel-updater migrate --stage system -n'"
+        "'$KU_CMD check', then '$KU_CMD migrate --stage system -n'"
 }
 
 # Find what detect fills: set KU_MG_VALUE and KU_MG_ORIGIN by key. Exits as detect says.
@@ -872,7 +872,7 @@ _ku_mg_system_verify() {
 
 # Exit 4 with MESSAGE, adding that the backup restores what the system stage changed.
 _ku_mg_system_die() {
-    ku_die "$KU_EX_WRITE" "$1; 'kernel-updater migrate --rollback' restores kernel-img.conf and" \
+    ku_die "$KU_EX_WRITE" "$1; '$KU_CMD migrate --rollback' restores kernel-img.conf and" \
         "the links in / from the backup $KU_MG_BACKUPS/$KU_MG_STAMP"
 }
 
@@ -960,7 +960,7 @@ _ku_mg_stage_menu() {
         if ! _ku_mg_baseline_set "$KU_MG_KALI" "$expk" "$sumk" "$KU_MG_GRUB" "$expg" "$sumg"
         then
             ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
-                "damaged: run 'kernel-updater baseline' after the finalize stage"
+                "damaged: run '$KU_CMD baseline' after the finalize stage"
         fi
         _ku_mg_drift_warn
     fi
@@ -975,7 +975,7 @@ _ku_mg_menu_done() {
     fi
     ku_log info "migrate menu: done; the backup is $KU_MG_BACKUPS/$KU_MG_STAMP"
     ku_log info "now boot the new entries, '$first' first, natively and in the VM; the legacy" \
-        "entries stay in the menu as a fallback. Then run 'kernel-updater migrate --stage" \
+        "entries stay in the menu as a fallback. Then run '$KU_CMD migrate --stage" \
         "finalize'"
 }
 
@@ -995,7 +995,7 @@ _ku_mg_menu_again() {
     elif (( KU_MG_COUNT == 0 )); then
         ku_die "$KU_EX_REFUSED" "grub.cfg sources kali.cfg, which is missing, and holds no" \
             "legacy Kali entries to take its parameters from, as after the finalize stage: roll" \
-            "that stage back with 'kernel-updater migrate --rollback', then run the menu stage" \
+            "that stage back with '$KU_CMD migrate --rollback', then run the menu stage" \
             "again, which writes kali.cfg anew; nothing was changed"
     fi
     n=$KU_MG_FOUND
@@ -1085,7 +1085,7 @@ _ku_mg_kali_deploy() {
     _ku_mg_retire_export kali.cfg "$3"
     if ! _ku_mg_baseline_set "$KU_MG_KALI" "$2" "$3"; then
         ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
-            "damaged: run 'kernel-updater baseline'"
+            "damaged: run '$KU_CMD baseline'"
     fi
     _ku_mg_drift_warn
 }
@@ -1586,7 +1586,7 @@ _ku_mg_stage_finalize() {
     fi
     if (( status == 2 )) || ! ku_menu_sources_kali "$tmp/grub.cfg.old"; then
         ku_die "$KU_EX_REFUSED" "grub.cfg does not source kali.cfg yet, or kali.cfg is missing:" \
-            "run 'kernel-updater migrate --stage menu' first; nothing was changed"
+            "run '$KU_CMD migrate --stage menu' first; nothing was changed"
     fi
     _ku_mg_scan_one "$tmp/grub.cfg.old" "$KU_MG_LEGACY" 0
     if (( KU_MG_COUNT == 0 )); then
@@ -1641,7 +1641,7 @@ _ku_mg_stage_finalize() {
 _ku_mg_finalize_deploy() {
     if [[ $KU_DK_DEPLOY == export ]]; then
         _ku_mg_export "$1/grub.cfg"
-        ku_log info "once Windows copied grub.cfg, run 'sudo kernel-updater baseline' to record" \
+        ku_log info "once Windows copied grub.cfg, run '$KU_CMD baseline' to record" \
             "the stick's boot code for check's tripwire"
         return 0
     fi
@@ -1665,19 +1665,19 @@ _ku_mg_finalize_baseline() {
     if [[ ! -e $file && ! -L $file ]]; then
         if ! ku_baseline_record "$KU_DK_ROOT"; then
             ku_log warning "the baseline was not recorded, as the stick's boot code cannot be" \
-                "hashed: run 'sudo kernel-updater baseline'"
+                "hashed: run '$KU_CMD baseline'"
         fi
         return 0
     fi
     if ! _ku_mg_baseline_set "$KU_MG_GRUB" "$1" "$2" || ! stored=$(ku_baseline_read "$file")
     then
         ku_log warning "the tripwire's baseline is damaged, so grub.cfg's entry was not" \
-            "updated: run 'sudo kernel-updater baseline'"
+            "updated: run '$KU_CMD baseline'"
         return 0
     fi
     if ! current=$(ku_baseline_hash "$KU_DK_ROOT"); then
         ku_log warning "the stick's boot code cannot be hashed, so whether it differs from the" \
-            "tripwire's baseline beyond grub.cfg is unknown: run 'sudo kernel-updater baseline'"
+            "tripwire's baseline beyond grub.cfg is unknown: run '$KU_CMD baseline'"
         return 0
     fi
     # grub.cfg's entry holds the file written now, unless it drifted, so only what the
@@ -1686,8 +1686,8 @@ _ku_mg_finalize_baseline() {
     # shellcheck disable=SC2153 # ku_baseline_compare in baseline.sh sets the KU_BL_ arrays
     if (( ${#KU_BL_CHANGED[@]} + ${#KU_BL_NEW[@]} + ${#KU_BL_MISSING[@]} )); then
         ku_log warning "the stick differs from the tripwire's baseline in files finalize does" \
-            "not record: $(ku_baseline_summary). Check those files, then run 'sudo" \
-            "kernel-updater baseline', which shows them again and records them"
+            "not record: $(ku_baseline_summary). Check those files, then run" \
+            "'$KU_CMD baseline', which shows them again and records them"
     fi
 }
 
@@ -1751,7 +1751,7 @@ _ku_mg_drift_plan() {
     ku_plan "$(ku_join "${KU_MG_DRIFTED[@]}") $verb from the tripwire's baseline, as" \
         "after a change from Windows since it was recorded: look at the stick before you" \
         "answer. The write leaves the baseline entry as it was, so check's tripwire keeps" \
-        "reporting the change until 'kernel-updater baseline' records it"
+        "reporting the change until '$KU_CMD baseline' records it"
 }
 
 # Warn, after a write, that the files in KU_MG_DRIFTED differed from the tripwire's baseline
@@ -1764,7 +1764,7 @@ _ku_mg_drift_warn() {
     fi
     ku_log warning "$(ku_join "${KU_MG_DRIFTED[@]}") differed from the tripwire's baseline" \
         "before this write, so the baseline keeps its old entry and check's tripwire keeps" \
-        "reporting the change: look at the stick, then run 'sudo kernel-updater baseline'," \
+        "reporting the change: look at the stick, then run '$KU_CMD baseline'," \
         "which shows what differs and records it"
 }
 
@@ -2188,7 +2188,7 @@ _ku_mg_rollback_write() {
     _ku_mg_retire_export grub.cfg "$3"
     if ! _ku_mg_baseline_set "$KU_MG_GRUB" "$2" "$3"; then
         ku_log warning "the tripwire's baseline was not updated, as none is stored or it is" \
-            "damaged: run 'kernel-updater baseline'"
+            "damaged: run '$KU_CMD baseline'"
     fi
     _ku_mg_drift_warn
 }
@@ -2240,7 +2240,7 @@ _ku_mg_legacy_kernels() {
         ku_die "$KU_EX_REFUSED" "the Kali entries of the grub.cfg in the backup $stamp boot no" \
             "kernel /boot holds now${list:+ (they name $list)}, so written back it would leave" \
             "the stick without a Kali entry that boots: the menu stage stays. kali.cfg, which" \
-            "grub.cfg sources, is missing or cannot be read too: run 'kernel-updater migrate" \
+            "grub.cfg sources, is missing or cannot be read too: run '$KU_CMD migrate" \
             "--stage menu', which writes it anew from the legacy entries; nothing was changed"
     fi
     if [[ -n $list ]]; then
@@ -2289,7 +2289,7 @@ _ku_mg_need_detect() {
     done
     if (( ${#missing[@]} )); then
         ku_die "$KU_EX_REFUSED" "the configuration lacks $(ku_join "${missing[@]}"): run" \
-            "'kernel-updater migrate --stage detect' first; nothing was changed"
+            "'$KU_CMD migrate --stage detect' first; nothing was changed"
     fi
 }
 
@@ -2302,7 +2302,7 @@ _ku_mg_need_system() {
         problem="kernel-img.conf does not have linux-base keep the links in /boot"
     fi
     if [[ -n $problem ]]; then
-        ku_die "$KU_EX_REFUSED" "$problem: run 'kernel-updater migrate --stage system' first;" \
+        ku_die "$KU_EX_REFUSED" "$problem: run '$KU_CMD migrate --stage system' first;" \
             "nothing was changed"
     fi
 }
