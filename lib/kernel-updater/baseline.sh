@@ -256,7 +256,7 @@ _ku_baseline_cleanup() {
 # is no name and SHA-256; exits 4 when the write fails. With --dry-run it checks the same and
 # says what it would record, but writes nothing, as the files were not written either.
 ku_baseline_update() {
-    local file stored hash name names count=$(( $# / 2 ))
+    local file stored name names count=$(( $# / 2 ))
     local -A sums=()
     (( $# > 0 && $# % 2 == 0 )) || return 1
     file=$(ku_path "$KU_BASELINE")
@@ -469,7 +469,7 @@ _ku_baseline_sums() {
 # alike, and KU_BL_CHANGED, KU_BL_NEW and KU_BL_MISSING to the sorted names that differ, are
 # only in CURRENT, or are only in STORED.
 ku_baseline_compare() {
-    local hash name
+    local name
     local -A old=() new=()
     KU_BL_SAME=0 KU_BL_CHANGED=() KU_BL_NEW=() KU_BL_MISSING=()
     _ku_baseline_sums "$1" old
