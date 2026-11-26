@@ -14,10 +14,12 @@ SCRIPTS=(install.sh bin/kernel-updater lib/kernel-updater/common.sh
     lib/kernel-updater/check.sh lib/kernel-updater/hook.sh lib/kernel-updater/disk.sh
     lib/kernel-updater/deploy.sh lib/kernel-updater/baseline.sh lib/kernel-updater/migrate.sh
     lib/kernel-updater/cleanup.sh)
-# POSIX sh scripts: the git hooks, apt-guard and the kernel hooks install.sh installs.
+# POSIX sh scripts: the git hooks, apt-guard, the kernel hooks install.sh installs, and the
+# initramfs script in contrib.
 HOOKS=(.githooks/pre-commit .githooks/pre-push .githooks/privacy-scan lib/kernel-updater/apt-guard
     hooks/kernel/preinst.d/00-kernel-updater hooks/kernel/prerm.d/00-kernel-updater
-    hooks/kernel/postinst.d/00-kernel-updater hooks/kernel/postinst.d/kernel-updater)
+    hooks/kernel/postinst.d/00-kernel-updater hooks/kernel/postinst.d/kernel-updater
+    contrib/initramfs/overlayroot-rw)
 
 @test "The bash scripts and libraries pass a bash -n syntax check" {
     local script
