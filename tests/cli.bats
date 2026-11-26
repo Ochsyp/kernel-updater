@@ -53,7 +53,7 @@ setup() {
         run_ku $args
         [ "$status" -eq 64 ] || { printf 'args "%s" exited %s\n' "$args" "$status" >&2; return 1; }
         [ -z "$output" ]
-        [[ "$stderr" == *"Try 'kernel-updater --help'."* ]]
+        [[ "$stderr" == *"Try '${SUDO_KU#sudo } --help'."* ]]
     done
 }
 

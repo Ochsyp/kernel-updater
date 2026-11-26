@@ -41,7 +41,7 @@ It installs the tool under `/usr/local` and the hooks that refuse a kernel insta
 With `/boot` unlocked and mounted, as for any kernel update:
 
 ```bash
-sudo kernel-updater migrate --stage detect
+sudo /usr/local/bin/kernel-updater migrate --stage detect
 ```
 
 It appends to `/etc/kernel-updater.conf` the UUIDs of `/boot` and of its LUKS container, the
@@ -54,7 +54,7 @@ NAME,LABEL,PTUUID,UUID` and `cat /proc/cmdline` if you like.
 ## 5. Check the system
 
 ```bash
-sudo kernel-updater check
+sudo /usr/local/bin/kernel-updater check
 ```
 
 No item should fail but `grub-pc`, which the system stage settles. Until then `kernel-img`
@@ -69,8 +69,8 @@ the configuration names, and whether the stick's GRUB unlocks and reads it.
 See the plan first, then run the stage:
 
 ```bash
-sudo kernel-updater migrate --stage system -n
-sudo kernel-updater migrate --stage system
+sudo /usr/local/bin/kernel-updater migrate --stage system -n
+sudo /usr/local/bin/kernel-updater migrate --stage system
 ```
 
 It sets `do_symlinks = yes` and `link_in_boot = yes` in `/etc/kernel-img.conf`, points
@@ -111,15 +111,16 @@ dangles, while only `linux` and `initrd` read through the link as the menu will.
 return to the menu, and boot Kali the old way.
 
 Do the same in the VM that boots the stick, since its GRUB reaches the stick through another
-path. When either test fails, run `sudo kernel-updater migrate --rollback` and stop here.
+path. When either test fails, run `sudo /usr/local/bin/kernel-updater migrate --rollback` and stop
+here.
 
 ## 8. Write the new menu
 
 Natively, where kernel-updater may write an NTFS partition 1 (a FAT one gets an export, as below):
 
 ```bash
-sudo kernel-updater migrate --stage menu -n
-sudo kernel-updater migrate --stage menu
+sudo /usr/local/bin/kernel-updater migrate --stage menu -n
+sudo /usr/local/bin/kernel-updater migrate --stage menu
 ```
 
 It writes `multibootusb/grub/kali.cfg`, whose entries boot `/vmlinuz` and `/initrd.img`, and
@@ -146,9 +147,9 @@ On a FAT partition 1, the VM can write the files itself with `--write-fat`, as t
 section shows. In the VM without it, on a FAT partition 1 without it, or with
 `--deploy export`, the files go to `output_dir` instead: copy them in Windows, `kali.cfg` first, into
 `BOOT:\multibootusb\grub\`, as `DEPLOY.txt` there says, then
-run `sudo kernel-updater check`, whose `deployed` item compares the stick with the export. Its
-`tripwire` item fails for the two files, when a baseline is stored, until step 11. Should a
-later stage or rollback write partition 1 itself while such an export is not copied, that
+run `sudo /usr/local/bin/kernel-updater check`, whose `deployed` item compares the stick with the
+export. Its `tripwire` item fails for the two files, when a baseline is stored, until step 11.
+Should a later stage or rollback write partition 1 itself while such an export is not copied, that
 write removes the export, which copied afterwards would undo it.
 
 ### Writing a FAT partition 1 from the VM
@@ -217,16 +218,17 @@ same at each start: `Successfully locked volume` for each volume it took from Wi
 C. In Kali, see the plan first; it writes nothing:
 
 ```bash
-sudo kernel-updater migrate --stage menu --write-fat -n
+sudo /usr/local/bin/kernel-updater migrate --stage menu --write-fat -n
 ```
 
 It worked when it prints `info: --write-fat: VMware, the stick's menu booted the running kernel,
 and partition 1 was unmounted cleanly` and the plan. A line that starts with `refusing to write
-the FAT partition 1:` says which check failed and what to do; `sudo kernel-updater check`
-shows in its `boot-menu` item which menu booted the kernel. Then write:
+the FAT partition 1:` says which check failed and what to do;
+`sudo /usr/local/bin/kernel-updater check` shows in its `boot-menu` item which menu booted the
+kernel. Then write:
 
 ```bash
-sudo kernel-updater migrate --stage menu --write-fat
+sudo /usr/local/bin/kernel-updater migrate --stage menu --write-fat
 ```
 
 Answer `y` to the plan's question, then `y` to `Write the FAT partition 1 now? In Windows,
@@ -234,8 +236,9 @@ Test-Path on BOOT's drive must print False while this VM runs`, which `--yes` do
 once step B printed `False`. It worked when it ends with `info: wrote multibootusb/grub/kali.cfg`
 and `info: wrote multibootusb/grub/grub.cfg; the old one is kept as ...` and exits 0, as
 `echo $?` shows. For finalize, the second write, use `--stage finalize`; for a rollback,
-`--rollback --write-fat`. Where `sudo` does not find `kernel-updater`, as when its
-`secure_path` lacks `/usr/local/bin`, type `sudo /usr/local/bin/kernel-updater` instead.
+`--rollback --write-fat`. Every command here names `/usr/local/bin/kernel-updater` in full, as
+the tool's own advice does: sudo's `secure_path` may lack `/usr/local/bin`, and then a bare
+`sudo kernel-updater` answers `command not found`.
 
 D. Shut the VM down; BOOT comes back in Windows once VMware lets go of it. Then, in PowerShell
 as administrator:
@@ -257,7 +260,7 @@ What can still go wrong, and how to get the old menu back:
 - The stick stops at a GRUB prompt or shows a menu error, as after a power loss in the few
   milliseconds between the two renames of `grub.cfg`: E from Windows.
 - The new entries do not boot: choose "... (legacy entries)", which stay until finalize, and
-  run `sudo kernel-updater migrate --rollback --write-fat` with steps A to D.
+  run `sudo /usr/local/bin/kernel-updater migrate --rollback --write-fat` with steps A to D.
 - E. Put the menu you kept in step A back, in PowerShell, with the name of that copy in place
   of `stick-grub-<stamp>`:
 
@@ -286,7 +289,7 @@ The legacy entries stay in the menu until the next step, should a new one fail.
 Only once the new entries booted natively and in the VM:
 
 ```bash
-sudo kernel-updater migrate --stage finalize
+sudo /usr/local/bin/kernel-updater migrate --stage finalize
 ```
 
 It removes the legacy submenu from `grub.cfg`, and nothing else. Written to partition 1, the
@@ -303,13 +306,13 @@ finalize named files that differ from the baseline, look at those files and reco
 baseline, which shows what differs and asks first:
 
 ```bash
-sudo kernel-updater baseline
+sudo /usr/local/bin/kernel-updater baseline
 ```
 
 After that, or when finalize wrote `grub.cfg` and named nothing else, run:
 
 ```bash
-sudo kernel-updater check
+sudo /usr/local/bin/kernel-updater check
 ```
 
 No item should fail now: `kali-menu` and `tripwire` are `ok`, and `deployed` is `ok` after an
@@ -371,8 +374,8 @@ stick's partition 1 changes, so there is nothing to copy or deploy.
 
 ## Rolling back
 
-`sudo kernel-updater migrate --rollback` undoes the newest stage run not rolled back yet, after
-checking its backup in `/var/backups/kernel-updater` against the `MANIFEST` there; give a
+`sudo /usr/local/bin/kernel-updater migrate --rollback` undoes the newest stage run not rolled back
+yet, after checking its backup in `/var/backups/kernel-updater` against the `MANIFEST` there; give a
 directory's name, its UTC stamp, to name the run. Stages undo in the reverse order they ran:
 finalize, then menu, then system. `-n` shows what it would restore.
 

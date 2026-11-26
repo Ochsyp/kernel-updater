@@ -513,7 +513,7 @@ EOF
         run_ku cleanup $args
         [ "$status" -eq 64 ] || { printf '"%s" exited %s\n' "$args" "$status" >&2; return 1; }
         [ -z "$output" ]
-        [[ "$stderr" == *"Try 'kernel-updater --help'."* ]]
+        [[ "$stderr" == *"Try '${SUDO_KU#sudo } --help'."* ]]
     done
 }
 
@@ -539,7 +539,7 @@ EOF
     run_ku cleanup -n
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"the configuration lacks boot_fs_uuid: run"* ]]
-    [[ "$stderr" == *"'kernel-updater migrate --stage detect' first; nothing was changed"* ]]
+    [[ "$stderr" == *"'$SUDO_KU migrate --stage detect' first; nothing was changed"* ]]
     configure 5ca1ab1e-0000-4000-8000-000000000b01 ""
     run_ku cleanup -n
     [ "$status" -eq 3 ]
@@ -581,18 +581,18 @@ EOF
     run_ku cleanup -n
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"error: kernel-img: do_symlinks is off"* ]]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage system' first; nothing was changed"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage system' first; nothing was changed"* ]]
     printf 'do_symlinks = yes\nlink_in_boot = no\n' > "$ROOT/etc/kernel-img.conf"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"error: kernel-img: link_in_boot is off"* ]]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage system' first"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage system' first"* ]]
     printf 'do_symlinks = yes\nlink_in_boot = yes\n' > "$ROOT/etc/kernel-img.conf"
     rm "$ROOT/boot/initrd.img-$V1"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"error: boot-links: initrd.img.old does not reach a non-empty file"* ]]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage system' first"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage system' first"* ]]
     printf 'initrd %s\n' "$V1" > "$ROOT/boot/initrd.img-$V1"
     ln -sfn "/boot/vmlinuz-$V2" "$ROOT/boot/vmlinuz"
     run_ku cleanup -n
@@ -640,7 +640,7 @@ EOF
     : > "$ROOT/var/lib/dpkg/updates/0003"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"dpkg was interrupted: run 'dpkg --configure -a', then 'kernel-updater"* ]]
+    [[ "$stderr" == *"dpkg was interrupted: run 'dpkg --configure -a', then '$SUDO_KU "* ]]
     [[ "$stderr" == *"check'; nothing was changed"* ]]
     [ -z "$output" ]
 }
@@ -655,8 +655,8 @@ EOF
         run_ku cleanup $args
         [ "$status" -eq 3 ] || { printf '"%s" exited %s\n' "$args" "$status" >&2; return 1; }
         [[ "$stderr" == *"the Kali entries still boot kernels by their versions, which a purge \
-could take away: run 'kernel-updater migrate --stage menu', boot the new entries, then run \
-'kernel-updater migrate --stage finalize'; nothing was changed"* ]]
+could take away: run '$SUDO_KU migrate --stage menu', boot the new entries, then run \
+'$SUDO_KU migrate --stage finalize'; nothing was changed"* ]]
         [ -z "$output" ]
     done
     [ -z "$(apt_calls)" ]
@@ -674,7 +674,7 @@ could take away: run 'kernel-updater migrate --stage menu', boot the new entries
         run_ku cleanup $args
         [ "$status" -eq 3 ] || { printf '"%s" exited %s\n' "$args" "$status" >&2; return 1; }
         [[ "$stderr" == *"the legacy Kali entries boot a kernel by its version, which a purge \
-could take away: run 'kernel-updater migrate --stage finalize' after the boot tests; nothing \
+could take away: run '$SUDO_KU migrate --stage finalize' after the boot tests; nothing \
 was changed"* ]]
         [ -z "$output" ]
     done
@@ -744,7 +744,7 @@ was changed"* ]]
     printf 'menuentry "Other" {\n\ttrue\n}\n' > "$grub/grub.cfg"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"$copy run 'kernel-updater migrate --stage menu', boot"* ]]
+    [[ "$stderr" == *"$copy run '$SUDO_KU migrate --stage menu', boot"* ]]
     # finalize exported, and its grub.cfg is not on the stick yet.
     write_finished_menu "$KU_P1_DIR"
     cp "$REPO_DIR/tests/fixtures/grub/migrate-after.cfg" "$grub/grub.cfg"
@@ -752,13 +752,13 @@ was changed"* ]]
     (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"$copy run 'kernel-updater migrate --stage finalize' after"* ]]
+    [[ "$stderr" == *"$copy run '$SUDO_KU migrate --stage finalize' after"* ]]
     # An export the stick already holds waits for nothing.
     cp "$grub/grub.cfg" "$out/grub.cfg"
     (cd "$out" && sha256sum grub.cfg > SHA256SUMS)
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"take away: run 'kernel-updater migrate --stage finalize' after"* ]]
+    [[ "$stderr" == *"take away: run '$SUDO_KU migrate --stage finalize' after"* ]]
     [[ "$stderr" != *"$copy"* ]]
     [ -z "$(apt_calls)" ]
     private_output
@@ -873,12 +873,12 @@ mounted where users other than root can change its files"* ]]
     printf 'do_symlinks = yes\nlink_in_boot = no\n' > "$ROOT/etc/kernel-img.conf"
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage system' first"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage system' first"* ]]
     [[ "$stderr" != *"--stage menu"* ]]
     configure "" ""
     run_ku cleanup -n
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"'kernel-updater migrate --stage detect' first"* ]]
+    [[ "$stderr" == *"'$SUDO_KU migrate --stage detect' first"* ]]
     [[ "$stderr" != *"--stage menu"* ]]
 }
 
@@ -1230,7 +1230,7 @@ cleanup again; nothing was changed"* ]]
     run_ku cleanup --yes
     [ "$status" -eq 4 ]
     [[ "$stderr" == *"apt-get purge failed with status 100 after dpkg began to change its \
-database: run 'dpkg --configure -a', then 'kernel-updater check'"* ]]
+database: run 'dpkg --configure -a', then '$SUDO_KU check'"* ]]
     # The failure is reported once, without the interrupt's "cut short" line.
     [[ "$stderr" != *"cut short"* ]]
     [ "$(apt_calls | tail -n 1)" = sync ]
@@ -1239,7 +1239,7 @@ database: run 'dpkg --configure -a', then 'kernel-updater check'"* ]]
         cat "$HELD" > "$KU_ROOT/proc/locks"' 100
     run_ku cleanup --yes
     [ "$status" -eq 4 ]
-    [[ "$stderr" == *"run 'dpkg --configure -a', then 'kernel-updater check'"* ]]
+    [[ "$stderr" == *"run 'dpkg --configure -a', then '$SUDO_KU check'"* ]]
     # So does dpkg's journal alone, which dpkg folds into the status file only later.
     : > "$ROOT/proc/locks"
     # shellcheck disable=SC2016 # the stub expands the variables
@@ -1276,7 +1276,7 @@ changed"* ]]
     [ "$status" -eq 130 ]
     [[ "$stderr" == *"interrupted by SIGINT"* ]]
     [[ "$stderr" == *"the purge was cut short after dpkg began to change its database: run \
-'dpkg --configure -a', then 'kernel-updater check'"* ]]
+'dpkg --configure -a', then '$SUDO_KU check'"* ]]
     [[ "$stderr" != *"cleanup: purged"* ]]
     [ "$(apt_calls | tail -n 1)" = sync ]
     # shellcheck disable=SC2016 # the stub expands the variables
@@ -1309,7 +1309,7 @@ EOF
     [ "$status" -eq 130 ]
     [[ "$stderr" == *"interrupted by SIGINT"* ]]
     [[ "$stderr" == *"the purge was cut short after dpkg began to change its database: run \
-'dpkg --configure -a', then 'kernel-updater check'"* ]]
+'dpkg --configure -a', then '$SUDO_KU check'"* ]]
     private_output
 }
 

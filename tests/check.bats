@@ -845,7 +845,7 @@ others_ok() {
     rm "$ROOT/var/lib/kernel-updater/baseline"
     run_check
     [ "$status" -eq 0 ]
-    expect_item tripwire warn "no baseline is stored: run 'kernel-updater baseline' to record"
+    expect_item tripwire warn "no baseline is stored: run '$SUDO_KU baseline' to record"
     record_baseline
     printf 'changed\r\n' >> "$GRUB/grub.cfg"
     printf 'menuentry "Windows" {\n}\n' > "$GRUB/win.cfg"
@@ -856,10 +856,11 @@ others_ok() {
     expect_item tripwire fail "changed: mbr:boot-code, multibootusb/grub/grub.cfg; new:"
     expect_item tripwire fail "new: multibootusb/grub/win.cfg; missing:"
     expect_item tripwire fail "missing: multibootusb/grub/i386-pc/moddep.lst since the"
-    expect_item tripwire fail "run 'kernel-updater baseline' to record them"
+    expect_item tripwire fail "run '$SUDO_KU baseline' to record them"
     printf 'not a baseline\n' > "$ROOT/var/lib/kernel-updater/baseline"
     run_check
     expect_item tripwire fail "the stored baseline is damaged"
+    expect_item tripwire fail "run '$SUDO_KU baseline' to record it anew"
 }
 
 @test "deployed skips without an export and fails when a file differs or is missing" {
@@ -924,7 +925,7 @@ others_ok() {
     expect_item kali-menu ok "grub.cfg sources multibootusb/grub/kali.cfg, and no legacy Kali"
     write_grub_cfg 'submenu "Kali GNU/Linux (legacy entries)" {' $'\tmenuentry "x" {' $'\t}' '}'
     run_check
-    expect_item kali-menu warn "its legacy Kali entries remain: run 'kernel-updater migrate"
+    expect_item kali-menu warn "its legacy Kali entries remain: run '$SUDO_KU migrate"
     expect_item kali-menu warn "--stage finalize' after the boot tests"
     mv "$GRUB/kali.cfg" "$BATS_TEST_TMPDIR/kali.cfg"
     run_check

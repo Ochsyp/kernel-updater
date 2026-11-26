@@ -20,12 +20,12 @@ automatically. While `/boot` is not mounted, the hooks refuse kernel installs an
    and `/boot/initrd.img` to itself, and the `.old` links to the kernel they left; nothing on the
    stick's partition 1 changes.
 2. Reboot into "Kali GNU/Linux", which boots the new kernel.
-3. Run `sudo kernel-updater check`. No item should fail.
+3. Run `sudo /usr/local/bin/kernel-updater check`. No item should fail.
 4. Now and then, purge what old kernels leave behind. Read the plan first, then run it:
 
    ```bash
-   sudo kernel-updater cleanup -n
-   sudo kernel-updater cleanup
+   sudo /usr/local/bin/kernel-updater cleanup -n
+   sudo /usr/local/bin/kernel-updater cleanup
    ```
 
 Why `cleanup`: old kernels stay installed until apt's autoremove removes them, and a kernel that
@@ -88,23 +88,24 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
   - When X is a DKMS package, or another one that depends on an old kernel's headers, purge X
     yourself, or keep that kernel with `sudo apt-mark manual PACKAGE`.
 - **Exit 3, "apt would also install or configure X"**, or the same about apt's autoremove. apt's
-  state is not settled: run `sudo apt full-upgrade`, then `sudo kernel-updater check`.
+  state is not settled: run `sudo apt full-upgrade`, then
+  `sudo /usr/local/bin/kernel-updater check`.
 - **Exit 3, "apt-get cannot simulate ..." or "apt-mark cannot list ...".** apt's own messages
   above it say why; `apt-get -s autoremove --purge` shows them again.
 - **Exit 3, "apt-get purge failed ... before dpkg changed anything".** apt or apt-guard refused
   the purge, and their messages above it say why.
 - **Exit 3, "kernels: ... run dpkg --configure -a" or "dpkg was interrupted".** A kernel
   package is stuck between states, or a dpkg run was cut short. Run `sudo dpkg --configure -a`,
-  then `sudo kernel-updater check`. When a new kernel's initrd fails its check, see
+  then `sudo /usr/local/bin/kernel-updater check`. When a new kernel's initrd fails its check, see
   [When a new kernel fails](#when-a-new-kernel-fails); `cleanup` refuses while the kernel is
   half-configured. When the message says that the running kernel is not installed, boot one
   that is.
 - **"... after dpkg began to change its database"**, with exit 4 when apt-get failed, or 130
   or 129 when Ctrl-C or a closed terminal cut the purge short. Run `sudo dpkg --configure -a`,
-  then `sudo kernel-updater check`, then `cleanup` again, which plans anew from what is left.
-  When a purge cut short says that nothing was purged instead, only run `cleanup` again.
+  then `sudo /usr/local/bin/kernel-updater check`, then `cleanup` again, which plans anew from what
+  is left. When a purge cut short says that nothing was purged instead, only run `cleanup` again.
 - **Exit 4 after "the purge ran, but the check of the links and kernels after it fails".** Run
-  `sudo kernel-updater check` and settle what fails before the next reboot.
+  `sudo /usr/local/bin/kernel-updater check` and settle what fails before the next reboot.
 - **Exit 75.** Another kernel-updater run, apt or dpkg is running, and the message names its PID
   and command; or the system changed while the question waited. Wait until the other run is
   done.
@@ -125,7 +126,7 @@ Every refusal changes nothing. Settle the cause, then run `cleanup` again: it pl
   again. Or delete the export if you no longer want that rollback. This holds while the export's
   `SHA256SUMS` is damaged too, since cleanup cannot tell whether the stick holds it.
 - **Exit 3, starting with `kali-menu:`.** The menu on partition 1 is damaged, as the message says.
-  Run `sudo kernel-updater check`, and settle its `kali-menu` item first.
+  Run `sudo /usr/local/bin/kernel-updater check`, and settle its `kali-menu` item first.
 - **"purge nothing while a reboot is pending".** Reboot into "Kali GNU/Linux". When the new
   kernel does not boot, see [When a new kernel fails](#when-a-new-kernel-fails).
 - **A tree kept because "dkms lists modules for it".** Remove those modules with the command the
@@ -184,15 +185,15 @@ kernel)", which boots the kernel the `.old` links point at. Then do one of these
   ```bash
   sudo update-initramfs -u -k VERSION
   sudo dpkg --configure -a
-  sudo kernel-updater check
+  sudo /usr/local/bin/kernel-updater check
   ```
 
 - **Or give the kernel up.** List its packages with `dpkg -l '*-VERSION'` and purge them all in
   one apt run, `sudo apt purge PACKAGE...`: `linux-image-VERSION` and, for kernels split as
   Kali's are since 6.19, `linux-binary-VERSION`, `linux-modules-VERSION` and
   `linux-base-VERSION`, and `linux-headers-VERSION` when it is installed. linux-base then points
-  the links back at the kernels left, which `sudo kernel-updater check` confirms. When
-  `linux-image-amd64` depends on that exact version, as it does on the newest kernel, apt
+  the links back at the kernels left, which `sudo /usr/local/bin/kernel-updater check` confirms.
+  When `linux-image-amd64` depends on that exact version, as it does on the newest kernel, apt
   removes it too, and kernel updates stop until you install it again with
   `sudo apt install linux-image-amd64`, once Kali ships a fixed kernel. A later `cleanup` purges
   what is left.
@@ -208,7 +209,8 @@ also stand in `multibootusb/grub/kali.cfg` on partition 1, which Windows can rea
 When the menu itself is damaged, copy back from Windows the copy of `BOOT:\multibootusb\grub`
 you keep, as step 1 of [migration.md](migration.md) made one. A copy from before the migration
 brings back entries that name kernel versions, which boot only while `/boot` holds those
-kernels. Then run `sudo kernel-updater check`: its `tripwire` item shows what changed.
+kernels. Then run `sudo /usr/local/bin/kernel-updater check`: its `tripwire` item shows what
+changed.
 
 ## Rebuild one kernel's initrd
 
@@ -220,9 +222,9 @@ initrd is the fallback and stays as it is until the new one has booted.
 1. Copy the current initrd to `/root`: `sudo cp -p /boot/initrd.img-VERSION /root/`. It holds
    the key files `/etc/crypttab` names, so never copy it to partition 1 or to Windows.
 2. Rebuild it: `sudo update-initramfs -u -k VERSION`.
-3. Run `sudo kernel-updater check`. Its `initrd` item checks that the initrd holds the kernel's
-   modules, `cryptsetup`, the cryptroot configuration and the key files, and warns when group or
-   others can read it.
+3. Run `sudo /usr/local/bin/kernel-updater check`. Its `initrd` item checks that the initrd holds
+   the kernel's modules, `cryptsetup`, the cryptroot configuration and the key files, and warns when
+   group or others can read it.
 4. Boot "Kali GNU/Linux".
 5. When it fails, boot "Kali GNU/Linux (previous kernel)" and put the copy back:
    `sudo cp -p /root/initrd.img-VERSION /boot/`.
@@ -249,8 +251,8 @@ set default="kali>kali-default"
   a kernel that fails once it runs.
 - MultiBootUSB may rewrite `grub.cfg` when it adds an ISO, which can drop the line.
 - After an edit, run `kernel-updater lint` on the file, or on a copy of it, then
-  `sudo kernel-updater baseline`, which shows that `grub.cfg` changed and records it once you
-  confirm; until then check's `tripwire` item fails.
+  `sudo /usr/local/bin/kernel-updater baseline`, which shows that `grub.cfg` changed and records it
+  once you confirm; until then check's `tripwire` item fails.
 - To undo it, remove the line, then lint the file and record the baseline again.
 
 ## What this runbook never suggests

@@ -262,7 +262,7 @@ _ku_cl_preconditions() {
     done
     if (( ${#keys[@]} )); then
         ku_die "$KU_EX_REFUSED" "the configuration lacks $(ku_join "${keys[@]}"): run" \
-            "'kernel-updater migrate --stage detect' first; nothing was changed"
+            "'$KU_CMD migrate --stage detect' first; nothing was changed"
     fi
     ku_boot_identity
     for name in apt-get apt-mark dpkg-query; do
@@ -289,7 +289,7 @@ _ku_cl_preconditions() {
     done
     if (( refused )); then
         ku_die "$KU_EX_REFUSED" "linux-base must keep the links in /boot, relative and reaching" \
-            "the kernels' files: run 'kernel-updater migrate --stage system' first; nothing was" \
+            "the kernels' files: run '$KU_CMD migrate --stage system' first; nothing was" \
             "changed"
     fi
     if [[ -n $kernels ]]; then
@@ -297,7 +297,7 @@ _ku_cl_preconditions() {
     fi
     if _ku_cl_dpkg_interrupted; then
         ku_die "$KU_EX_REFUSED" "dpkg was interrupted: run 'dpkg --configure -a', then" \
-            "'kernel-updater check'; nothing was changed"
+            "'$KU_CMD check'; nothing was changed"
     fi
     _ku_cl_menu_finished
 }
@@ -347,12 +347,12 @@ _ku_cl_menu_finished() {
             ;;
         skip)
             what="the Kali entries still boot kernels by their versions"
-            step="run 'kernel-updater migrate --stage menu', boot the new entries, then run"
-            step+=" 'kernel-updater migrate --stage finalize'"
+            step="run '$KU_CMD migrate --stage menu', boot the new entries, then run"
+            step+=" '$KU_CMD migrate --stage finalize'"
             ;;
         warn)
             what="the legacy Kali entries boot a kernel by its version"
-            step="run 'kernel-updater migrate --stage finalize' after the boot tests"
+            step="run '$KU_CMD migrate --stage finalize' after the boot tests"
             ;;
         *) ku_die "$KU_EX_REFUSED" "kali-menu: $detail; nothing was changed" ;;
     esac
@@ -1045,7 +1045,7 @@ _ku_cl_purge() {
     done
     if (( failed )); then
         ku_die "$KU_EX_WRITE" "the purge ran, but the check of the links and kernels after it" \
-            "fails: run 'kernel-updater check' and settle that before the next reboot"
+            "fails: run '$KU_CMD check' and settle that before the next reboot"
     fi
 }
 
@@ -1058,7 +1058,7 @@ _ku_cl_failed() {
     if _ku_cl_dpkg_changed; then
         KU_CL_PURGING=0
         ku_die "$KU_EX_WRITE" "apt-get purge failed with status $1 after dpkg began to change its" \
-            "database: run 'dpkg --configure -a', then 'kernel-updater check'"
+            "database: run 'dpkg --configure -a', then '$KU_CMD check'"
     fi
     holder=$(_ku_cl_dpkg_busy) || busy=$?
     if (( busy == 0 )); then
@@ -1080,7 +1080,7 @@ _ku_cl_interrupted() {
     if (( KU_CL_PURGING )); then
         if _ku_cl_dpkg_changed; then
             ku_log error "the purge was cut short after dpkg began to change its database: run" \
-                "'dpkg --configure -a', then 'kernel-updater check'"
+                "'dpkg --configure -a', then '$KU_CMD check'"
         else
             ku_log error "the purge was cut short before dpkg changed its database; nothing was" \
                 "purged"

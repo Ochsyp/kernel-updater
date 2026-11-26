@@ -641,13 +641,13 @@ ku_export() {
         "1. In Windows, copy them, in this order, into $KU_DEPLOY_WINDOWS_DIR on the stick," \
         "   replacing the files of the same name there:" "" "$list" \
         "2. Let Windows finish writing to the stick before you boot from it." \
-        "3. In Kali, run 'sudo kernel-updater check' to confirm: its deployed item is ok once" \
+        "3. In Kali, run '$KU_CMD check' to confirm: its deployed item is ok once" \
         "   the files on the stick match SHA256SUMS here." "" \
         "'sha256sum -c SHA256SUMS' checks the files in this directory."
     _ku_export_text "$dir" DEPLOY.txt "$steps"
     _ku_export_text "$dir" SHA256SUMS "$sums"
     ku_log info "exported $# file(s) to $dir: copy them to the stick from Windows as" \
-        "DEPLOY.txt there says, then run 'sudo kernel-updater check'"
+        "DEPLOY.txt there says, then run '$KU_CMD check'"
 }
 
 # Exit 78 unless DIR is a directory, not a symlink, owned by root and closed to group and

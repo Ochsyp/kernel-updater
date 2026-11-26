@@ -699,7 +699,8 @@ not changed, but multibootusb/grub/kali.cfg was written before it"* ]]
     (cd "$OUT" && sha256sum -c --quiet SHA256SUMS)
     grep -q -F 'copy them, in this order, into BOOT:\multibootusb\grub\ on the stick,' \
         "$OUT/DEPLOY.txt"
-    grep -q -F "run 'sudo kernel-updater check' to confirm" "$OUT/DEPLOY.txt"
+    # Library code started without bin/kernel-updater names the installed path.
+    grep -q -F "run 'sudo /usr/local/bin/kernel-updater check' to confirm" "$OUT/DEPLOY.txt"
     [ "$(grep -n -E '^ +(kali|grub)\.cfg$' "$OUT/DEPLOY.txt" | cut -d : -f 2 | tr -d ' ')" = \
         $'kali.cfg\ngrub.cfg' ]
     [[ "$stderr" == *"info: exported 2 file(s) to $OUT: copy them to the stick from Windows"* ]]

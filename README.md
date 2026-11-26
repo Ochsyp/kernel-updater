@@ -83,7 +83,9 @@ tab-separated fields.
 
 Global options: `-c`/`--config FILE`, `-n`/`--dry-run`, `-y`/`--yes`, `-v`/`--verbose`,
 `-q`/`--quiet`, `--porcelain`, `-h`/`--help` and `-V`/`--version`. Results go to stdout and
-messages to stderr.
+messages to stderr. A message that says what to run next names the tool as `sudo` and the path
+it was started from, as `sudo /usr/local/bin/kernel-updater check`, since sudo's `secure_path`
+may lack `/usr/local/bin`.
 
 | Exit code | Meaning |
 |---|---|
@@ -131,14 +133,14 @@ sudo install -m 0644 examples/kernel-updater.conf /etc/kernel-updater.conf
 findmnt -n -o UUID /boot
 ```
 
-Then `sudo kernel-updater check` should report `boot-identity` as `ok`. `check` also looks at
-the stick's partition 1; to have it check that partition 1 is the stick's, set `disk_ptuuid`
-and `p1_fs_uuid` to the PTUUID of the stick and the UUID of its partition labelled BOOT, then
-record the baseline of its boot code:
+Then `sudo /usr/local/bin/kernel-updater check` should report `boot-identity` as `ok`. `check` also
+looks at the stick's partition 1; to have it check that partition 1 is the stick's, set
+`disk_ptuuid` and `p1_fs_uuid` to the PTUUID of the stick and the UUID of its partition labelled
+BOOT, then record the baseline of its boot code:
 
 ```bash
 sudo lsblk -o NAME,LABEL,PTUUID,UUID
-sudo kernel-updater baseline
+sudo /usr/local/bin/kernel-updater baseline
 ```
 
 ### check
@@ -350,10 +352,11 @@ name).
   force option, `dkms remove`, `update-initramfs` or `update-grub` of its own; the purged
   packages' own scripts run as in any apt run.
 - **A purge that fails** exits 4 once dpkg began to change its database, naming
-  `dpkg --configure -a` and `kernel-updater check`; 75 while apt or dpkg holds its lock; and 3
-  otherwise, as when apt-guard refused it. One that a signal cuts short, as Ctrl-C or a closed
-  terminal does, says "the purge was cut short after dpkg began to change its database: run
-  'dpkg --configure -a', then 'kernel-updater check'", or that nothing was purged, and exits
+  `dpkg --configure -a` and `sudo /usr/local/bin/kernel-updater check`; 75 while apt or dpkg
+  holds its lock; and 3 otherwise, as when apt-guard refused it. One that a signal cuts short,
+  as Ctrl-C or a closed terminal does, says "the purge was cut short after dpkg began to change
+  its database: run 'dpkg --configure -a', then 'sudo /usr/local/bin/kernel-updater check'", or
+  that nothing was purged, and exits
   128+N. After the purge, check's `boot-links` and `kernels` items must pass, or it exits 4 and
   leaves the module trees alone.
 - **Module trees.** A tree in `/usr/lib/modules`, and in `/lib/modules` when `/usr` is not
@@ -504,8 +507,8 @@ Windows to copy, and says why.
   tripwire's baseline just the files it wrote, with `ku_baseline_update`.
 - **The export** writes the files to `output_dir` (mode 0700, owned by root; refused with 78
   otherwise), with `SHA256SUMS` and `DEPLOY.txt`, which says to copy them to
-  `BOOT:\multibootusb\grub\` from Windows and to run `sudo kernel-updater check`, whose
-  `deployed` item then compares the stick with the export. It first removes the files of the
+  `BOOT:\multibootusb\grub\` from Windows and to run `sudo /usr/local/bin/kernel-updater check`,
+  whose `deployed` item then compares the stick with the export. It first removes the files of the
   earlier export that the new one lacks, so that none is left for Windows to copy.
 
 ### Hooks

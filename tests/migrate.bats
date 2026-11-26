@@ -324,11 +324,37 @@ backups() {
     private_output
 }
 
+@test "advice names sudo and the path the tool was started from, not the bare name" {
+    local copy="$BATS_TEST_TMPDIR/opt dir" self
+    # A copy under a path with a space, as a checkout may be: the advice quotes it as the
+    # shell takes it.
+    mkdir -p "$copy"
+    cp -R "$REPO_DIR/bin" "$REPO_DIR/lib" "$REPO_DIR/share" "$copy/"
+    self=$(printf '%q' "$(readlink -f "$copy/bin/kernel-updater")")
+    [[ "$self" == *'opt\ dir'* ]]
+    run --separate-stderr env PATH="$STUB_BIN:$PATH" KU_TEST=1 \
+        KU_ROOT="$BATS_TEST_TMPDIR/root" KU_TTY="$BATS_TEST_TMPDIR/tty" \
+        KU_LOCKFILE="$BATS_TEST_TMPDIR/lock" bash "$copy/bin/kernel-updater" \
+        migrate --stage system --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"run 'sudo $self migrate --stage detect' first"* ]]
+    [[ "$stderr" != *"'kernel-updater migrate"* ]]
+    # The checkout's own path, through run_ku.
+    run_ku migrate --stage system --yes
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage detect' first"* ]]
+    [[ "$SUDO_KU" == "sudo /"*"/bin/kernel-updater" ]]
+    # Library code without bin/kernel-updater names the installed path.
+    # shellcheck disable=SC2016 # the code expands its own variables
+    run_ku_lib 'printf "%s\n" "$KU_CMD"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "sudo /usr/local/bin/kernel-updater" ]
+}
+
 @test "system refuses with 3 before detect and on each failed precondition, changing nothing" {
     run_ku migrate --stage system --yes
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"the configuration lacks boot_fs_uuid, boot_luks_uuid, disk_ptuuid,"* ]]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage detect' first"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage detect' first"* ]]
     detected
     export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 5ca1ab1e-0000-4000-8000-000000000b02"
     run_ku migrate --stage system --yes
@@ -476,7 +502,7 @@ backups() {
     run_ku migrate --stage system --yes
     [ "$status" -eq 4 ]
     [[ "$stderr" == *"after the system stage, vmlinuz is absolute; vmlinuz.old is absolute;"* ]]
-    [[ "$stderr" == *"'kernel-updater migrate --rollback' restores kernel-img.conf and the"* ]]
+    [[ "$stderr" == *"'$SUDO_KU migrate --rollback' restores kernel-img.conf and the"* ]]
     run_ku migrate --rollback --yes
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"plan: rollback of the system stage run 20261112T090001Z: put"* ]]
@@ -536,7 +562,7 @@ backups() {
     run_ku migrate --stage system --yes
     [ "$status" -eq 4 ]
     [[ "$stderr" == *"after the system stage, vmlinuz.old does not point at the files of $V2;"* ]]
-    [[ "$stderr" == *"initrd.img.old does not point at the files of $V2; 'kernel-updater"* ]]
+    [[ "$stderr" == *"initrd.img.old does not point at the files of $V2; '$SUDO_KU "* ]]
     # Run again, the stage takes .old links on another kernel that would boot for its result,
     # as linux-base keeps them from then on, but not links on one that would not boot.
     export LUS_OLD=""
@@ -652,7 +678,7 @@ backups() {
     [[ "$stderr" == *'plan:   not carried over: "Kali GNU/Linux (live mode)", as menu_variants'* ]]
     [[ "$stderr" == *"plan: grub.cfg: lines 57 to 129, the Kali submenu, become a block"* ]]
     [[ "$stderr" == *"warning: the tripwire's baseline was not updated"* ]]
-    [[ "$stderr" == *"Then run 'kernel-updater migrate --stage finalize'"* ]]
+    [[ "$stderr" == *"Then run '$SUDO_KU migrate --stage finalize'"* ]]
     # The dry run took the first stamp for the backup grub.cfg would have had.
     local dir="$ROOT$BACKUPS/20261112T090002Z"
     [ "$(< "$dir/stage")" = menu ]
@@ -669,7 +695,7 @@ backups() {
 @test "menu exports both files under their own names, and refuses before system and on checks" {
     run_ku migrate --stage menu --yes
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage detect' first"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage detect' first"* ]]
     detected
     run_ku migrate --stage menu --yes
     [ "$status" -eq 3 ]
@@ -790,7 +816,7 @@ read it; nothing was changed"* ]]
     system_done
     run_ku migrate --stage finalize --yes
     [ "$status" -eq 3 ]
-    [[ "$stderr" == *"run 'kernel-updater migrate --stage menu' first"* ]]
+    [[ "$stderr" == *"run '$SUDO_KU migrate --stage menu' first"* ]]
     run_ku migrate --stage menu --yes
     [ "$status" -eq 0 ]
     printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
@@ -1019,7 +1045,7 @@ read it; nothing was changed"* ]]
     run_ku migrate --stage menu --yes
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"grub.cfg sources kali.cfg, which is missing, and holds no legacy Kali"* ]]
-    [[ "$stderr" == *"roll that stage back with 'kernel-updater migrate --rollback', then run"* ]]
+    [[ "$stderr" == *"roll that stage back with '$SUDO_KU migrate --rollback', then run"* ]]
     # No grub.cfg at all.
     rm "$GRUB/grub.cfg"
     run_ku migrate --stage menu --yes
@@ -1056,7 +1082,7 @@ read it; nothing was changed"* ]]
     [ "$(cut -c 67- "$out/SHA256SUMS")" = grub.cfg ]
     [ ! -e "$out/kali.cfg" ]
     [ ! -e "$ROOT/var/lib/kernel-updater/baseline" ]
-    [[ "$stderr" == *"once Windows copied grub.cfg, run 'sudo kernel-updater baseline'"* ]]
+    [[ "$stderr" == *"once Windows copied grub.cfg, run '$SUDO_KU baseline'"* ]]
     cmp "$BATS_TEST_TMPDIR/grub.after" "$GRUB/grub.cfg"
     # Not copied yet, the finalize export is undone by one of the grub.cfg the stick holds.
     run_ku migrate --rollback "${opts[@]}"
