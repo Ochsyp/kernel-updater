@@ -23,7 +23,8 @@ backups of its own, but this copy works even when Kali does not boot.
 Turn Fast Startup off in Windows (Control Panel, Power Options, "Choose what the power buttons
 do"), and eject the stick in Windows before you boot from it. A volume that Windows hibernated,
 kept in its cache or left unclean is never written: kernel-updater then exports the files
-instead, and says why.
+instead, and says why. With `--write-fat`, a FAT volume left unclean makes the run refuse
+(exit 3) instead, and nothing is written or exported.
 
 ## 3. Install kernel-updater
 
@@ -193,13 +194,15 @@ Then copy the menu into it, which prints nothing:
 
 ```powershell
 Copy-Item -Recurse X:\multibootusb\grub `
-    "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-$(Get-Date -f yyyyMMdd-HHmm)"
+    "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-$(Get-Date -f yyyyMMdd-HHmmss)"
 ```
 
-It worked when this lists a `grub.cfg` with today's time:
+It worked when `Get-FileHash X:\multibootusb\grub\grub.cfg` prints the same hash as this,
+which takes the newest copy (a copy keeps the stick file's time, not today's):
 
 ```powershell
-Get-ChildItem "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-*\grub.cfg"
+Get-ChildItem "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-*\grub.cfg" |
+    Sort-Object FullName | Select-Object -Last 1 | Get-FileHash
 ```
 
 Then close every Explorer window and program that uses BOOT.
@@ -233,7 +236,7 @@ sudo /usr/local/bin/kernel-updater migrate --stage menu --write-fat
 
 Answer `y` to the plan's question, then `y` to `Write the FAT partition 1 now? In Windows,
 Test-Path on BOOT's drive must print False while this VM runs`, which `--yes` does not answer,
-once step B printed `False`. It worked when it ends with `info: wrote multibootusb/grub/kali.cfg`
+once step B printed `False`. It worked when it prints `info: wrote multibootusb/grub/kali.cfg`
 and `info: wrote multibootusb/grub/grub.cfg; the old one is kept as ...` and exits 0, as
 `echo $?` shows. For finalize, the second write, use `--stage finalize`; for a rollback,
 `--rollback --write-fat`. Every command here names `/usr/local/bin/kernel-updater` in full, as
@@ -416,9 +419,9 @@ finalize, then menu, then system. `-n` shows what it would restore.
   them, the rollback refuses (exit 3), since the stick would be left without a Kali entry that
   boots; the menu stage then stays. `kali.cfg` stays on partition 1, unused, and check's
   `kali-menu` item fails until you delete it from Windows or run the menu stage again. In the
-  VM, or with `--deploy export`, the old `grub.cfg` is exported, also when the stick holds it
-  already, so that `output_dir` no longer holds the menu stage's export; copy it as
-  `DEPLOY.txt` says.
+  VM, with `--deploy export`, or on a FAT partition 1 without `--write-fat`, the old `grub.cfg`
+  is exported, also when the stick holds it already, so that `output_dir` no longer holds the
+  menu stage's export; copy it as `DEPLOY.txt` says.
 - **menu, run again**: a run that wrote `kali.cfg` alone puts back the `kali.cfg` it replaced.
   One that wrote a missing `kali.cfg` leaves it, since `grub.cfg` sources it.
 - **system**: `/etc/kernel-img.conf` is as it was before, and the old links go back to `/`. The

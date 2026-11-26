@@ -489,5 +489,28 @@ with the owner's original script.
     nothing else changed, as the usage says, instead of 4.
   - check's `boot-links` no longer counts a link as reaching a kernel or initrd in `/boot`
     when that file is itself a symlink, which GRUB cannot follow off the `/boot` filesystem.
+- Texts that no longer matched the code are corrected; the code is unchanged.
+  - The example config leaves `grub_floor` commented out, so that a copy of it no longer keeps
+    the detect stage from setting the floor from the stick's GRUB. Its deploy paragraph names
+    `--write-fat` and which modes fall back to an export, as the README now does too.
+  - README: the dependencies (grep, sed, `flock`), `lint --floor`'s default, that global
+    options go before the command and what `--yes` does not answer, install.sh's exit 66 and
+    3, the exit codes of `check` (78) and of the system and menu stages, `baseline`'s 66 and
+    `--show` taking no lock, detect's refusal of `-c`, the `grub-pc` and `deployed` items, and
+    that a bad configuration stops the hooks with 78 even while they only warn. apt-guard's
+    row, and the comment in its APT configuration, name the other initramfs-tools packages,
+    the debug packages it passes and its refusal when `debconf-show` cannot read grub-pc.
+  - Help: `migrate --help` lists `--write-fat` in its synopsis; `lint --help` names the
+    MultiBootUSB marker rule, `grub_floor` as `--floor`'s default and exit 78; `check --help`
+    names 78; and `--yes` says it does not answer the `--write-fat` question.
+  - migrate's message about an unfinished backup it cannot remove says that the next
+    `--rollback` passes over it, instead of claiming that it refuses.
+  - docs/migration.md: the manual step A names its copy down to the second, as the script
+    does, and checks it by hash, since a copy keeps the stick file's time; with
+    `--write-fat`, an unclean FAT volume refuses rather than exports; a rollback also exports
+    on a FAT partition 1 without `--write-fat`; step C's output is described without claiming
+    its last line. docs/runbook.md: which stages exit 66, exit 143, whose PID the exit-75
+    message names, and the full path for `lint`. The chkdsk script's header says where its
+    result shows.
 
 [Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main

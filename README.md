@@ -45,20 +45,20 @@ tool's lock, print a plan and ask before they carry it out, and change nothing w
 
 ## Usage
 
-The tool is `bin/kernel-updater`. Run it from a checkout, or install it, together
-with its hooks, with `install.sh` (see [Installing](#installing)). It needs Bash 4.4 or later,
-GNU coreutils and awk; `grub-script-check` (Debian package `grub-common`) adds a syntax check
-to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk` and `blkid`
+The tool is `bin/kernel-updater`. Run it from a checkout, or install it, together with its hooks,
+with `install.sh` (see [Installing](#installing)). It needs Bash 4.4 or later, GNU coreutils, grep,
+sed, awk and `flock` (util-linux); `grub-script-check` (Debian package `grub-common`) adds a syntax
+check to `lint`. `check` and the hooks also read the system through `findmnt`, `lsblk` and `blkid`
 (util-linux), `mount` and `umount` (Debian package `mount`), `dpkg-query`, `linux-version`
-(linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which a Kali install
-has. `check` and `baseline` mount the stick's partition 1 read-only: FAT with the kernel's
-`vfat` driver, NTFS with `ntfs3`, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it,
-which only `migrate` does, needs on NTFS `ntfs3` and `ntfs-3g.probe`, from the same package,
-and on FAT `vfat` and `migrate --write-fat` under VMware; `systemd-detect-virt` tells the
-writer whether it runs in a VM, and which, and `check` which hypervisor runs it. `migrate` also runs `linux-update-symlinks` (linux-base),
-`debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs. `cleanup`
-runs `apt-get` and `apt-mark` (apt), `dpkg-query`, and `dkms` when it is installed; it moves a
-module tree into its quarantine only with GNU `mv` from coreutils 9.2 on, whose `--no-copy`
+(linux-base), `cryptsetup`, `dumpe2fs`, `lsinitramfs` and `debconf-show`, which a Kali install has.
+`check` and `baseline` mount the stick's partition 1 read-only: FAT with the kernel's `vfat` driver,
+NTFS with `ntfs3`, or with `ntfs-3g` (Debian package `ntfs-3g`). Writing it, which only `migrate`
+does, needs on NTFS `ntfs3` and `ntfs-3g.probe`, from the same package, and on FAT `vfat` and
+`migrate --write-fat` under VMware; `systemd-detect-virt` tells the writer whether it runs in a VM,
+and which, and `check` which hypervisor runs it. `migrate` also runs `linux-update-symlinks`
+(linux-base), `debconf-set-selections` and, for the new menu, `grub-script-check`, which it needs.
+`cleanup` runs `apt-get` and `apt-mark` (apt), `dpkg-query`, and `dkms` when it is installed; it
+moves a module tree into its quarantine only with GNU `mv` from coreutils 9.2 on, whose `--no-copy`
 keeps a move from turning into a copy, and with an older `mv` only lists such a tree.
 
 ```text
@@ -75,17 +75,17 @@ kernel-updater [OPTIONS] COMMAND [ARGS]
 | `hook NAME ARGS...` | Runs a hook for the files `install.sh` puts in `/etc/kernel` and `/etc/apt`, not by hand. See [Hooks](#hooks) |
 | `help`, `version` | Print the usage or the version |
 
-`lint` takes `--floor VERSION`, the oldest GRUB the files must run on: 2.02 (the default),
-2.06, 2.12 or 2.14. Below 2.12, LUKS UUIDs written with dashes are errors, because older GRUB
+`lint` takes `--floor VERSION`, the oldest GRUB the files must run on: 2.02, 2.06, 2.12 or 2.14,
+`grub_floor` by default. Below 2.12, LUKS UUIDs written with dashes are errors, because older GRUB
 never matches them. `--grub-dir DIR` takes the command and module names from a stick's own
 `command.lst` and `moddep.lst`, `--strict` fails on warnings too, and `--porcelain` prints
 tab-separated fields.
 
-Global options: `-c`/`--config FILE`, `-n`/`--dry-run`, `-y`/`--yes`, `-v`/`--verbose`,
-`-q`/`--quiet`, `--porcelain`, `-h`/`--help` and `-V`/`--version`. Results go to stdout and
-messages to stderr. A message that says what to run next names the tool as `sudo` and the path
-it was started from, as `sudo /usr/local/bin/kernel-updater check`, since sudo's `secure_path`
-may lack `/usr/local/bin`.
+Global options, which go before the command: `-c`/`--config FILE`, `-n`/`--dry-run`, `-y`/`--yes`,
+`-v`/`--verbose`, `-q`/`--quiet`, `--porcelain`, `-h`/`--help` and `-V`/`--version`. `--yes` answers
+every question but the one `migrate --write-fat` asks. Results go to stdout and messages to stderr.
+A message that says what to run next names the tool as `sudo` and the path it was started from, as
+`sudo /usr/local/bin/kernel-updater check`, since sudo's `secure_path` may lack `/usr/local/bin`.
 
 | Exit code | Meaning |
 |---|---|
@@ -122,7 +122,8 @@ again. `--dry-run` (`-n`) prints what would change, and
 alone `/etc/kernel-updater.conf`, `migrate`'s backups in `/var/backups/kernel-updater` and what
 `/var/lib/kernel-updater` holds besides the manifest: the baseline and `cleanup`'s quarantine,
 whose module trees stay whole. It needs root (exit 77 otherwise) and takes the tool's lock
-(exit 75 while another run holds it).
+(exit 75 while another run holds it). It exits 66 when the checkout lacks a file, and 3,
+changing nothing, when a line of the manifest is damaged.
 
 The hooks only warn until `boot_fs_uuid` is set, and `install.sh` says so while it is not. To
 arm them, mount `/boot`, copy the example config and set `boot_fs_uuid` in it to the UUID that
@@ -179,11 +180,11 @@ alone.
 | `boot-luks` | `/boot` is in a LUKS container the GRUB of `grub_floor` unlocks: LUKS1 for 2.02, LUKS1 or LUKS2 from 2.06 on, with PBKDF2 keyslots, and from 2.14 on Argon2 keyslots too; fails otherwise, and when `cryptsetup` is not installed |
 | `boot-ext` | The ext filesystem at `/boot` has no incompatible feature the GRUB of `grub_floor` refuses: 2.02 reads `filetype`, `extent`, `flex_bg`, `meta_bg` and `64bit` and ignores `needs_recovery` and `mmp`, 2.06 also reads `encrypt`, and 2.12 also ignores `metadata_csum_seed` and `large_dir`. Fails on any other, such as `inline_data` or `casefold` |
 | `fstab-crypttab` | `/etc/fstab` and `/etc/crypttab` name devices by `UUID=` or another name that stays; warns on kernel names such as `/dev/sdX` and on `/dev/disk/by-path` and `/dev/disk/by-id` names, which change with the port or in a VM |
-| `grub-pc` | The debconf answer `grub-pc/install_devices` is empty, so a grub-pc upgrade cannot write GRUB over the stick's boot loader; fails while it names a device |
+| `grub-pc` | The debconf answer `grub-pc/install_devices` is empty, so a grub-pc upgrade cannot write GRUB over the stick's boot loader; fails while it names a device, warns when `debconf-show` cannot read grub-pc's answers, and skips while debconf holds no such answer |
 | `p1-identity` | Partition 1, found from `/boot`, is the FAT or NTFS filesystem `p1_fs_uuid` names, on the disk `disk_ptuuid` names; fails when it is another, naming the disk or partition 1 but no value, also when only one of the keys is set and names another, and, with both keys set, when it cannot be found; skips otherwise while either key is not set |
 | `grub-version` | The stick's GRUB, whose version `multibootusb/grub/i386-pc/normal.mod` holds, is at least as new as `grub_floor`, or lint and check would trust features it lacks; fails when it is older, warns when its version is unknown, and names the higher floor a newer GRUB allows |
 | `tripwire` | The stick's boot code matches the baseline `kernel-updater baseline` recorded: the files `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector; fails naming what changed, is new or is missing, a file that is or passes a symlink counting as missing, and warns while no baseline is stored |
-| `deployed` | The files exported to `output_dir` match those on partition 1, as its `SHA256SUMS` lists them; fails naming each one that differs or is missing, and skips while nothing was exported. Copy the export only when you have not yet: copied again after the stick changed, it would undo that change |
+| `deployed` | The files exported to `output_dir` match those on partition 1, as its `SHA256SUMS` lists them; fails naming each one that differs or is missing, and when its `SHA256SUMS` is damaged, and skips while nothing was exported. Copy the export only when you have not yet: copied again after the stick changed, it would undo that change |
 | `kali-cfg` | `multibootusb/grub/kali.cfg`, which the menu stage of `migrate` writes, passes `lint` with the stick's own command and module lists; fails on errors and when it or a directory on its way is a symlink, warns on warnings, and skips while the file does not exist |
 | `kali-menu` | `grub.cfg` holds the block `migrate` writes, which sources `kali.cfg`, and `kali.cfg` exists; skips while neither is there, before the migration, warns while the legacy Kali entries remain (until `migrate --stage finalize`), and fails when only one of the block and `kali.cfg` is there, as after a rollback of the menu stage until `kali.cfg` is deleted or the stage runs again, or when `grub.cfg` or a directory on its way is a symlink |
 | `boot-menu` | Which menu booted the running kernel, and which hypervisor runs this system, as `systemd-detect-virt` names it (`none` on bare metal): counts the `linux` lines that end with the kernel's command line, as GRUB passed it without `BOOT_IMAGE=`, in the stick's `grub.cfg` and `kali.cfg` and in this system's `/boot/grub/grub.cfg`, whatever blanks and line endings they have. Only reports, so it is `ok`, or skips when `/proc/cmdline` holds nothing beside `BOOT_IMAGE=`, or a file of the stick's menu cannot be read or is a symlink. `migrate --write-fat` writes a FAT partition 1 only when this says that the stick's menu booted it |
@@ -191,7 +192,8 @@ alone.
 Results go to stdout as aligned `STATUS ITEM DETAIL` lines, or with `--porcelain` as
 `ITEM<TAB>STATUS<TAB>DETAIL`, and a summary goes to stderr. Details name kinds and counts,
 never a disk identifier, device name or key file. `check` exits 0 unless an item fails, and 2
-when one does or, with `--strict`, when one warns.
+when one does or, with `--strict`, when one warns; 64 on a usage error, 77 when not run as
+root and 78 on a bad configuration.
 
 ### baseline
 
@@ -211,21 +213,21 @@ old FAT tool may store them in capitals. Files that do not exist are not recorde
 `tripwire` then fails when any of them changes, so record the baseline anew after you change
 the stick on purpose.
 
-It runs as root (77 otherwise) and takes the tool's lock (75). It finds partition 1 from
-`/boot` and refuses with 78, before it reads anything, while `disk_ptuuid` or `p1_fs_uuid` is
-not set or names another stick; it exits 66 when partition 1 cannot be found or read. It reads
-partition 1 read-only, prints how it differs from the stored baseline (`same` with a count,
-then each `changed`, `new` and `missing` entry, or `baseline none` when none is stored), and
-asks before it records the new one: `--yes` answers for you, a declined or unanswered question
-exits 10, and `--dry-run` records nothing. When nothing changed since the stored baseline, it
-says so and asks nothing.
+It runs as root (77 otherwise) and takes the tool's lock (75). It finds partition 1 from `/boot` and
+refuses with 78, before it reads anything, while `disk_ptuuid` or `p1_fs_uuid` is not set or names
+another stick; it exits 66 when partition 1 cannot be found or read, or holds none of the files
+`baseline.list` names. It reads partition 1 read-only, prints how it differs from the stored
+baseline (`same` with a count, then each `changed`, `new` and `missing` entry, or `baseline none`
+when none is stored), and asks before it records the new one: `--yes` answers for you, a declined or
+unanswered question exits 10, and `--dry-run` records nothing. When nothing changed since the stored
+baseline, it says so and asks nothing.
 
-`--show` changes nothing and exits 0. It prints whether the disk and partition 1 match the
-configuration: `match`, `mismatch` or `not configured`, never a value, or `not found` when
-partition 1 cannot be found from `/boot`. Then the version of the stick's GRUB, or `unknown`,
-and the comparison with the stored baseline, or `baseline` with `none`, `damaged` or
-`not compared` when there is nothing to compare. A partition 1 that mismatches is not read at
-all. `--porcelain` prints the lines as `KEY<TAB>VALUE`.
+`--show` changes nothing, takes no lock and exits 0. It prints whether the disk and partition 1
+match the configuration: `match`, `mismatch` or `not configured`, never a value, or `not found` when
+partition 1 cannot be found from `/boot`. Then the version of the stick's GRUB, or `unknown`, and
+the comparison with the stored baseline, or `baseline` with `none`, `damaged` or `not compared` when
+there is nothing to compare. A partition 1 that mismatches is not read at all. `--porcelain` prints
+the lines as `KEY<TAB>VALUE`.
 
 ### migrate
 
@@ -242,6 +244,8 @@ it, with the tests to make between the stages. It runs as root (77) under the to
 (75), a dry run too. Each stage prints its plan on stderr and asks once (10 when declined;
 `--yes` answers), changes nothing with `-n`, and says so and exits 0 when its result is in
 place already; a stage whose predecessor is not done exits 3, naming the stage to run first.
+`detect`, and `all`, which runs it, take no `-c` (64): `detect` writes
+`/etc/kernel-updater.conf`, which the hooks read.
 Messages name kinds and counts, never an identifier; the root device shows as
 `root=<root_device>`, and a kernel parameter that may name a device, a UUID, a label or a key
 file as `NAME=<value>`.
@@ -249,8 +253,8 @@ file as `NAME=<value>`.
 | Stage | Does |
 |---|---|
 | `detect` | Appends to `/etc/kernel-updater.conf`, under a comment line, what it lacks of `boot_fs_uuid`, `boot_luks_uuid`, `disk_ptuuid`, `p1_fs_uuid` and `root_device`, read from the mount of `/boot`, its LUKS container, the stick found from `/boot` and the running kernel's command line, and `grub_floor` from the stick's GRUB when the file sets none. A key the file sets to another value exits 78, naming the key. The file is written through a temporary file renamed over it and keeps every other line. Setting `boot_fs_uuid` arms the hooks |
-| `system` | Needs the identity in place (78 otherwise) and refuses (3) while check's `boot-luks`, `boot-ext` or `kernels` item fails, no installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check), only one would while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links, or one of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`, sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line, has `linux-update-symlinks` point the links in `/boot` at the newest kernel and the `.old` ones at the previous one (the running kernel when it is an older one), moves the old links out of `/` into the backup, asks on its own whether to empty grub-pc's install devices, and exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. When the kernels or the links change while its question waits, as when apt installs a kernel meanwhile, it exits 75 before changing anything, since its plan no longer holds; run it again once apt is done |
-| `menu` | Needs `system` done, `grub-script-check` and a partition 1 it may reach (66). It finds the one top-level submenu of `grub.cfg` whose quoted title holds Kali (3 for none, several, one between MultiBootUSB's `#start` and `#end` markers, or one that shares a line with other commands), takes each variant's kernel parameters from its entries (dropping `root=`, `cryptdevice=`, `BOOT_IMAGE=` and `initrd=`, turning `noswap` into `systemd.swap=0` and overlayroot's `resurce=` into `recurse=`), renders `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`, and replaces the submenu in `grub.cfg` with a block that sources `kali.cfg`, the submenu following as "... (legacy entries)". Every byte outside the submenu must come through (3 otherwise), both files must pass `grub-script-check` and `kali.cfg` `lint` with the stick's own command and module lists, or GRUB 2.02's when those cannot be read; then it backs up both, writes `kali.cfg` before `grub.cfg` with the safe writer and updates their baseline entries, or exports both. A file that differed from a stored baseline before the write keeps its old entry, so that check's tripwire keeps reporting a change made outside the tool, as from Windows, until `kernel-updater baseline` records it; the plan and a warning name it. Run again while the legacy entries remain, it leaves `grub.cfg` as it is and writes `kali.cfg` alone anew from them when it is missing or differs, as after `menu_variants` changed, with a backup of its own |
+| `system` | Needs `detect` done (3 otherwise), `/boot` mounted (66) and the `/boot` and LUKS container the configuration names (78), and refuses (3) while check's `boot-luks`, `boot-ext` or `kernels` item fails, no installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check), only one would while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links, or one of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`, sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line, has `linux-update-symlinks` point the links in `/boot` at the newest kernel and the `.old` ones at the previous one (the running kernel when it is an older one), moves the old links out of `/` into the backup, asks on its own whether to empty grub-pc's install devices, and exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. When the kernels or the links change while its question waits, as when apt installs a kernel meanwhile, it exits 75 before changing anything, since its plan no longer holds; run it again once apt is done |
+| `menu` | Needs `system` done and `grub-script-check` (3 otherwise), `/boot` as `system` does, and a partition 1 it may reach (66). It finds the one top-level submenu of `grub.cfg` whose quoted title holds Kali (3 for none, several, one between MultiBootUSB's `#start` and `#end` markers, or one that shares a line with other commands), takes each variant's kernel parameters from its entries (dropping `root=`, `cryptdevice=`, `BOOT_IMAGE=` and `initrd=`, turning `noswap` into `systemd.swap=0` and overlayroot's `resurce=` into `recurse=`), renders `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`, and replaces the submenu in `grub.cfg` with a block that sources `kali.cfg`, the submenu following as "... (legacy entries)". Every byte outside the submenu must come through (3 otherwise), both files must pass `grub-script-check` and `kali.cfg` `lint` with the stick's own command and module lists, or GRUB 2.02's when those cannot be read; then it backs up both, writes `kali.cfg` before `grub.cfg` with the safe writer and updates their baseline entries, or exports both. A file that differed from a stored baseline before the write keeps its old entry, so that check's tripwire keeps reporting a change made outside the tool, as from Windows, until `kernel-updater baseline` records it; the plan and a warning name it. Run again while the legacy entries remain, it leaves `grub.cfg` as it is and writes `kali.cfg` alone anew from them when it is missing or differs, as after `menu_variants` changed, with a backup of its own |
 | `finalize` | Needs `menu` done. Removes the legacy submenu from `grub.cfg` and nothing else, after a question that asks for the boot tests first, and writes it or exports it. After a write it sets `grub.cfg`'s entry in the stored baseline, unless `grub.cfg` differed from it before, and names, in a warning, the files that still differ from it, which `kernel-updater baseline` then shows and records once checked; it records the whole baseline only when none is stored. A rollback that writes `grub.cfg` or `kali.cfg` treats their entries as `menu` does |
 | `all` | The default: `detect`, `system` and `menu` in turn. A dry run stops after the first stage that would change something, as the later plans build on it. `finalize` never runs with them |
 
@@ -429,8 +433,8 @@ Windows to copy, and says why.
   `uid=0,gid=0,umask=077`, as FAT keeps no owners, and NTFS trying `ntfs3`, then `ntfs-3g`,
   which gets `norecover`. A read-only mount writes nothing with any of them. Readers
   follow no symlink on partition 1, which Windows or a user who owns a mount of it could have
-  made: a file that is or passes one counts as missing to the tripwire and to the `deployed`
-  item, its GRUB version as unknown, and `kali-cfg` fails.
+  made: a file that is or passes one counts as missing to the tripwire and as differing to the
+  `deployed` item, its GRUB version as unknown, and `kali-cfg` fails.
 - **Writing FAT.** FAT has no journal, and in the VM Windows may have the volume mounted on
   the host at the same time, which would corrupt it. So a FAT partition 1 is written only with
   `migrate --write-fat`, and only when all of these hold, or the run refuses (3) and writes
@@ -467,17 +471,17 @@ Windows to copy, and says why.
   read-write all the same. It checks that the mount is read-write. A read-write mount that
   root made itself took the volume as it was, so the writer takes it as it is. A dry run
   mounts read-only and does not probe.
-- **Deploying.** Without `--write-fat`, every mode exports a FAT partition 1's files: `auto`
-  says so as info, and `direct` and `path` warn. In a VM, where Windows may have partition 1 mounted on the host,
-  the guest never writes partition 1 itself: `deploy = auto` and `direct` export there, and only `path`
-  writes, through the host's share. Natively, `auto` and `direct` write directly. `direct` and
-  `path` fall back to an export, saying why, when they get no root they may write, as when
-  their own read-write mount finds partition 1 hibernated, unclean or marked dirty, or the
-  kernel has no `ntfs3`; `path`, and a read-write mount that root made, are written as they
-  are. What a plan reads from
-  partition 1 to build the new files comes only from a root no user but root can change, for
-  an export too: while a desktop has partition 1 mounted for its user there is none, and the
-  tool asks you to unmount it there and run again.
+- **Deploying.** Without `--write-fat`, every mode exports a FAT partition 1's files: `auto` says so
+  as info, and `direct` and `path` warn. In a VM, where Windows may have partition 1 mounted on the
+  host, the guest never writes partition 1 itself: `deploy = auto` and `direct` export there, and
+  only `path` writes, through the host's share. Natively, `auto` and `direct` write directly.
+  `auto`, natively, and `direct` fall back to an export, saying why, when they get no root they may
+  write, as when their own read-write mount finds partition 1 hibernated, unclean or marked dirty,
+  or the kernel has no `ntfs3`, and `path` does when `p1_path` does not serve; a `p1_path` that
+  serves, and a read-write mount that root made, are written as they are. What a plan reads from
+  partition 1 to build the new files comes only from a root no user but root can change, for an
+  export too: while a desktop has partition 1 mounted for its user there is none, and the tool asks
+  you to unmount it there and run again.
 - **The safe writer** replaces one file at a time: it exits 75 when the file changed since the
   plan read it, or exists where the plan found none, as a run that plans anew can then
   succeed, and refuses with exit 3 when a symlink lies on its way, or a user other than root
@@ -517,7 +521,9 @@ Windows to copy, and says why.
 `install.sh` installs four kernel hooks, which `linux-run-hooks` runs from the maintainer
 scripts of every kernel package, and apt-guard, which APT runs before dpkg. They are armed
 while `boot_fs_uuid` is set. Until then they run the same checks but only warn, so the tool
-never blocks apt on a system it was not set up for. While armed:
+never blocks apt on a system it was not set up for. A configuration file they cannot use, as
+one with a bad line or value or one root does not own, stops them with 78 all the same, as it
+stops every command that reads it. While armed:
 
 | Hook | Runs | Refuses |
 |---|---|---|
@@ -525,7 +531,7 @@ never blocks apt on a system it was not set up for. While armed:
 | `/etc/kernel/prerm.d/00-kernel-updater` | Before a kernel package is removed | The removal in the same case; the package stays installed |
 | `/etc/kernel/postinst.d/00-kernel-updater` | When a kernel package is configured, before linux-base copies the kernel to `/boot` and initramfs-tools builds its initrd there | The configure in the same case; the package stays half-configured |
 | `/etc/kernel/postinst.d/kernel-updater` | After initramfs-tools has built the initrd | A kernel whose `/boot/vmlinuz-VERSION` is missing or empty, whose initrd is missing, unreadable, or lacks its modules, `cryptsetup`, the cryptroot configuration or the key files `/etc/crypttab` names, or, with `link_in_boot = yes`, whose links in `/boot` are absolute or dangle. The package stays half-configured; with `verify_action = warn` the hook only warns |
-| apt-guard, run through `/etc/apt/apt.conf.d/50kernel-updater` | Before dpkg, with the actions APT is about to take | An apt run that installs, removes or configures a versioned `linux-image`, `linux-binary`, `linux-modules` or `linux-base` package, `linux-base` or `initramfs-tools` while `/boot` is not the filesystem `boot_fs_uuid` names, or that unpacks or configures `grub-pc` while `grub-pc/install_devices` names a device. A refused run changes nothing |
+| apt-guard, run through `/etc/apt/apt.conf.d/50kernel-updater` | Before dpkg, with the actions APT is about to take | An apt run that installs, removes or configures a versioned `linux-image`, `linux-binary`, `linux-modules` or `linux-base` package, but for their `-dbg` and `-dbgsym` packages, `linux-base`, `initramfs-tools`, `initramfs-tools-core` or `initramfs-tools-bin` while `/boot` is not the filesystem `boot_fs_uuid` names, or that unpacks or configures `grub-pc` while `grub-pc/install_devices` names a device or `debconf-show` cannot read grub-pc's answers. A refused run changes nothing |
 
 apt-guard covers the split kernel packages, whose `linux-binary` part can be unpacked before
 the `linux-image` preinst runs the hooks, and runs that only remove kernels. `cryptsetup`,

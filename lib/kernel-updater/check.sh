@@ -54,14 +54,14 @@ Results name kinds and counts, never identifiers.
   --porcelain     print ITEM, STATUS and DETAIL, tab-separated
 
 Each item is ok, warn, fail or skip. Exits 0 when no item fails, 2 when one does (or, with
---strict, warns), 64 on a usage error and 77 when not run as root.
+--strict, warns), 64 on a usage error, 77 when not run as root and 78 on a bad configuration.
 EOF
 }
 
 # Run every item and print one result per item on stdout, then a summary on stderr. Exits 0
-# when no item fails (or, with --strict, warns), 2 when one does, 64 on a usage error and 77
-# when not run as root. Changes nothing but the shadow scan's bind mount and the read-only
-# mount of partition 1, which it removes.
+# when no item fails (or, with --strict, warns), 2 when one does, 64 on a usage error, 77
+# when not run as root and 78 on a bad configuration. Changes nothing but the shadow scan's
+# bind mount and the read-only mount of partition 1, which it removes.
 ku_cmd_check() {
     local strict=0 no_partition=0 status
     local -A totals=([ok]=0 [warn]=0 [fail]=0 [skip]=0)

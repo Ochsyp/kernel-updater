@@ -85,8 +85,9 @@ declare -gA KU_MG_IDS=([default]=kali-default [default.old]=kali-previous
 # Print the migrate command's usage on stdout.
 ku_migrate_usage() {
     cat << 'EOF'
-Usage: kernel-updater migrate [--stage STAGE] [--deploy MODE] [--output-dir DIR] [-n] [-y]
-       kernel-updater migrate --rollback [STAMP] [-n] [-y]
+Usage: kernel-updater migrate [--stage STAGE] [--deploy MODE] [--output-dir DIR] [--write-fat]
+                              [-n] [-y]
+       kernel-updater migrate --rollback [STAMP] [--write-fat] [-n] [-y]
 
 Moves the stick's Kali entries, once, onto the links linux-base keeps in /boot, so that
 kernel updates no longer change partition 1. Each stage prints its plan, asks, and does
@@ -117,7 +118,7 @@ keeps none:
                       stick's menu booted the running kernel, the volume was left clean, and
                       you answer y that Windows no longer has it; without it, FAT is exported
   -n, --dry-run       print the plan, change nothing
-  -y, --yes           answer yes to every question
+  -y, --yes           answer yes to every question but the one --write-fat asks
 
 Runs as root under the tool's lock. docs/migration.md walks through the stages. Exits 0 when
 done or nothing was left to do, 3 when a check refuses or another stage must run first, 4
@@ -2640,8 +2641,8 @@ _ku_mg_backup_fail() {
     fi
     KU_MG_BACKUP=""
     ku_die "$KU_EX_WRITE" "cannot write the backup $KU_MG_BACKUPS/$KU_MG_STAMP, nor remove it" \
-        "again: remove that directory by hand, as --rollback refuses while it is there;" \
-        "nothing else was changed"
+        "again: remove that directory by hand, or leave it to the next --rollback, which" \
+        "passes over it; nothing else was changed"
 }
 
 # Remove this run's backup directory while its MANIFEST is not written, as after a write into
@@ -2809,7 +2810,7 @@ _ku_mg_cleanup() {
     local status=0
     if ! _ku_mg_backup_drop; then
         ku_log warning "the unfinished backup $KU_MG_BACKUPS/$KU_MG_STAMP stays: remove it by" \
-            "hand, as --rollback refuses while it is there"
+            "hand, or leave it to the next --rollback, which passes over it"
     fi
     if [[ -n $KU_MG_ETC_TMP ]]; then
         rm -f -- "$KU_MG_ETC_TMP" || status=1
