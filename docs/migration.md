@@ -182,20 +182,26 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\windows\st
   `%LOCALAPPDATA%\kernel-updater\stick-grub` once you type `yes`, and prints both SHA-256 sums.
 
 A. In Windows, before you start the VM, keep a copy of the menu, never on the Desktop. In
-PowerShell, first make the folder for it and keep its name in `$copies`:
+PowerShell, first make the folder for it, which prints the folder:
 
 ```powershell
-$copies = New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\kernel-updater\stick-grub"
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\kernel-updater\stick-grub"
 ```
 
-Then copy the menu into it:
+Then copy the menu into it, which prints nothing:
 
 ```powershell
-Copy-Item -Recurse X:\multibootusb\grub "$copies\stick-grub-$(Get-Date -f yyyyMMdd-HHmm)"
+Copy-Item -Recurse X:\multibootusb\grub `
+    "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-$(Get-Date -f yyyyMMdd-HHmm)"
 ```
 
-Both print nothing. It worked when `Get-ChildItem "$copies\stick-grub-*\grub.cfg"` lists a
-`grub.cfg` with today's time. Then close every Explorer window and program that uses BOOT.
+It worked when this lists a `grub.cfg` with today's time:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-*\grub.cfg"
+```
+
+Then close every Explorer window and program that uses BOOT.
 
 B. Start the VM through the launcher. Then, in Windows, check that VMware holds BOOT:
 
@@ -252,21 +258,22 @@ What can still go wrong, and how to get the old menu back:
   milliseconds between the two renames of `grub.cfg`: E from Windows.
 - The new entries do not boot: choose "... (legacy entries)", which stay until finalize, and
   run `sudo kernel-updater migrate --rollback --write-fat` with steps A to D.
-- E. Put the menu you kept in step A back, in PowerShell. First name the folder of the copies:
+- E. Put the menu you kept in step A back, in PowerShell, with the name of that copy in place
+  of `stick-grub-<stamp>`:
 
   ```powershell
-  $copies = "$env:LOCALAPPDATA\kernel-updater\stick-grub"
+  Copy-Item "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-<stamp>\*" `
+      X:\multibootusb\grub\ -Recurse -Force
   ```
 
-  Then copy, with the name of the copy from step A in place of `stick-grub-<stamp>`:
+  It prints nothing. It worked when `Get-FileHash X:\multibootusb\grub\grub.cfg` prints the
+  same hash as this, and the stick boots its old menu:
 
   ```powershell
-  Copy-Item "$copies\stick-grub-<stamp>\*" X:\multibootusb\grub\ -Recurse -Force
+  Get-FileHash "$env:LOCALAPPDATA\kernel-updater\stick-grub\stick-grub-<stamp>\grub.cfg"
   ```
 
-  Both print nothing. It worked when `Get-FileHash X:\multibootusb\grub\grub.cfg` prints the
-  same hash as `Get-FileHash "$copies\stick-grub-<stamp>\grub.cfg"`, and the stick boots its
-  old menu. A `kali.cfg` the run wrote may stay beside it: the old `grub.cfg` does not read it.
+  A `kali.cfg` the run wrote may stay beside it: the old `grub.cfg` does not read it.
 
 ## 9. Boot the new entries
 

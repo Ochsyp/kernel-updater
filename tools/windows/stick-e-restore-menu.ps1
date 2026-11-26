@@ -14,8 +14,9 @@ if (Test-Path -LiteralPath $folder -PathType Container) {
         Sort-Object -Property Name)
 }
 if ($copies.Count -eq 0) {
-    Stop-Step (('No stick-grub-* folder is in {0}, so there is nothing to put back. Nothing ' +
-        'was changed.') -f $folder)
+    Stop-Step (('No stick-grub-* folder is in {0}, so there is nothing to put back. A copy ' +
+        'that an older step A left on the Desktop must be moved into that folder first. ' +
+        'Nothing was changed.') -f $folder)
 }
 $from = $copies[-1].FullName
 if (-not (Test-Path -LiteralPath "$from\grub.cfg" -PathType Leaf)) {

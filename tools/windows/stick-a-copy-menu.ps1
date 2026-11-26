@@ -8,11 +8,16 @@
 $drive = Get-BootDrive
 $source = "$drive\multibootusb\grub"
 $folder = Get-CopyFolder
+# New-Item -Force stays quiet when a file on the way has a folder's name, so the test after it
+# is what counts.
+$why = 'a file is in the way'
 try {
     New-Item -ItemType Directory -Path $folder -Force -ErrorAction Stop | Out-Null
 } catch {
-    Stop-Step ('Cannot make {0}: {1}. The stick was not changed.' -f $folder,
-        $_.Exception.Message)
+    $why = $_.Exception.Message.TrimEnd('.')
+}
+if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
+    Stop-Step ('Cannot make {0}: {1}. The stick was not changed.' -f $folder, $why)
 }
 $target = Join-Path $folder ('stick-grub-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 if (Test-Path -LiteralPath $target) {

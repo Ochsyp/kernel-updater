@@ -306,10 +306,10 @@ with the owner's original script.
   refusal, the writer on real FAT32 and FAT16, a failed rename or read-back, and a power loss
   after each step.
 - `tools/windows`: PowerShell scripts for the steps in Windows around `migrate --write-fat`.
-  They copy the stick's menu to `%LOCALAPPDATA%\kernel-updater\stick-grub`, take BOOT offline
-  with `mountvol`, run `chkdsk` read-only, and copy the saved menu back. Each finds BOOT by its
-  label, asks for administrator rights itself where it needs them, and refuses, changing
-  nothing, when BOOT is not there. `tests/tools.bats` runs their refusals under `pwsh`.
+  They copy the stick's menu to `%LOCALAPPDATA%\kernel-updater\stick-grub`, run `chkdsk`
+  read-only, and copy the saved menu back. Each finds BOOT by its label, asks for
+  administrator rights itself where it needs them, and refuses, changing nothing, when BOOT
+  is not there. `tests/tools.bats` runs their refusals under `pwsh`.
 - `contrib/initramfs/overlayroot-rw`, an opt-in initramfs-tools script for the live and forensic
   entries. On kernels where overlayroot builds its RAM layer read-only and overlayfs refuses to
   make it writable later, their login fails on a read-only `/home`. Right after overlayroot,

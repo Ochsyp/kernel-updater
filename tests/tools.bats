@@ -98,8 +98,18 @@ run_on_stick() {
     run_on_stick stick-e-restore-menu "$stick"
     [ "$status" -eq 1 ]
     [[ "$output" == "No stick-grub-* folder is in $copies, so there is nothing to put back."* ]]
+    [[ "$output" == *"older step A left on the Desktop must be moved into that folder first."* ]]
     [[ "$output" == *"Nothing was changed." ]]
     [ ! -e "$LOCALAPPDATA/kernel-updater" ]
+    # A refuses when it cannot make the folder, as when a file has its name.
+    mkdir -p "$LOCALAPPDATA"
+    printf 'file\n' > "$LOCALAPPDATA/kernel-updater"
+    run_on_stick stick-a-copy-menu "$stick"
+    [ "$status" -eq 1 ]
+    [[ "$output" == "Cannot make $copies: "* ]]
+    [[ "$output" == *". The stick was not changed." ]]
+    [ -f "$LOCALAPPDATA/kernel-updater" ]
+    rm "$LOCALAPPDATA/kernel-updater"
     # Without LOCALAPPDATA, A refuses and copies nothing.
     LOCALAPPDATA="" run_on_stick stick-a-copy-menu "$stick"
     [ "$status" -eq 1 ]
