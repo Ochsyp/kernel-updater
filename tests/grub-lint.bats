@@ -71,8 +71,9 @@ setup() {
     run_ku lint --porcelain "$BATS_TEST_TMPDIR/s.cfg"
     [ "$status" -eq 0 ]
     [ "$(cut -f 2,4 <<< "$output")" = "$(printf '3\tfs-uuid-is-luks\n7\tfs-uuid-is-luks')" ]
-    [[ "$output" == *"the LUKS container's UUID, which matches only when the filesystem inside"* ]]
-    [[ "$output" == *"has the same UUID; set boot_fs_uuid and boot_luks_uuid if it has" ]]
+    [[ "$output" == *"the LUKS container's UUID, which matches only a filesystem inside that"* ]]
+    [[ "$output" == *"has the same UUID; lint stays quiet when boot_fs_uuid and"* ]]
+    [[ "$output" == *"boot_luks_uuid both name it" ]]
     # boot_fs_uuid and boot_luks_uuid name the same UUID: only the other entry is reported.
     printf 'boot_fs_uuid = %s\nboot_luks_uuid = %s\n' "$b01" "${b01^^}" > "$BATS_TEST_TMPDIR/k.conf"
     run_ku -c "$BATS_TEST_TMPDIR/k.conf" lint --porcelain "$BATS_TEST_TMPDIR/s.cfg"

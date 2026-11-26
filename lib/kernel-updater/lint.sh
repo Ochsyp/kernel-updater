@@ -126,8 +126,9 @@ ku_lint_findings() {
 _ku_lint_file() {
     local file=$1 floor=$2 syntax=$3 exact=$4 cmd_lists=$5 mod_lists=$6 out ln=1 same=""
     local fs=${KU_CONF[boot_fs_uuid]-} luks=${KU_CONF[boot_luks_uuid]-}
-    if [[ -n $fs && ${fs//-/} == "${luks//-/}" ]]; then
-        same=${fs//-/}
+    fs=${fs//-/} luks=${luks//-/}
+    if [[ -n $fs && ${fs,,} == "${luks,,}" ]]; then
+        same=${fs,,}
     fi
     {
         if (( syntax )) && ! out=$(LC_ALL=C grub-script-check "$file" 2>&1); then
