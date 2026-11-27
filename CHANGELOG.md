@@ -262,6 +262,11 @@ folded in, and no entry that fixes another one of this section.
   `main` and once a week, through `ci/test` and, as root and in the Kali image, `ci/system`, and
   fails when a test is skipped; actions and the Kali image are pinned, and Dependabot updates the
   image. Its `secret-scan` workflow runs gitleaks with its default rules and the privacy packs.
+- Releases: the standard's `release` workflow builds `kernel-updater-X.Y.Z.tar.gz`, with its
+  manifest `kernel-updater-release.json` and `SHA256SUMS`, and `ci/release-check` checks that the
+  archive holds every file `install.sh` installs. The README and the migration guide install a
+  release on Kali with `curl`, `sha256sum --check`, `tar` and its `install.sh`. `install.sh
+  --list` prints the files it installs, without root.
 
 ### Changed
 

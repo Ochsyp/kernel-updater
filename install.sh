@@ -2,9 +2,9 @@
 # -------------------------------------------------------
 # kernel-updater installer
 #
-# Installs kernel-updater from this checkout: the command in /usr/local/bin, its libraries and
-# data in /usr/local/lib and /usr/local/share, the kernel hooks in /etc/kernel and apt-guard's
-# APT configuration. A manifest records every file with its SHA-256, and --uninstall removes
+# Installs kernel-updater from this folder, a release or a checkout: the command in
+# /usr/local/bin, its libraries and data in /usr/local/lib and /usr/local/share, the kernel
+# hooks in /etc/kernel and apt-guard's APT configuration. A manifest records every file with its SHA-256, and --uninstall removes
 # exactly what it lists. A file in the way that it did not install, or that changed since it
 # did, makes it refuse before it changes anything.
 # -------------------------------------------------------
@@ -35,9 +35,9 @@ ki_usage() {
 Usage: sudo ./install.sh [--dry-run] [--uninstall]
        ./install.sh --list
 
-Installs kernel-updater from this checkout under /usr/local, its kernel hooks in /etc/kernel
+Installs kernel-updater from this folder under /usr/local, its kernel hooks in /etc/kernel
 and apt-guard in /etc/apt/apt.conf.d, and lists every file with its SHA-256 in
-/var/lib/kernel-updater/install.manifest. Run it again after updating the checkout.
+/var/lib/kernel-updater/install.manifest. Run a newer release's install.sh to update.
 
   -n, --dry-run   print what would change, change nothing
       --uninstall remove every file the manifest lists; /etc/kernel-updater.conf stays
@@ -46,7 +46,7 @@ and apt-guard in /etc/apt/apt.conf.d, and lists every file with its SHA-256 in
   -h, --help      show this help
 
 Refuses with exit 3, changing nothing, when a file in the way was not installed by
-kernel-updater or changed since. Exits 64 on a usage error, 66 when the checkout lacks a file,
+kernel-updater or changed since. Exits 64 on a usage error, 66 when this folder lacks a file,
 75 when another kernel-updater run holds the lock and 77 when not run as root.
 EOF
 }
@@ -133,7 +133,7 @@ _ki_hash() {
 # Add SOURCE, a path in the checkout, to the files to install as TARGET with MODE. Exits 66
 # when the checkout lacks it.
 _ki_add() {
-    [[ -f $KU_SRC/$1 ]] || ku_die "$KU_EX_NOINPUT" "the checkout lacks $1"
+    [[ -f $KU_SRC/$1 ]] || ku_die "$KU_EX_NOINPUT" "this folder lacks $1"
     KI_SRC+=("$1")
     KI_DEST+=("$2")
     KI_MODE+=("$3")

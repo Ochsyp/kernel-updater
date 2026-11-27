@@ -52,8 +52,8 @@ Three commands change the system: `baseline`, `migrate` and `cleanup`. Each of t
 
 ## Usage
 
-The tool is `bin/kernel-updater`. Run it from a checkout, or install it, together with its hooks,
-with `install.sh` (see [Installing](#installing)).
+The tool is `bin/kernel-updater`. Install it, together with its hooks, from a release with
+`install.sh` (see [Installing](#installing)).
 
 It needs Bash 4.4 or later, GNU coreutils, grep, sed, awk and `flock` (util-linux).
 `grub-script-check` (Debian package `grub-common`) adds a syntax check to `lint`.
@@ -89,35 +89,50 @@ such a tree.
 
 ### Installing
 
+Install a published release from the
+[releases page](https://github.com/Ochsyp/kernel-updater/releases). Each release holds
+`kernel-updater-X.Y.Z.tar.gz` and `SHA256SUMS`; CONTRIBUTING.md, Release contract, says what
+they hold. On Kali, in a new empty folder, set `v` to the release's version and run:
+
 ```bash
-sudo ./install.sh
+v=1.0.0
+curl -fLO "https://github.com/Ochsyp/kernel-updater/releases/download/v$v/kernel-updater-$v.tar.gz"
+curl -fLO "https://github.com/Ochsyp/kernel-updater/releases/download/v$v/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "kernel-updater-$v.tar.gz"
+sudo "./kernel-updater-$v/install.sh"
 ```
 
-`install.sh` copies the tool from the checkout to `/usr/local/lib/kernel-updater`,
+`sha256sum` must print `kernel-updater-X.Y.Z.tar.gz: OK`; stop when it does not. No step needs a
+key, a token or a login. To update, do the same with the newer version. A git checkout installs
+the same way with `sudo ./install.sh`, for development.
+
+`install.sh` copies the tool from its own folder to `/usr/local/lib/kernel-updater`,
 `/usr/local/share/kernel-updater` and `/usr/local/bin/kernel-updater`, the kernel hooks to
 `/etc/kernel/{preinst,prerm,postinst}.d` and last apt-guard's configuration to
 `/etc/apt/apt.conf.d/50kernel-updater`, and lists every file with its SHA-256 in
-`/var/lib/kernel-updater/install.manifest`. Run it again after updating the checkout: it
-replaces what changed and removes the files the checkout no longer has, puts back a file whose
+`/var/lib/kernel-updater/install.manifest`. Run a newer release's `install.sh` to update: it
+replaces what changed and removes the files the new release no longer has, puts back a file whose
 owner or mode changed, and warns about each folder the files go in that a user other than root
 can change. Before it changes a
 file, the manifest lists both its old and its new contents, so a run cut short can be run
 again or undone with `--uninstall`. It refuses with exit 3, before changing anything, when a
 file in its way was not installed by it or has changed since; move that file away and run it
-again. `--dry-run` (`-n`) prints what would change, and
+again. `--dry-run` (`-n`) prints what would change, `--list` (`-l`) prints each file it
+installs with its target and mode, without root, and
 `--uninstall` removes every file the manifest lists, the APT configuration first. It leaves
 alone `/etc/kernel-updater.conf`, `migrate`'s backups in `/var/backups/kernel-updater` and what
 `/var/lib/kernel-updater` holds besides the manifest: the baseline and `cleanup`'s quarantine,
 whose module trees stay whole. It needs root (exit 77 otherwise) and takes the tool's lock
-(exit 75 while another run holds it). It exits 66 when the checkout lacks a file, and 3,
+(exit 75 while another run holds it). It exits 66 when its folder lacks a file, and 3,
 changing nothing, when a line of the manifest is damaged.
 
 The hooks only warn until `boot_fs_uuid` is set, and `install.sh` says so while it is not. To
-arm them, mount `/boot`, copy the example config and set `boot_fs_uuid` in it to the UUID that
-`findmnt` prints:
+arm them, mount `/boot`, copy the example config from the unpacked release and set
+`boot_fs_uuid` in it to the UUID that `findmnt` prints:
 
 ```bash
-sudo install -m 0644 examples/kernel-updater.conf /etc/kernel-updater.conf
+sudo install -m 0644 "kernel-updater-$v/examples/kernel-updater.conf" /etc/kernel-updater.conf
 findmnt -n -o UUID /boot
 ```
 

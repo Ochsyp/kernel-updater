@@ -41,13 +41,23 @@ nothing is written or exported.
 
 ## 3. Install kernel-updater
 
-In Kali, from the checkout:
+In Kali, in a new empty folder, install the newest release. Set `v` to its version, as the
+[releases page](https://github.com/Ochsyp/kernel-updater/releases) shows it:
 
 ```bash
-sudo ./install.sh
+v=1.0.0
+curl -fLO "https://github.com/Ochsyp/kernel-updater/releases/download/v$v/kernel-updater-$v.tar.gz"
+curl -fLO "https://github.com/Ochsyp/kernel-updater/releases/download/v$v/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "kernel-updater-$v.tar.gz"
+sudo "./kernel-updater-$v/install.sh"
 ```
 
-It installs the tool under `/usr/local` and the hooks that refuse a kernel install while
+`sha256sum` must print `kernel-updater-X.Y.Z.tar.gz: OK`; stop when it does not. The unpacked
+folder `kernel-updater-X.Y.Z` also holds the example config, `contrib` and the Windows scripts
+this guide uses.
+
+`install.sh` installs the tool under `/usr/local` and the hooks that refuse a kernel install while
 `/boot` is not mounted. They only warn until the next step sets `boot_fs_uuid`.
 
 ## 4. Detect the identity
@@ -250,7 +260,7 @@ know its letter. Each script refuses with a plain sentence, and changes nothing,
 - holds no `multibootusb\grub\grub.cfg`.
 
 D asks Windows for administrator rights itself, and shows its result in a window of its own.
-Run each script from PowerShell in the checkout, for example:
+Run each script from PowerShell in the unpacked release folder, for example:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\windows\stick-a-copy-menu.ps1
@@ -467,7 +477,7 @@ The script `contrib/initramfs/overlayroot-rw` fixes that from the initramfs:
 - Only if the layers will not mount at all, neither read-write nor read-only, does that boot
   stop. The normal entry still boots.
 
-From the checkout:
+From the unpacked release folder:
 
 ```bash
 sudo install -m 0755 contrib/initramfs/overlayroot-rw /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
