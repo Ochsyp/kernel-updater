@@ -16,7 +16,12 @@ SCAN="$REPO_DIR/.githooks/privacy-scan"
     run --separate-stderr sh "$SCAN" --tracked
     [ "$status" -eq 0 ]
     # Without a denylist, as in CI, the scan says so in a note; nothing else may reach stderr.
-    [ -z "$(grep -v '^privacy-scan: note: ' <<< "$stderr")" ]
+    local line
+    while IFS= read -r line; do
+        [[ -z $line || $line == 'privacy-scan: note: '* ]] && continue
+        printf '%s\n' "$line" >&2
+        return 1
+    done <<< "$stderr"
 }
 
 @test "The scripts and hooks are stored executable" {
