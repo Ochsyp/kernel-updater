@@ -272,6 +272,8 @@ folded in, and no entry that fixes another one of this section.
   Kali entries of `grub.cfg` after each kernel update; after `migrate`, the entries boot
   `/vmlinuz` and `/initrd.img` and their `.old` counterparts, which linux-base moves on every
   kernel install, so `apt full-upgrade` alone keeps them bootable.
+- The README, `docs/runbook.md`, `docs/migration.md`, the example configuration and a few code
+  comments say the same in plainer words: short sentences, lists and the present tense.
 
 ### Removed
 
