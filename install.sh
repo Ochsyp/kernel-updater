@@ -33,6 +33,7 @@ KI_TMP=""
 ki_usage() {
     cat << 'EOF'
 Usage: sudo ./install.sh [--dry-run] [--uninstall]
+       ./install.sh --list
 
 Installs kernel-updater from this checkout under /usr/local, its kernel hooks in /etc/kernel
 and apt-guard in /etc/apt/apt.conf.d, and lists every file with its SHA-256 in
@@ -40,6 +41,8 @@ and apt-guard in /etc/apt/apt.conf.d, and lists every file with its SHA-256 in
 
   -n, --dry-run   print what would change, change nothing
       --uninstall remove every file the manifest lists; /etc/kernel-updater.conf stays
+  -l, --list      print SOURCE, TARGET and MODE of each file it installs, tab-separated, in
+                  the order it installs them; needs no root and changes nothing
   -h, --help      show this help
 
 Refuses with exit 3, changing nothing, when a file in the way was not installed by
@@ -55,18 +58,25 @@ ki_usage_error() {
     exit "$KU_EX_USAGE"
 }
 
-# Parse the options, then install or uninstall as root, under the single-instance lock.
+# Parse the options, then list the files, or install or uninstall as root, under the
+# single-instance lock.
 ki_main() {
-    local uninstall=0
+    local uninstall=0 list=0 count=$#
     while (( $# )); do
         case $1 in
             -n | --dry-run) KU_DRY_RUN=1 ;;
             --uninstall) uninstall=1 ;;
+            -l | --list) list=1 ;;
             -h | --help) ki_usage; exit 0 ;;
             *) ki_usage_error "unknown argument '$1'" ;;
         esac
         shift
     done
+    if (( list )); then
+        (( count == 1 )) || ki_usage_error "--list goes with no other option"
+        _ki_list
+        exit 0
+    fi
     ku_install_traps
     ku_cleanup_add _ki_cleanup
     ku_require_root
@@ -149,6 +159,16 @@ _ki_plan() {
         _ki_add "$file" "/etc/kernel/${file#hooks/kernel/}" 755
     done
     _ki_add hooks/apt/50kernel-updater /etc/apt/apt.conf.d/50kernel-updater 644
+}
+
+# Print SOURCE, TARGET and MODE of each file to install, tab-separated, in the order they go in.
+# Exits 66 when the checkout lacks a file.
+_ki_list() {
+    local i
+    _ki_plan
+    for i in "${!KI_SRC[@]}"; do
+        printf '%s\t%s\t%s\n' "${KI_SRC[i]}" "${KI_DEST[i]}" "${KI_MODE[i]}"
+    done
 }
 
 # Install or update the files. Refuses with exit 3, before changing anything, when a target is

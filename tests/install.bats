@@ -322,3 +322,42 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == "Usage: sudo ./install.sh "* ]]
 }
+
+@test "--list prints each file it installs, its target and mode, as any user, changing nothing" {
+    local entry mode path src line n=0
+    export ID_U=1000
+    run_install --list
+    [ "$status" -eq 0 ]
+    [ -z "$stderr" ]
+    [ "${#lines[@]}" -eq "$(expected_count)" ]
+    for entry in "${TARGETS[@]}"; do
+        read -r mode path <<< "$entry"
+        [[ $'\n'"$output"$'\n' == *$'\t'"$path"$'\t'"$mode"$'\n'* ]] ||
+            { printf 'not listed: %s %s\n' "$mode" "$path" >&2; return 1; }
+    done
+    # Each line is SOURCE<TAB>TARGET<TAB>MODE, its source a file in the checkout.
+    for line in "${lines[@]}"; do
+        IFS=$'\t' read -r src path mode <<< "$line"
+        [[ -f $REPO_DIR/$src && $path == /* && $mode =~ ^(644|755)$ ]] ||
+            { printf 'bad line: %s\n' "$line" >&2; return 1; }
+        n=$((n + 1))
+    done
+    [ "$n" -eq "$(expected_count)" ]
+    [ -z "$(find "$ROOT" -mindepth 1)" ]
+}
+
+@test "--list names the targets in the order an install writes them to the manifest" {
+    run_install
+    [ "$status" -eq 0 ]
+    run_install --list
+    [ "$status" -eq 0 ]
+    [ "$(cut -f 2 <<< "$output")" = "$(sed 's/^[0-9a-f]*  //' "$ROOT$MANIFEST")" ]
+}
+
+@test "--list goes with no other option" {
+    run_install --list --uninstall
+    [ "$status" -eq 64 ]
+    run_install --dry-run --list
+    [ "$status" -eq 64 ]
+    [ -z "$(find "$ROOT" -mindepth 1)" ]
+}
