@@ -770,7 +770,7 @@ any `*.real.cfg` and `*.bak` copies.
 
 ## Testing
 
-The tests use [bats-core](https://github.com/bats-core/bats-core) 1.5 or later, with stub
+The tests use [bats-core](https://github.com/bats-core/bats-core) 1.13.0 or later, with stub
 commands. So they need neither root nor Kali. Run them from the repository root, in Git Bash or
 on Linux:
 
@@ -879,7 +879,8 @@ bats tests/
   container, fail with it set anywhere else, and skip without it; `bats tests/` leaves the
   subdirectory out.
   CI's `ci/system` stage builds the Kali rolling image of `ci/kali/Dockerfile`, pinned by
-  digest and updated by Dependabot, and runs them in it, failing when any is skipped. To run them locally:
+  digest and updated by Dependabot, and runs them in it, failing when any is skipped. To run
+  them locally:
 
   ```bash
   docker build --tag kernel-updater-kali ci/kali
