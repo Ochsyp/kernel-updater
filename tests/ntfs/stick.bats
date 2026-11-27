@@ -3,8 +3,8 @@
 # kernel-updater checks on real NTFS
 #
 # As root in the ntfs job, builds a synthetic stick in a loop file, an MBR with the synthetic
-# disk signature, NTFS on partition 1 and ext4 as /boot on partition 2, and runs on it what
-# phase 5 adds: finding partition 1 from /boot, its identity, mounts with ntfs3 and ntfs-3g,
+# disk signature, NTFS on partition 1 and ext4 as /boot on partition 2, and runs on it the code
+# that reaches partition 1: finding it from /boot, its identity, mounts with ntfs3 and ntfs-3g,
 # ntfs-3g.probe refusing a volume Windows left hibernated and ntfs3 one marked dirty, the safe
 # writer, a failed rename and its restore after a bad read-back, a read-only mount, a mount a
 # user owns, and the baseline and its tripwire.

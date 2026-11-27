@@ -518,7 +518,7 @@ _ku_deploy_fat_back() {
 
 # While --write-fat writes a FAT partition 1, flush the filesystem that holds PATH to the disk,
 # so that what a step of a write did is on the stick before the next one starts: FAT has no
-# journal, and a power loss then leaves the target as one step left it. NTFS writes as before.
+# journal, and a power loss then leaves the target as one step left it. Other writes skip it.
 # A failure does not stop the write, whose read-back finds out what reached the stick.
 _ku_deploy_sync() {
     (( KU_DK_FAT_RW == 2 )) || return 0
