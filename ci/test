@@ -1,0 +1,17 @@
+#!/bin/bash
+# ci/test of kernel-updater (the standard's ci/ interface): the bats suites in tests/ that run
+# without root, with the pinned bats and ShellCheck that install-tools installs, grub-common for
+# grub-script-check, and mawk and gawk, which both run the lint tests, so that no test skips.
+# pwsh, which tests/tools.bats needs, comes with GitHub's Ubuntu runner. Then no-skips, so the
+# stage fails on any failed or skipped test. run-stage runs it from the top of the repository.
+set -euo pipefail
+PATH=$(.github/standard/bin/install-tools bats):$PATH
+PATH=$(.github/standard/bin/install-tools shellcheck):$PATH
+sudo apt-get update -qq
+sudo apt-get install -y -qq --no-install-recommends grub-common mawk gawk
+command -v grub-script-check pwsh > /dev/null
+tap=${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tests.tap
+status=0
+bats --tap tests/ | tee "$tap" || status=1
+.github/standard/bin/no-skips "$tap" || status=1
+exit "$status"

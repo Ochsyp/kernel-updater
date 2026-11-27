@@ -2,7 +2,7 @@
 # -------------------------------------------------------
 # kernel-updater checks on real FAT
 #
-# As root in the fat job, builds a synthetic stick in a loop file, as MultiBootUSB leaves one:
+# As root in ci/system, builds a synthetic stick in a loop file, as MultiBootUSB leaves one:
 # an MBR with the synthetic disk signature, FAT32 on partition 1 with syslinux's boot sector,
 # and ext4 as /boot on partition 2. Runs on it what reading FAT needs: finding partition 1 from
 # /boot, its identity, read-only mounts with vfat, names stored in capitals, a mount a user owns,

@@ -3,7 +3,7 @@
 # kernel-updater NTFS test helpers
 #
 # Loaded by tests/ntfs/*.bats, which build a synthetic stick in a loop file and mount real NTFS:
-# with KU_NTFS=1 they run as root in the ntfs job of the tests workflow, and fail without root;
+# with KU_NTFS=1 they run as root in CI's ci/system stage, and fail without root;
 # without it they skip.
 # -------------------------------------------------------
 
@@ -30,7 +30,7 @@ ntfs_enabled() {
 # Skip the test unless KU_NTFS=1, and fail it when that is set but the tests do not run as
 # root, so the job never passes without them. Call it first in setup().
 ntfs_only() {
-    [[ ${KU_NTFS:-} == 1 ]] || skip "runs only in the ntfs job (KU_NTFS=1, as root)"
+    [[ ${KU_NTFS:-} == 1 ]] || skip "runs only in CI's system stage (KU_NTFS=1, as root)"
     if [[ $(id -u) != 0 ]]; then
         printf 'KU_NTFS=1 needs root: run the NTFS tests with sudo\n' >&2
         return 1

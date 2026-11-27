@@ -3,7 +3,7 @@
 # kernel-updater FAT test helpers
 #
 # Loaded by tests/fat/*.bats, which build a synthetic stick in a loop file and mount real FAT:
-# with KU_FAT=1 they run as root in the fat job of the tests workflow, and fail without root;
+# with KU_FAT=1 they run as root in CI's ci/system stage, and fail without root;
 # without it they skip.
 # -------------------------------------------------------
 
@@ -33,7 +33,7 @@ fat_enabled() {
 # Skip the test unless KU_FAT=1, and fail it when that is set but the tests do not run as
 # root, so the job never passes without them. Call it first in setup().
 fat_only() {
-    [[ ${KU_FAT:-} == 1 ]] || skip "runs only in the fat job (KU_FAT=1, as root)"
+    [[ ${KU_FAT:-} == 1 ]] || skip "runs only in CI's system stage (KU_FAT=1, as root)"
     if [[ $(id -u) != 0 ]]; then
         printf 'KU_FAT=1 needs root: run the FAT tests with sudo\n' >&2
         return 1

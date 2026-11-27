@@ -2,7 +2,7 @@
 # -------------------------------------------------------
 # kernel-updater writes a FAT partition 1, with --write-fat under VMware
 #
-# As root in the fat job, on the synthetic stick of fat.bash: the checks that must all hold
+# As root in ci/system, on the synthetic stick of fat.bash: the checks that must all hold
 # before partition 1 is written, each refusal leaving it byte for byte as it was; the writer on
 # real FAT, with a read-back through a new mount, a failed rename and a failed read-back put
 # back; and a copy of partition 1 after every step the writer syncs, as a power loss would leave

@@ -770,7 +770,7 @@ any `*.real.cfg` and `*.bak` copies.
 
 ## Testing
 
-The tests use [bats-core](https://github.com/bats-core/bats-core) 1.5 or later, with stub
+The tests use [bats-core](https://github.com/bats-core/bats-core) 1.13.0 or later, with stub
 commands. So they need neither root nor Kali. Run them from the repository root, in Git Bash or
 on Linux:
 
@@ -855,9 +855,10 @@ bats tests/
 - `grub-script-check` (Debian package `grub-common`) checks the example configs and a syntax
   error for `lint`, and the lint fixture runs under both `mawk` and `gawk`. Those tests are
   skipped where the tools are missing, as on Windows, and so is the test with a real `flock`.
-- CI runs the suite on every pull request, every push to `main` and once a week
-  (`.github/workflows/tests.yml`), with a pinned ShellCheck and with `grub-common`
-  installed, and fails when any test is skipped.
+- CI runs the suite on every pull request, every push to `main` and once a week: the `ci`
+  workflow of the repository standard runs `ci/test`, with the standard's pinned bats and
+  ShellCheck and with `grub-common`, `mawk` and `gawk` installed, and fails when any test is
+  skipped.
 - `tests/container` holds tests that change the system they run on: they build dummy kernel
   packages with equivs whose maintainer scripts call `linux-update-symlinks` as real kernels
   do, install, hold and remove them, mount a tmpfs on `/boot`, and run `check` with stubs only
@@ -877,9 +878,9 @@ bats tests/
   frontend lock in `/proc/locks`. They run only with `KU_CONTAINER=1` inside a
   container, fail with it set anywhere else, and skip without it; `bats tests/` leaves the
   subdirectory out.
-  The `kali` job of the tests workflow builds the Kali rolling image of `ci/kali/Dockerfile`,
-  pinned by digest and updated by Dependabot, and runs them in it, failing when any is
-  skipped. To run them locally:
+  CI's `ci/system` stage builds the Kali rolling image of `ci/kali/Dockerfile`, pinned by
+  digest and updated by Dependabot, and runs them in it, failing when any is skipped. To run
+  them locally:
 
   ```bash
   docker build --tag kernel-updater-kali ci/kali
@@ -899,8 +900,8 @@ bats tests/
   partition 2 as the stick's unlocked `/boot` is, lints `kali.cfg` with the stick's own GRUB
   lists, and writes `kali.cfg` and the new `grub.cfg` to NTFS, CRLF kept, then has
   `--rollback` put `grub.cfg` back byte for byte. They
-  run only with `KU_NTFS=1`, fail with it when not run as root, and skip without it. The
-  `ntfs` job of the tests workflow installs `ntfs-3g` and `dmsetup`, loads `ntfs3` and runs
+  run only with `KU_NTFS=1`, fail with it when not run as root, and skip without it. CI's
+  `ci/system` stage installs `ntfs-3g` and `dmsetup`, loads `ntfs3` and runs
   them with `sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs`, failing when any is
   skipped. Run them only on a machine you can spare, as root.
 - `tests/contrib.bats` runs `contrib/initramfs/overlayroot-rw` with stub `mount`, `umount` and
@@ -926,15 +927,16 @@ bats tests/
   back, FAT16 too, and a copy of partition 1 after every step the writer syncs, as a power loss
   would leave it, pass `fsck.vfat -n` with the old or the new `grub.cfg`, or none only between
   the move aside and the rename. They
-  run only with `KU_FAT=1`, as root; the `fat` job installs `dosfstools`, `syslinux`, `mtools`
+  run only with `KU_FAT=1`, as root; `ci/system` installs `dosfstools`, `syslinux`, `mtools`
   and `dmsetup` and runs them with `sudo env "PATH=$PATH" KU_FAT=1 bats --tap tests/fat`.
-- `.githooks/privacy-scan` runs in the tests and before every commit on a clone with the hooks
-  turned on (see CONTRIBUTING.md). It refuses CRLF line endings; disk and partition
-  identifiers (UUIDs, volume serials, LVM UUIDs, PARTUUIDs) outside the synthetic range;
-  private IPv4 and IPv6 addresses; `.lan` host names; user home paths; and e-mail addresses
-  other than GitHub no-reply ones. It also refuses any value listed, one per line, in the
-  untracked `.git/info/privacy-denylist`. The secret scan applies the same rules, without the
-  denylist, to every pushed commit.
+- `.githooks/privacy-scan`, the repository standard's, runs in `tests/repo.bats`, in CI and
+  in the hooks on every commit and push of a clone with the hooks turned on (see
+  CONTRIBUTING.md). With the `base` and `disk` packs this repository's config selects, it
+  refuses private addresses, local host names, MAC addresses, home paths, e-mail addresses
+  other than GitHub's no-reply ones, and disk, partition and filesystem identifiers outside the
+  synthetic range, plus any term in a denylist, such as the untracked
+  `.git/info/privacy-denylist`. The secret scan runs gitleaks with its default rules and these
+  packs on every pushed commit.
 
 ## Licence
 

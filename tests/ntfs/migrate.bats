@@ -2,13 +2,13 @@
 # -------------------------------------------------------
 # kernel-updater migrate on real NTFS
 #
-# As root in the ntfs job, runs migrate's menu stage end to end on the synthetic stick of
+# As root in ci/system, runs migrate's menu stage end to end on the synthetic stick of
 # ntfs.bash: partition 1 found from an ext4 /boot on a device-mapper device over partition 2, as
 # the stick's unlocked /boot is, mounted read-write with ntfs3 after ntfs-3g.probe, kali.cfg and
 # the new grub.cfg written there through the safe writer, CRLF kept, and --rollback writing
 # grub.cfg back byte for byte. Stubs stand in for what the runner lacks: cryptsetup, which the
-# mapping is no LUKS container for, uname, lsinitramfs and grub-script-check, which the bats and
-# kali jobs run for real.
+# mapping is no LUKS container for, uname, lsinitramfs and grub-script-check, which ci/test and
+# the Kali container run for real.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports

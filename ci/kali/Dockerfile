@@ -1,4 +1,4 @@
-# The Kali container the tests workflow runs tests/container in: Kali rolling with bats, equivs
+# The Kali container ci/system runs tests/container in: Kali rolling with bats, equivs
 # and dpkg-dev to build dummy kernel packages, linux-base for linux-update-symlinks,
 # linux-version and linux-run-hooks, util-linux and mount for the mounts and loop devices,
 # e2fsprogs for the ext4 image the hook tests mount on /boot, mawk, gawk and grub-common. The
