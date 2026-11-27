@@ -18,13 +18,14 @@ folded in, and no entry that fixes another one of this section.
   `baseline`, `migrate`, `cleanup`, `lint`, `hook`, `help` and `version`. Global options go
   before the command: `-c`/`--config`, `-n`/`--dry-run`, `-y`/`--yes`, `-v`/`--verbose`,
   `-q`/`--quiet`, `--porcelain`, `-h`/`--help` and `-V`/`--version`.
-- Rails for every command that changes the system: a root check (exit 77), a single-instance
-  lock (75), confirmation on the terminal or `--yes` (10 when declined), `--dry-run`, and exit
-  traps that run cleanups, exit 130, 143 or 129 on INT, TERM or HUP, and 1 on an unexpected
-  failure. `--yes` answers every question but the one `migrate --write-fat` asks. A message that
-  says what to run next names the tool as `sudo` and the resolved path of the script that
-  ran, shell-quoted, as `sudo /usr/local/bin/kernel-updater check`, since sudo's `secure_path` may
-  lack `/usr/local/bin`; the hint after a usage error names the same path without `sudo`.
+- Rails for every command that changes the system: a root check (exit 77), a single-instance lock
+  (75), confirmation on the terminal or `--yes` (10 when declined), `--dry-run`, and exit traps that
+  run cleanups, exit 130, 143 or 129 on INT, TERM or HUP, and 1 on an unexpected failure. An answer
+  may end in a carriage return, as in a file of answers. `--yes` answers every question but the one
+  `migrate --write-fat` asks. A message that says what to run next names the tool as `sudo` and the
+  resolved path of the script that ran, shell-quoted, as `sudo /usr/local/bin/kernel-updater check`,
+  since sudo's `secure_path` may lack `/usr/local/bin`; the hint after a usage error names the same
+  path without `sudo`.
 - `/etc/kernel-updater.conf`: `key = value` lines that are parsed, never sourced, checked key by
   key, refused (78) when a key repeats, a line or value is bad, or, when the tool runs as root,
   the file is not owned by root or is writable by group or others. Lines that start with `#` are
@@ -34,14 +35,14 @@ folded in, and no entry that fixes another one of this section.
   `p1_path`, `output_dir`, `backups_keep`, `root_device`, `menu_variants`, `previous_variants`
   and `quarantine_days`. `examples/kernel-updater.conf` describes each with every key commented
   out, `grub_floor` too, so that a copy leaves it to `migrate`'s detect stage.
-- `kernel-updater lint FILE...` checks GRUB configs for errors GRUB reports only at boot:
-  syntax errors through `grub-script-check` when it is installed, unknown commands and modules
-  (GRUB 2.02's lists, or a stick's own with `--grub-dir`), malformed LUKS UUIDs and ones with
-  dashes below a floor of 2.12, `cryptdevice=`, `noswap`, unknown `overlayroot` options,
-  `(hdN,...)` drives, encrypted entries between MultiBootUSB's `#start` and `#end` markers, and
-  a LUKS UUID passed to `search --fs-uuid`, unless `boot_fs_uuid` and `boot_luks_uuid` name that
-  same UUID, as when `/boot`'s filesystem shares its container's UUID. `--floor` defaults to
-  `grub_floor`. Findings name the kind of identifier, never its value; `--porcelain` prints
+- `kernel-updater lint FILE...` checks GRUB configs for errors GRUB reports only at boot: syntax
+  errors through `grub-script-check` when it is installed, unknown commands and modules (GRUB 2.02's
+  lists, or a stick's own with `--grub-dir`), malformed LUKS UUIDs and ones with dashes below a
+  floor of 2.12, `cryptdevice=`, `noswap`, unknown `overlayroot` options, `(hdN,...)` drives,
+  encrypted entries between MultiBootUSB's `#start` and `#end` markers, a bare `#start` line
+  included, and a LUKS UUID passed to `search --fs-uuid`, unless `boot_fs_uuid` and `boot_luks_uuid`
+  name that same UUID, as when `/boot`'s filesystem shares its container's UUID. `--floor` defaults
+  to `grub_floor`. Findings name the kind of identifier, never its value; `--porcelain` prints
   tab-separated fields and `--strict` fails on warnings. It exits 78 on a bad configuration.
 - `kernel-updater check [--strict] [--no-partition] [--porcelain]`, a read-only report, as root,
   of whether the system and the stick keep the Kali entries bootable, in 20 items: `boot-mounted`,
@@ -78,10 +79,11 @@ folded in, and no entry that fixes another one of this section.
   every file with its SHA-256 in `/var/lib/kernel-updater/install.manifest`. A rerun updates what
   changed and removes what the checkout no longer has; `--uninstall` removes what the manifest
   lists, the APT configuration first, and `/var/lib/kernel-updater` only when it is empty;
-  `--dry-run` changes nothing. The manifest lists old and new contents while files change, so a
-  run cut short can be run again or undone. It refuses (3), changing nothing, when a file in its
-  way was not installed by it or changed since, or a manifest line is damaged, and exits 66 when
-  the checkout lacks a file.
+  `--dry-run` changes nothing. The manifest lists old and new contents while files change, so a run
+  cut short can be run again or undone. It refuses (3), changing nothing, when a file in its way was
+  not installed by it or changed since, or a manifest line is damaged, and exits 66 when the
+  checkout lacks a file. A rerun also puts back a file whose owner or mode changed, and warns about
+  each folder the files go in that a user other than root can change.
 - Kernel hooks, armed while `boot_fs_uuid` is set and only warning until then: `preinst.d`,
   `prerm.d` and `postinst.d/00-kernel-updater` refuse (3) a kernel install, removal or configure
   while `/boot` is not mounted, holds another filesystem than `boot_fs_uuid` names, or `findmnt`
@@ -143,13 +145,14 @@ folded in, and no entry that fixes another one of this section.
   neither. A verifier compares the stick with the export for check's `deployed` item.
 - `kernel-updater baseline [--show]`, which records, as root and after asking, the SHA-256 of the
   stick's boot code in `/var/lib/kernel-updater/baseline`: the files
-  `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector.
-  On FAT the tripwire ignores the boot sector's flags byte, which every mount changes, and
+  `share/kernel-updater/baseline.list` names, the MBR boot code and partition 1's boot sector. On
+  FAT the tripwire ignores the boot sector's flags byte, which every mount changes, and
   `baseline.list`'s globs match names in any case. It refuses (78) while `disk_ptuuid` or
-  `p1_fs_uuid` is not set or names another stick, exits 66 when partition 1 cannot be found or
-  read or holds none of the listed files, prints how the stick differs from the stored baseline,
-  and supports `--yes` and `--dry-run`. `--show` takes no lock, changes nothing, and prints the
-  identity verdicts, the stick's GRUB version and the comparison.
+  `p1_fs_uuid` is not set or names another stick, exits 66 when partition 1 cannot be found or read
+  or holds none of the listed files, prints how the stick differs from the stored baseline, and
+  supports `--yes` and `--dry-run`. Names keep every byte, blanks at their ends too, as an NTFS file
+  name may have them. `--show` takes no lock, changes nothing, and prints the identity verdicts, the
+  stick's GRUB version and the comparison.
 - `kernel-updater migrate [--stage detect|system|menu|finalize|all]`, the one-time switch of the
   Kali entries to the links linux-base keeps in `/boot`, after which a kernel install or removal
   changes nothing on partition 1. Each stage runs as root under the lock, prints its plan, asks

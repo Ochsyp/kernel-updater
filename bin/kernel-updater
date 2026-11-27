@@ -103,6 +103,7 @@ ku_main() {
                 shift 2
                 ;;
             --config=?*) config=${1#*=}; shift ;;
+            --config=) ku_usage_error "--config needs a file" ;;
             -n | --dry-run) KU_DRY_RUN=1; shift ;;
             -y | --yes) KU_ASSUME_YES=1; shift ;;
             -v | --verbose) KU_VERBOSITY=2; shift ;;

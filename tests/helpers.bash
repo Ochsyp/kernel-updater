@@ -295,19 +295,3 @@ _exec_shellcheck() {
     (cd "$REPO_DIR" && MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' shellcheck "$@")
 }
 
-# Print "CODE COUNT" per ShellCheck code, sorted, for gcc-format findings on
-# stdin. Strips the CR a Windows build may end its lines with.
-shellcheck_code_counts() {
-    local line code
-    local -A count=()
-    while IFS= read -r line; do
-        line="${line%$'\r'}"
-        if [[ "$line" =~ \[(SC[0-9]+)\]$ ]]; then
-            code="${BASH_REMATCH[1]}"
-            count[$code]=$(( ${count[$code]:-0} + 1 ))
-        fi
-    done
-    for code in "${!count[@]}"; do
-        printf '%s %d\n' "$code" "${count[$code]}"
-    done | sort
-}

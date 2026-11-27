@@ -28,7 +28,7 @@ KU_MG_KEYS=(boot_fs_uuid boot_luks_uuid disk_ptuuid p1_fs_uuid root_device)
 # The private directory in /run a stage works in; the backup directory it writes, its stamp,
 # and 1 once its MANIFEST is written, until when the exit trap removes it, as the stage then
 # changed nothing else; the temporary file a write in /etc goes through; 1 once the exit trap
-# removes those; and 1 when the stage changed something, or in a dry run would have.
+# is set to remove those; and 1 when the stage changed something, or in a dry run would have.
 KU_MG_TMP="" KU_MG_BACKUP="" KU_MG_STAMP="" KU_MG_SEALED=0 KU_MG_ETC_TMP="" KU_MG_CLEANUP=0
 KU_MG_CHANGED=0
 
@@ -751,7 +751,8 @@ _ku_mg_other_images() {
     local -a versions=()
     for file in "$(ku_path /boot)"/vmlinu[xz]-*; do
         [[ -e $file || -L $file ]] || continue
-        [[ $file != *.sig && ${file##*/} != "vmlinuz-$1" ]] || continue
+        [[ $file != *.sig && ${file##*/} != "vmlinuz-$1" && ${file##*/} != "vmlinux-$1" ]] ||
+            continue
         version=${file##*/vmlinu?-}
         if ku_valid_release "$version"; then
             versions+=("$version")
@@ -953,7 +954,6 @@ _ku_mg_stage_menu() {
     if [[ $expk != - ]]; then
         cp -- "$tmp/kali.cfg.old" "$KU_MG_BACKUP/kali.cfg" || _ku_mg_backup_fail
     fi
-    printf '%s\n' "$KU_DK_DEPLOY" > "$KU_MG_BACKUP/deploy" || _ku_mg_backup_fail
     _ku_mg_written kali.cfg "$sumk" grub.cfg "$sumg"
     _ku_mg_seal_export
     _ku_mg_deploy "$tmp" "$expk" "$expg" "$sumk" "$sumg"
@@ -1051,7 +1051,6 @@ _ku_mg_menu_again() {
     else
         : > "$KU_MG_BACKUP/kali.cfg.absent" || _ku_mg_backup_fail
     fi
-    printf '%s\n' "$KU_DK_DEPLOY" > "$KU_MG_BACKUP/deploy" || _ku_mg_backup_fail
     _ku_mg_written kali.cfg "$sumk"
     _ku_mg_seal_export
     _ku_mg_kali_deploy "$tmp/kali.cfg" "$expk" "$sumk"
@@ -1629,7 +1628,6 @@ _ku_mg_stage_finalize() {
         "entries booted, natively and in the VM."
     _ku_mg_backup_dir finalize
     cp -- "$tmp/grub.cfg.old" "$KU_MG_BACKUP/grub.cfg" || _ku_mg_backup_fail
-    printf '%s\n' "$KU_DK_DEPLOY" > "$KU_MG_BACKUP/deploy" || _ku_mg_backup_fail
     _ku_mg_written grub.cfg "$sum"
     _ku_mg_seal_export
     _ku_mg_finalize_deploy "$tmp" "$expg" "$sum"
@@ -2301,7 +2299,7 @@ _ku_mg_need_system() {
     local problem
     problem=$(ku_probe_boot_links | ku_boot_links_problems)
     if ! _ku_mg_links_in_boot; then
-        problem="kernel-img.conf does not have linux-base keep the links in /boot"
+        problem+="${problem:+; }kernel-img.conf does not have linux-base keep the links in /boot"
     fi
     if [[ -n $problem ]]; then
         ku_die "$KU_EX_REFUSED" "$problem: run '$KU_CMD migrate --stage system' first;" \

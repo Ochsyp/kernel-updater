@@ -150,6 +150,34 @@ EOF
     cmp "$BATS_TEST_TMPDIR/manifest.first" "$ROOT$MANIFEST"
 }
 
+@test "A second run puts back the owner and mode of a file that drifted, and warns of a folder" {
+    run_install
+    [ "$status" -eq 0 ]
+    # stat says another user owns the command now, and that others may write /usr/local/bin.
+    export OWNED="$ROOT/usr/local/bin/kernel-updater" OPEN="$ROOT/usr/local/bin" REAL_STAT
+    REAL_STAT=$(type -P stat)
+    mkstub stat <<'EOF'
+case ${*: -1} in
+    "$OWNED") [[ $* == *'%u %a'* ]] && { echo "1234 755"; exit 0; } ;;
+    "$OPEN") [[ $* == *'%u %a'* ]] && { echo "0 777"; exit 0; } ;;
+esac
+exec "$REAL_STAT" "$@"
+EOF
+    run_install
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"info: replaced /usr/local/bin/kernel-updater"* ]]
+    [[ "$stderr" == *"warning: /usr/local/bin can be changed by a user other than root"* ]]
+    # Git Bash on Windows keeps no such modes.
+    if [[ $OSTYPE == linux* ]]; then
+        rm "$STUB_BIN/stat"
+        chmod 600 "$ROOT/usr/local/lib/kernel-updater/common.sh"
+        run_install
+        [ "$status" -eq 0 ]
+        [[ "$stderr" == *"info: replaced /usr/local/lib/kernel-updater/common.sh"* ]]
+        [ "$(stat -c %a "$ROOT/usr/local/lib/kernel-updater/common.sh")" = 644 ]
+    fi
+}
+
 @test "A file in the way that kernel-updater did not install is refused, and nothing changes" {
     mkdir -p "$ROOT/etc/kernel/postinst.d"
     printf '#!/bin/sh\nexit 0\n' > "$ROOT/etc/kernel/postinst.d/kernel-updater"

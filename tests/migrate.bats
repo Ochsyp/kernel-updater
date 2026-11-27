@@ -546,8 +546,10 @@ backups() {
     cmp "$BATS_TEST_TMPDIR/kernel-img.before" "$ROOT/etc/kernel-img.conf"
     [ -z "$(backups)" ]
     refute_line_match '^linux-update-symlinks' "$STUB_LOG"
-    # Without the other image, the lone kernel takes all four links.
+    # Without the other image, the lone kernel takes all four links; an uncompressed vmlinux
+    # of that same kernel is no other image.
     rm "$ROOT/boot/vmlinuz-$V1"
+    printf 'elf\n' > "$ROOT/boot/vmlinux-$V2"
     run_ku migrate --stage system --yes
     [ "$status" -eq 0 ]
     [ "$(boot_links vmlinuz vmlinuz.old initrd.img initrd.img.old)" = "$(printf '%s\n' \
@@ -682,7 +684,8 @@ backups() {
     # The dry run took the first stamp for the backup grub.cfg would have had.
     local dir="$ROOT$BACKUPS/20261112T090002Z"
     [ "$(< "$dir/stage")" = menu ]
-    [ "$(< "$dir/deploy")" = direct ]
+    # The way the files reached partition 1 is in the plan and the log, not in the backup.
+    [ ! -e "$dir/deploy" ]
     cmp "$BATS_TEST_TMPDIR/grub.before" "$dir/grub.cfg"
     [ ! -e "$dir/kali.cfg" ]
     private_output
@@ -700,6 +703,8 @@ backups() {
     run_ku migrate --stage menu --yes
     [ "$status" -eq 3 ]
     [[ "$stderr" == *"kernel-img.conf does not have linux-base keep the links in /boot: run"* ]]
+    # The links in /boot are named too, as they are not there yet.
+    [[ "$stderr" == *"vmlinuz is missing or no symlink"* ]]
     system_done
     export GSC_FAIL=kali.cfg
     run_ku migrate --stage menu --yes
@@ -724,7 +729,7 @@ backups() {
     [ "$(cut -c 67- "$ROOT/root/out/SHA256SUMS")" = $'kali.cfg\ngrub.cfg' ]
     cmp "$BATS_TEST_TMPDIR/grub.before" "$GRUB/grub.cfg"
     [ ! -e "$GRUB/kali.cfg" ]
-    [ "$(< "$ROOT$BACKUPS/20261112T090001Z/deploy")" = export ]
+    [ ! -e "$ROOT$BACKUPS/20261112T090001Z/deploy" ]
     # The initrds the links reach count: V2's holds overlayroot, and V1's, on the .old links,
     # which previous_variants may give a live entry too, does not.
     mkstub lsinitramfs <<'EOF'

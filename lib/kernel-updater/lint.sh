@@ -109,7 +109,8 @@ ku_cmd_lint() {
 # Print the findings for FILE as lint does, as LINE<TAB>SEVERITY<TAB>RULE<TAB>MESSAGE lines
 # sorted by line: for GRUB FLOOR, with grub-script-check when SYNTAX is 1, and with the command
 # and module names of GRUB_DIR's command.lst and moddep.lst, as --grub-dir takes them, or with
-# GRUB 2.02's when GRUB_DIR is empty. Shared with check's kali-cfg item.
+# GRUB 2.02's when GRUB_DIR is empty. Shared with check's kali-cfg item and migrate's menu
+# stage.
 ku_lint_findings() {
     local file=$1 floor=$2 syntax=$3 dir=${4-}
     if [[ -n $dir ]]; then
@@ -126,20 +127,26 @@ ku_lint_findings() {
 # When boot_fs_uuid and boot_luks_uuid name the same UUID, /boot's filesystem has its
 # container's UUID, so lint.awk does not warn when search --fs-uuid is given that one.
 _ku_lint_file() {
-    local file=$1 floor=$2 syntax=$3 exact=$4 cmd_lists=$5 mod_lists=$6 out ln=1 same=""
+    local file=$1 floor=$2 syntax=$3 exact=$4 cmd_lists=$5 mod_lists=$6 out ln=1 same="" arg
     local fs=${KU_CONF[boot_fs_uuid]-} luks=${KU_CONF[boot_luks_uuid]-}
     fs=${fs//-/} luks=${luks//-/}
     if [[ -n $fs && ${fs,,} == "${luks,,}" ]]; then
         same=${fs,,}
     fi
     {
-        if (( syntax )) && ! out=$(LC_ALL=C grub-script-check "$file" 2>&1); then
+        # A name with a leading dash would reach grub-script-check as an option.
+        arg=$file
+        [[ $arg != -* ]] || arg=./$arg
+        if (( syntax )) && ! out=$(LC_ALL=C grub-script-check "$arg" 2>&1); then
             if [[ $out =~ line\ ([0-9]+) ]]; then
                 ln=${BASH_REMATCH[1]}
             fi
             printf '%s\terror\tsyntax\tgrub-script-check rejects the file: a syntax error, or no commands at all\n' "$ln"
         fi
-        KU_LINT_CFG=$file KU_LINT_CMDS=$cmd_lists KU_LINT_MODS=$mod_lists KU_LINT_FLOOR=$floor \
-            KU_LINT_EXACT=$exact KU_LINT_SAME_UUID=$same "$KU_AWK" -f "$KU_LIBDIR/lint.awk"
+        # In the C locale, so that gawk counts bytes as mawk does and never warns about bytes
+        # that are no character in the caller's locale.
+        LC_ALL=C KU_LINT_CFG=$file KU_LINT_CMDS=$cmd_lists KU_LINT_MODS=$mod_lists \
+            KU_LINT_FLOOR=$floor KU_LINT_EXACT=$exact KU_LINT_SAME_UUID=$same \
+            "$KU_AWK" -f "$KU_LIBDIR/lint.awk"
     } | sort -t $'\t' -k1,1n -s
 }
