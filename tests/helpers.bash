@@ -4,10 +4,12 @@
 #
 # Sourced by the .bats files under tests/ through `load`: repository paths, PATH and system
 # stubs, runners for bin/kernel-updater and for library code, a library loader, disk images,
-# check result readers and ShellCheck runners.
+# check result readers and ShellCheck runners. The standard's lib.bash comes first, as in every
+# repository of the standard; the helpers below add to it or redefine its stubs.
 # -------------------------------------------------------
 
-bats_require_minimum_version 1.5.0
+# shellcheck source=.github/standard/tests/lib.bash
+source "${BASH_SOURCE[0]%/*}/../.github/standard/tests/lib.bash"
 
 # The directory of the running .bats file, and the repository root, found from this file so
 # that tests in subdirectories share it.

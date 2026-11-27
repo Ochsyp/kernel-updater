@@ -1,0 +1,34 @@
+#!/bin/bash
+# ci/system of kernel-updater (the standard's ci/ interface), on GitHub's Ubuntu runner with sudo:
+# 1. the container suite in tests/container, on a Kali rolling image built from ci/kali, run
+#    --privileged so that it can mount a tmpfs or a loop-mounted ext4 image on /boot; the
+#    checkout goes in read-only, and the tests change only the container;
+# 2. tests/ntfs and tests/fat as root, which build a synthetic stick in a loop file and mount
+#    real NTFS, with ntfs3 and ntfs-3g, and real FAT with syslinux's boot sector; they change only
+#    that file and what they mount under their own temporary folders.
+# Then no-skips, so the stage fails on any failed or skipped test.
+set -euo pipefail
+bats_dir=$(.github/standard/bin/install-tools bats)
+PATH=$bats_dir:$PATH
+out=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+status=0
+
+docker build --tag kernel-updater-kali ci/kali
+docker run --rm --privileged --volume "$PWD:/src:ro" kernel-updater-kali \
+    bats --tap tests/container | tee "$out/kali.tap" || status=1
+
+# ntfs-3g gives mkntfs, ntfslabel and mount.ntfs-3g; fdisk gives sfdisk; dmsetup the device-mapper
+# device the migrate tests mount as /boot; dosfstools, syslinux and mtools make the FAT stick.
+sudo apt-get update -qq
+sudo apt-get install -y -qq --no-install-recommends ntfs-3g fdisk dmsetup dosfstools syslinux \
+    mtools
+# A kernel flavour that keeps ntfs3 among its extra modules gets those first.
+if ! sudo modprobe ntfs3; then
+    sudo apt-get install -y -qq --no-install-recommends "linux-modules-extra-$(uname -r)"
+    sudo modprobe ntfs3
+fi
+sudo env "PATH=$PATH" KU_NTFS=1 bats --tap tests/ntfs | tee "$out/ntfs.tap" || status=1
+sudo env "PATH=$PATH" KU_FAT=1 bats --tap tests/fat | tee "$out/fat.tap" || status=1
+
+.github/standard/bin/no-skips "$out/kali.tap" "$out/ntfs.tap" "$out/fat.tap" || status=1
+exit "$status"

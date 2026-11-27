@@ -249,25 +249,23 @@ folded in, and no entry that fixes another one of this section.
   initrd and an optional GRUB default entry. `examples/grub.cfg`, a synthetic MultiBootUSB config
   whose identifiers are all built from `5ca1ab1e`. `LICENSE` (MIT), `SECURITY.md` and
   `CONTRIBUTING.md`.
-- The branch workflow: git hooks in `.githooks`, where `pre-commit` refuses commits on `main` and
-  runs `privacy-scan` on what is staged, and `pre-push` refuses pushes to `main`. `privacy-scan`
-  refuses CRLF line endings, disk and partition identifiers outside the synthetic range, private
-  addresses, `.lan` host names, home paths, e-mail addresses other than GitHub's no-reply ones, and
-  values in the untracked `.git/info/privacy-denylist`. `.gitattributes` keeps every text file LF; a
-  pull request template and this changelog.
+- The branch workflow, from repository standard 1.4.0 (`.github/standard.conf`): its git hooks
+  in `.githooks` refuse commits and pushes to `main`, and a changed copy of the standard, and run
+  `privacy-scan` with the `base` and `disk` packs over what a commit or a push brings in, its
+  message, names and identities included. A pull request template and this changelog.
 - Tests: a bats suite in `tests/` that runs without root or Kali, with stub tools, synthetic
   system trees and disk images, ShellCheck and syntax checks of every shell file, and repository
   checks; a container suite in `tests/container` with real dpkg, apt-get and linux-base runs on
   dummy kernels; `tests/ntfs` and `tests/fat`, which build a synthetic stick in a loop file and
   mount, read and write real NTFS and FAT; and `tests/tools.bats`, which runs the Windows scripts
-  under `pwsh`. The `tests` workflow runs them on every pull request, every push to `main` and
-  once a week, in the `bats`, `kali`, `ntfs` and `fat` jobs, and fails when a test is skipped;
-  ShellCheck is pinned and checksum-verified, actions and the Kali image are pinned, and
-  Dependabot updates them. A `secret-scan` workflow runs gitleaks with the rules in
-  `.gitleaks.toml`.
+  under `pwsh`. The standard's `ci` workflow runs them on every pull request, every push to
+  `main` and once a week, through `ci/test` and, as root and in the Kali image, `ci/system`, and
+  fails when a test is skipped; actions and the Kali image are pinned, and Dependabot updates the
+  image. Its `secret-scan` workflow runs gitleaks with its default rules and the privacy packs.
 
 ### Changed
 
+- Repository standard 1.4.0: adopted, with the hooks, checks, workflows and blocks.
 - Kernel updates no longer rewrite the stick's menu. The original script rewrote the versioned
   Kali entries of `grub.cfg` after each kernel update; after `migrate`, the entries boot
   `/vmlinuz` and `/initrd.img` and their `.old` counterparts, which linux-base moves on every

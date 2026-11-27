@@ -2,12 +2,12 @@
 # -------------------------------------------------------
 # kernel-updater migrate on real FAT
 #
-# As root in the fat job, runs migrate on the synthetic stick of fat.bash, with /boot on ext4 on
+# As root in ci/system, runs migrate on the synthetic stick of fat.bash, with /boot on ext4 on
 # a device-mapper device over partition 2, as the stick's unlocked /boot is: detect fills in the
 # stick's identity from real FAT, and the menu stage, which would write partition 1, leaves its
 # files in output_dir instead and partition 1 byte for byte as it was. Stubs stand in for what
 # the runner lacks: cryptsetup, which the mapping is no LUKS container for, uname, lsinitramfs
-# and grub-script-check, which the bats and kali jobs run for real.
+# and grub-script-check, which ci/test and the Kali container run for real.
 # -------------------------------------------------------
 
 # shellcheck disable=SC2030,SC2031 # each test runs in a subshell of its own, so do its exports
