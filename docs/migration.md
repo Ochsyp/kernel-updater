@@ -260,7 +260,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\windows\st
   `%LOCALAPPDATA%\kernel-updater\stick-grub`, and makes that folder when it is missing. It never
   copies to the Desktop. It prints the copy's path, and the SHA-256 of `grub.cfg` on the stick
   and in the copy. Its last line starts with `The copy matches the stick.`
-- `stick-d-chkdsk.ps1`: step D, without `/f`. Its last line starts with
+- `stick-d-chkdsk.ps1`: step D, without `/f`. On success it prints a line that starts with
   `chkdsk found no problems`.
 - `stick-e-restore-menu.ps1`: E. Once you type `yes`, it copies back the newest `stick-grub-*`
   folder in `%LOCALAPPDATA%\kernel-updater\stick-grub`. It prints both SHA-256 sums.
@@ -503,8 +503,8 @@ sudo rm /etc/initramfs-tools/scripts/init-bottom/overlayroot-rw
 v=$(readlink /boot/vmlinuz); sudo update-initramfs -u -k "${v##*vmlinuz-}"
 ```
 
-A rebuild with `update-initramfs -u -k all` in these steps also rebuilds the previous kernel's
-initrd, which has not booted since. To check that initrd, read-only:
+A rebuild with `update-initramfs -u -k all` instead of these steps also rebuilds the previous
+kernel's initrd, which has not booted since. To check that initrd, read-only:
 
 ```bash
 sudo /usr/local/bin/kernel-updater check --porcelain | grep '^initrd'
