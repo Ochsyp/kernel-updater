@@ -4,9 +4,9 @@
 #
 # Installs kernel-updater from this folder, a release or a checkout: the command in
 # /usr/local/bin, its libraries and data in /usr/local/lib and /usr/local/share, the kernel
-# hooks in /etc/kernel and apt-guard's APT configuration. A manifest records every file with its SHA-256, and --uninstall removes
-# exactly what it lists. A file in the way that it did not install, or that changed since it
-# did, makes it refuse before it changes anything.
+# hooks in /etc/kernel and apt-guard's APT configuration. A manifest records every file with
+# its SHA-256, and --uninstall removes exactly what it lists. A file in the way that it did not
+# install, or that changed since it did, makes it refuse before it changes anything.
 # -------------------------------------------------------
 
 set -Eeuo pipefail
@@ -21,7 +21,7 @@ KU_SRC=${KU_SRC%/*}
 KI_PREFIX=/usr/local
 KI_MANIFEST=/var/lib/kernel-updater/install.manifest
 
-# The files to install, in order: the source in the checkout, the target and its mode.
+# The files to install, in order: the source in this folder, the target and its mode.
 KI_SRC=() KI_DEST=() KI_MODE=()
 # The installed manifest's entries: each target and the SHA-256 sums, space-separated, of the
 # contents it may have; a run that was cut short leaves two, the old and the new. And the
@@ -130,8 +130,8 @@ _ki_hash() {
     printf '%s' "${out%% *}"
 }
 
-# Add SOURCE, a path in the checkout, to the files to install as TARGET with MODE. Exits 66
-# when the checkout lacks it.
+# Add SOURCE, a path in this folder, to the files to install as TARGET with MODE. Exits 66
+# when the folder lacks it.
 _ki_add() {
     [[ -f $KU_SRC/$1 ]] || ku_die "$KU_EX_NOINPUT" "this folder lacks $1"
     KI_SRC+=("$1")
@@ -162,7 +162,7 @@ _ki_plan() {
 }
 
 # Print SOURCE, TARGET and MODE of each file to install, tab-separated, in the order they go in.
-# Exits 66 when the checkout lacks a file.
+# Exits 66 when this folder lacks a file.
 _ki_list() {
     local i
     _ki_plan
@@ -172,8 +172,8 @@ _ki_list() {
 }
 
 # Install or update the files. Refuses with exit 3, before changing anything, when a target is
-# no regular file, or holds something other than what the manifest or this checkout says.
-# Files the manifest lists that this checkout no longer has are removed, when unchanged.
+# no regular file, or holds something other than what the manifest or this folder says.
+# Files the manifest lists that this folder no longer has are removed, when unchanged.
 # Before it changes a file it lists both the old and the new contents of each target in the
 # manifest, so a run cut short leaves nothing that a rerun or --uninstall would not accept.
 _ki_install() {
