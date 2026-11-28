@@ -2,9 +2,12 @@
 
 All notable changes to this project are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). There are no releases yet.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Each version is the GitHub release `vX.Y.Z`.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-11-28
 
 The first release. kernel-updater replaces the owner's original script, `update_kernel.sh`.
 These entries describe the tool as this release ships it, compared with that script: each
@@ -281,4 +284,5 @@ feature once.
 - `update_kernel.sh`, the original script, with its tests. Use `kernel-updater` as
   `docs/migration.md` describes, and `docs/runbook.md` for routine use and recovery.
 
-[Unreleased]: https://github.com/Ochsyp/kernel-updater/commits/main
+[Unreleased]: https://github.com/Ochsyp/kernel-updater/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Ochsyp/kernel-updater/releases/tag/v1.0.0
