@@ -86,7 +86,28 @@ function Restart-AsAdmin([string]$Script) {
     exit 0
 }
 
-# Print the SHA-256 of the file PATH, in lower case.
+# Print the SHA-256 of the file PATH, in lower case; a file that cannot be read stops the
+# caller with an error, so that two unreadable files never pass for equal.
 function Get-Sha256([string]$Path) {
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop
+    return $hash.Hash.ToLowerInvariant()
+}
+
+# Return what tells the stick under the drive DRIVE ("X:") apart from another one: its disk's
+# GUID on a GPT disk, or else its MBR disk signature, or an empty string when Windows cannot say.
+# Step A writes it beside each copy; E puts back only a copy of the same stick.
+function Get-StickId([string]$Drive) {
+    try {
+        $disk = Get-Partition -DriveLetter $Drive.TrimEnd(':') -ErrorAction Stop |
+            Get-Disk -ErrorAction Stop
+    } catch {
+        return ''
+    }
+    if ($disk.Guid) {
+        return [string]$disk.Guid
+    }
+    if ($disk.Signature) {
+        return [string]$disk.Signature
+    }
+    return ''
 }

@@ -91,7 +91,7 @@ ku_cmd_baseline() {
         ku_die "$KU_EX_NOINPUT" "cannot hash the stick's boot code"
     fi
     _ku_baseline_close
-    if [[ -z $current ]]; then
+    if ! _ku_baseline_has_files "$current"; then
         ku_die "$KU_EX_NOINPUT" "partition 1 holds none of the files baseline.list names;" \
             "nothing was recorded"
     fi
@@ -278,6 +278,13 @@ ku_baseline_update() {
     done <<< "$names")"
 }
 
+# Return 0 when the baseline lines CURRENT hold a file of partition 1, not only the MBR boot code
+# and partition 1's boot sector, which a real disk always adds: a mount that shows another
+# folder than the stick's must not pass for its boot files.
+_ku_baseline_has_files() {
+    grep -q -v -e '  mbr:boot-code$' -e '  p1:boot-sector$' -e '^$' <<< "$1"
+}
+
 # Record the whole baseline of the stick under partition 1's ROOT, as 'kernel-updater baseline
 # --yes' records it, without its lock, which the caller holds, and without asking: migrate's
 # finalize stage calls it once it wrote grub.cfg while no baseline is stored. With --dry-run it
@@ -287,7 +294,7 @@ ku_baseline_update() {
 ku_baseline_record() {
     local current count
     current=$(ku_baseline_hash "$1") || return 1
-    [[ -n $current ]] || return 1
+    _ku_baseline_has_files "$current" || return 1
     count=$(grep -c '' <<< "$current")
     if (( KU_DRY_RUN )); then
         ku_log info "dry run: would record $count entries in $KU_BASELINE; nothing was written"
