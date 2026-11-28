@@ -216,7 +216,8 @@ shows.
 
 The files go to `output_dir` instead in these cases:
 
-- in the VM with `deploy` `auto` or `direct`, the default, without `--write-fat`;
+- in the VM with `deploy` `auto`, the default, or `direct`, unless `--write-fat` writes a FAT
+  partition 1;
 - on a FAT partition 1 without `--write-fat`;
 - with `--deploy export`.
 
