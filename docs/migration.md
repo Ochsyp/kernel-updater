@@ -33,8 +33,9 @@ In Windows:
 - Turn Fast Startup off (Control Panel, Power Options, "Choose what the power buttons do").
 - Eject the stick before you boot from it.
 
-kernel-updater never writes a volume that Windows hibernated, kept in its cache or left
-unclean. It exports the files instead, and says why.
+A mount that kernel-updater makes itself never writes a volume that Windows hibernated, kept in
+its cache or left unclean. It exports the files instead, and says why. A share at `p1_path`, or a
+read-write mount that root made, is written as it is.
 
 With `--write-fat`, a FAT volume left unclean makes the run refuse (exit 3) instead. Then
 nothing is written or exported.
@@ -215,7 +216,7 @@ shows.
 
 The files go to `output_dir` instead in these cases:
 
-- in the VM without `--write-fat`;
+- in the VM with `deploy` `auto` or `direct`, the default, without `--write-fat`;
 - on a FAT partition 1 without `--write-fat`;
 - with `--deploy export`.
 
@@ -234,6 +235,8 @@ That write removes the export, since the export, copied afterwards, would undo t
 
 `--write-fat` lets one run write a FAT partition 1, and only when all of these hold:
 
+- `deploy` is `auto` or `direct`;
+- nothing has partition 1 mounted;
 - the VM runs under VMware;
 - the stick's menu booted the running kernel;
 - the volume was left clean.
@@ -260,6 +263,31 @@ know its letter. Each script refuses with a plain sentence, and changes nothing,
 - holds no `multibootusb\grub\grub.cfg`.
 
 D asks Windows for administrator rights itself, and shows its result in a window of its own.
+
+To get the scripts onto Windows, download the release there too. In PowerShell, not as
+administrator, in a new empty folder, set `$v` to the version you installed in Kali and run:
+
+```powershell
+$v = '1.0.0'
+curl.exe -fLO "https://github.com/Ochsyp/kernel-updater/releases/download/v$v/kernel-updater-$v.tar.gz"
+curl.exe -fLO "https://github.com/Ochsyp/kernel-updater/releases/download/v$v/SHA256SUMS"
+(Get-FileHash "kernel-updater-$v.tar.gz" -Algorithm SHA256).Hash -eq ((Select-String -Path SHA256SUMS -Pattern "  kernel-updater-$v.tar.gz$").Line -split '  ')[0]
+tar -xzf "kernel-updater-$v.tar.gz"
+Set-Location "kernel-updater-$v"
+```
+
+The comparison must print `True`; stop when it prints `False`. `curl.exe` and `tar` come with
+Windows 10 and 11.
+
+If the archive came through a web browser instead, Windows marks it as downloaded from the
+internet, and the scripts unpacked from it may carry the mark too. PowerShell's
+`-ExecutionPolicy RemoteSigned` then refuses them with `... is not digitally signed. You cannot
+run this script on the current system.` Take the mark off once, in the unpacked folder:
+
+```powershell
+Get-ChildItem .\tools\windows\*.ps1 | Unblock-File
+```
+
 Run each script from PowerShell in the unpacked release folder, for example:
 
 ```powershell
@@ -524,9 +552,13 @@ kernel's initrd, which has not booted since. To check that initrd, read-only:
 sudo /usr/local/bin/kernel-updater check --porcelain | grep '^initrd'
 ```
 
-It is whole when the line reads `initrd`, `ok` and `2 initrd(s) hold their modules, cryptsetup,
-the cryptroot configuration`, tab-separated, followed by `and key files` when `/etc/crypttab`
-names one. The count is that of the installed kernels. A `fail` names the kernel and what its initrd
+It is whole when the line reads `initrd`, `ok` and, tab-separated, one of these two details:
+
+- `2 initrd(s) hold their modules, cryptsetup, the cryptroot configuration and key files`, when
+  an `/etc/crypttab` entry that the initramfs unlocks names a key file;
+- `2 initrd(s) hold their modules, cryptsetup and the cryptroot configuration`, when none does.
+
+The count is that of the installed kernels. A `fail` names the kernel and what its initrd
 lacks.
 
 For full proof, boot it once:

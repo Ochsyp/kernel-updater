@@ -166,7 +166,8 @@ kernel-updater [OPTIONS] COMMAND [ARGS]
 
 - `--floor VERSION` is the oldest GRUB the files must run on: 2.02, 2.06, 2.12 or 2.14. It is
   `grub_floor` by default. Below 2.12, LUKS UUIDs written with dashes are errors, because older
-  GRUB never matches them.
+  GRUB never matches them; in a `search` hint (`--hint`, `-h`), which GRUB skips when it cannot
+  match it, they are warnings.
 - `--grub-dir DIR` takes the command and module names from a stick's own `command.lst` and
   `moddep.lst`.
 - `--strict` fails on warnings too.
@@ -209,7 +210,7 @@ removes it lazily.
 
 Each item is `ok`, `warn`, `fail` or `skip`. An item skips when it does not apply, such as the
 `/boot` items while `/boot` is not mounted. `boot-links`, `stale-root-links` and
-`reboot-pending` apply only while `/etc/kernel-img.conf` keeps the links in `/boot`.
+`reboot-pending` apply only while `/etc/kernel-img.conf` sets `link_in_boot = yes`.
 `boot-luks` and `boot-ext` judge `/boot` by the GRUB that `grub_floor` names, 2.02 by default.
 
 The last seven items look at the stick's partition 1 (see [Partition 1](#partition-1)). `check`
@@ -340,7 +341,7 @@ shows as `NAME=<value>`.
 | Stage | Does |
 |---|---|
 | `detect` | Appends to `/etc/kernel-updater.conf`, under a comment line, what it lacks of `boot_fs_uuid`, `boot_luks_uuid`, `disk_ptuuid`, `p1_fs_uuid` and `root_device`. It reads them from the mount of `/boot`, its LUKS container, the stick found from `/boot` and the running kernel's command line. It also appends `grub_floor`, read from the stick's GRUB, when the file sets none. A key the file sets to another value exits 78, naming the key. The file is written through a temporary file renamed over it. It keeps every other line. Setting `boot_fs_uuid` arms the hooks |
-| `system` | Needs `detect` done (3 otherwise), `/boot` mounted (66), and the `/boot` and LUKS container the configuration names (78). It refuses (3) in four cases. Check's `boot-luks`, `boot-ext` or `kernels` item fails. No installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check). Only one would, while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links. One of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`. It sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line. It has `linux-update-symlinks` point the links in `/boot` at the newest kernel, and the `.old` ones at the previous one (the running kernel when it is an older one). It moves the old links out of `/` into the backup. It asks, in a question of its own, whether to empty grub-pc's install devices. It exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. The kernels or the links may change while its question waits, for example when apt installs a kernel meanwhile. Then it exits 75 before changing anything, since its plan no longer holds. It also exits 75 while apt or dpkg holds its lock, before the plan and again after the question, and 3 when it cannot tell. Run it again once apt is done |
+| `system` | Needs `detect` done (3 otherwise), `/boot` mounted (66), and the `/boot` and LUKS container the configuration names (78). It refuses (3) in five cases. Check's `boot-luks`, `boot-ext` or `kernels` item fails. `/etc/kernel-img.conf` is a symlink. No installed kernel would boot (a non-empty `vmlinuz` and an initrd that passes the postinst check). Only one would, while `/boot` holds another kernel's image, from which `linux-update-symlinks` would take the `.old` links. One of the four link names in `/boot` is no symlink. It backs up `/etc/kernel-img.conf` and the links in `/`. It sets `do_symlinks = yes` and `link_in_boot = yes`, keeping every other line. It has `linux-update-symlinks` point the links in `/boot` at the newest kernel, and the `.old` ones at the previous one (the running kernel when it is an older one). It moves the old links out of `/` into the backup. It asks, in a question of its own, whether to empty grub-pc's install devices. It exits 4 unless the four links come out relative, reach their files and point at those two kernels, and `kernel-img.conf` has linux-base keep them in `/boot`. Links already on the newest kernel and on another one that would boot stay as they are. The kernels or the links may change while its question waits, for example when apt installs a kernel meanwhile. Then it exits 75 before changing anything, since its plan no longer holds. It also exits 75 while apt or dpkg holds its lock, before the plan and again after the question, and 3 when it cannot tell. Run it again once apt is done |
 | `menu` | Needs `system` done and `grub-script-check` (3 otherwise), `/boot` as `system` does, and a partition 1 it may reach (66). It finds the one top-level submenu of `grub.cfg` whose quoted title holds Kali. It exits 3 when there is none, when there are several, when the one lies between MultiBootUSB's `#start` and `#end` markers, or when it shares a line with other commands. It takes each variant's kernel parameters from the submenu's entries. It drops `root=`, `cryptdevice=`, `BOOT_IMAGE=` and `initrd=`, turns `noswap` into `systemd.swap=0`, and turns overlayroot's `resurce=` into `recurse=`. It renders `multibootusb/grub/kali.cfg` from `share/kernel-updater/kali.cfg.in`. It replaces the submenu in `grub.cfg` with a block that sources `kali.cfg`, and the submenu follows as "... (legacy entries)". Every byte outside the submenu must come through (3 otherwise). Both files must pass `grub-script-check`, and `kali.cfg` must pass `lint` with the stick's own command and module lists, or GRUB 2.02's when those cannot be read. Then it backs up both, writes `kali.cfg` before `grub.cfg` with the safe writer, and updates their baseline entries. Or it exports both. A file that differed from a stored baseline before the write keeps its old entry. That way check's tripwire keeps reporting a change made outside the tool, for example from Windows, until `kernel-updater baseline` records it. The plan and a warning name such a file. Run again while the legacy entries remain, it leaves `grub.cfg` as it is. It then writes `kali.cfg` alone anew from them when it is missing or differs, for example after `menu_variants` changed, with a backup of its own |
 | `finalize` | Needs `menu` done. Removes the legacy submenu from `grub.cfg` and nothing else. It does so after a question that asks for the boot tests first, and writes `grub.cfg` or exports it. After a write it sets `grub.cfg`'s entry in the stored baseline, unless `grub.cfg` differed from it before. A warning then names the files that still differ from the baseline. `kernel-updater baseline` shows those and records them once checked. It records the whole baseline only when none is stored. A rollback that writes `grub.cfg` or `kali.cfg` treats their entries as `menu` does |
 | `all` | The default: `detect`, `system` and `menu` in turn. A dry run stops after the first stage that would change something, because the later plans build on it. `finalize` never runs with them |
@@ -549,9 +550,9 @@ run:
   The plan shows each entry's age.
 
   An entry of another name, kind, owner or filesystem, or one that holds anything else, is only
-  listed. So is the whole quarantine when a symlink leads to it, or when it is no directory of
-  root's with mode 0700. `quarantine_days = 0` keeps every entry. Expiry is the only step that
-  deletes a module tree.
+  listed (`list`). The whole quarantine is skipped (`skip`, "expire nothing") when a symlink
+  leads to it, or when it is no directory of root's with mode 0700. `quarantine_days = 0` keeps
+  every entry. Expiry is the only step that deletes a module tree.
 - **The plan** goes to stderr before the question, whatever the verbosity. It shows the
   releases kept, then each package, module tree and quarantine entry with what happens to it
   and why, then `sync`. With `--porcelain` its records also go to stdout as
@@ -724,7 +725,10 @@ apt-guard covers the split kernel packages. Their `linux-binary` part can be unp
 `cryptsetup`, `dkms` and the other GRUB packages pass. Any run without the packages above passes
 at once. While `apt-guard` is missing or not executable, the APT configuration lets every run
 through. The kernel hooks back apt-guard up for `dpkg -i` and `dpkg --configure -a`. They let
-everything through while `/usr/local/bin/kernel-updater` is missing. A kernel's own postinst
+everything through while `/usr/local/bin/kernel-updater` is missing. They run only from a
+`linux-image` package's scripts, so a `dpkg -i` of a `linux-binary` package alone, which for
+Kali's kernels from 6.19 to 7.1 holds `/boot/vmlinuz-VERSION`, runs no guard: install kernels
+with apt. A kernel's own postinst
 moves the links before any hook runs. So a configure refused while `/boot` is not mounted can
 still leave links under the mount point; `check` reports them as `boot-shadowed`. A configure
 refused while another filesystem is mounted there moves the links on that filesystem.
@@ -774,7 +778,8 @@ and are kept lower case. Paths lose their trailing slashes. Lists of variants lo
 around their commas. Every key is optional, with two limits:
 
 - `disk_ptuuid` and `p1_fs_uuid` must both be set before `baseline` records anything;
-- the five keys `migrate --stage detect` fills must be set before the later stages run.
+- the five keys `migrate --stage detect` fills must be set before the system and menu stages
+  run.
 
 ## Examples
 
