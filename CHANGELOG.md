@@ -6,10 +6,9 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
-The tool was built in phases, one pull request each, and replaces the owner's original script,
-`update_kernel.sh`. Since nothing is released yet, these entries describe the tool as it is now,
-compared with that script: each feature once, with what later pull requests changed in it
-folded in, and no entry that fixes another one of this section.
+The first release. kernel-updater replaces the owner's original script, `update_kernel.sh`.
+These entries describe the tool as this release ships it, compared with that script: each
+feature once.
 
 ### Added
 
@@ -76,14 +75,15 @@ folded in, and no entry that fixes another one of this section.
   crypttab and fstab; initrd listings; and the devices in `grub-pc/install_devices`.
 - `install.sh`, which installs the tool under `/usr/local`, the kernel hooks in `/etc/kernel` and
   apt-guard's configuration in `/etc/apt/apt.conf.d/50kernel-updater`, in that order, and lists
-  every file with its SHA-256 in `/var/lib/kernel-updater/install.manifest`. A rerun updates what
-  changed and removes what the checkout no longer has; `--uninstall` removes what the manifest
-  lists, the APT configuration first, and `/var/lib/kernel-updater` only when it is empty;
-  `--dry-run` changes nothing. The manifest lists old and new contents while files change, so a run
-  cut short can be run again or undone. It refuses (3), changing nothing, when a file in its way was
-  not installed by it or changed since, or a manifest line is damaged, and exits 66 when the
-  checkout lacks a file. A rerun also puts back a file whose owner or mode changed, and warns about
-  each folder the files go in that a user other than root can change.
+  every file with its SHA-256 in `/var/lib/kernel-updater/install.manifest`. A newer release's
+  `install.sh` updates what changed and removes what that release no longer has; `--uninstall`
+  removes what the manifest lists, the APT configuration first, and `/var/lib/kernel-updater`
+  only when it is empty; `--dry-run` changes nothing. The manifest lists old and new contents
+  while files change, so a run cut short can be run again or undone. It refuses (3), changing
+  nothing, when a file in its way was not installed by it or changed since, or a manifest line
+  is damaged, and exits 66 when its folder lacks a file. A rerun also puts back a file whose
+  owner or mode changed, and warns about each folder the files go in that a user other than
+  root can change.
 - Kernel hooks, armed while `boot_fs_uuid` is set and only warning until then: `preinst.d`,
   `prerm.d` and `postinst.d/00-kernel-updater` refuse (3) a kernel install, removal or configure
   while `/boot` is not mounted, holds another filesystem than `boot_fs_uuid` names, or `findmnt`
@@ -275,8 +275,6 @@ folded in, and no entry that fixes another one of this section.
   Kali entries of `grub.cfg` after each kernel update; after `migrate`, the entries boot
   `/vmlinuz` and `/initrd.img` and their `.old` counterparts, which linux-base moves on every
   kernel install, so `apt full-upgrade` alone keeps them bootable.
-- The README, `docs/runbook.md`, `docs/migration.md`, the example configuration and a few code
-  comments say the same in plainer words: short sentences, lists and the present tense.
 
 ### Removed
 
