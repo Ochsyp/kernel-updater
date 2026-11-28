@@ -70,8 +70,9 @@ home_untouched() {
 }
 
 # Run the script NAME under pwsh on Linux, with partition 1's files in the folder STICK as the
-# drive Q:, which Get-Volume names BOOT on a disk on BUS, USB by default, and with ANSWER, yes by
-# default, as what Read-Host returns. LOCALAPPDATA is under HOME.
+# drive Q:, which Get-Volume names BOOT on a disk on BUS, USB by default, whose MBR signature is
+# STICK_SIG, 1234 by default, and with ANSWER, yes by default, as what Read-Host returns.
+# LOCALAPPDATA is under HOME.
 run_on_stick() {
     local name=$1 stick=$2 bus=${3:-USB} answer=${4:-yes}
     run pwsh -NoProfile -NonInteractive -Command "
@@ -80,7 +81,8 @@ run_on_stick() {
         function global:Get-Partition { [CmdletBinding()] param(\$DriveLetter)
             [pscustomobject]@{ DriveLetter = \$DriveLetter } }
         function global:Get-Disk { [CmdletBinding()] param([Parameter(ValueFromPipeline)]\$Partition)
-            process { [pscustomobject]@{ BusType = '$bus' } } }
+            process {
+                [pscustomobject]@{ BusType = '$bus'; Signature = '${STICK_SIG:-1234}' } } }
         function global:Read-Host { param(\$Prompt) Write-Host \"\${Prompt}: $answer\"; '$answer' }
         & '$REPO_DIR/tools/windows/$name.ps1'
         exit \$LASTEXITCODE"
@@ -122,15 +124,21 @@ run_on_stick() {
     [[ "$output" == *"Copied BOOT (Q:) multibootusb\\grub to: $copies/stick-grub-"* ]]
     [[ "$output" == *"Files: 2 on the stick, 2 in the copy"* ]]
     [[ "$output" == *"The copy matches the stick. Next: start the VM through the launcher." ]]
-    copy=$(find "$copies" -mindepth 1 -maxdepth 1)
+    copy=$(find "$copies" -mindepth 1 -maxdepth 1 -type d)
     [[ "$copy" == "$copies/stick-grub-"* ]]
+    # Beside the copy, not in it, A notes which stick it is of.
+    [ "$(< "$copy.stick")" = 1234 ]
+    [ -z "$(find "$copy" -name '*.stick')" ]
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$copy/grub.cfg"
     cmp "$stick/multibootusb/grub/i386-pc/linux.mod" "$copy/i386-pc/linux.mod"
     # Nothing lands on the Desktop.
     [ -z "$(find "$HOME/Desktop" -mindepth 1)" ]
-    # E takes the newest copy and passes over an older one, as one moved there by hand.
-    mkdir "$copies/stick-grub-20000101-0000"
+    # E takes the newest copy of this stick, and passes over an older one, as one moved there by
+    # hand, and a newer one of another stick.
+    mkdir "$copies/stick-grub-20000101-0000" "$copies/stick-grub-29990101-000000"
     printf 'older\n' > "$copies/stick-grub-20000101-0000/grub.cfg"
+    printf 'other\n' > "$copies/stick-grub-29990101-000000/grub.cfg"
+    printf '9999' > "$copies/stick-grub-29990101-000000.stick"
     # The write changes grub.cfg and adds kali.cfg; E puts grub.cfg back only after a yes.
     printf 'menuentry "New" {\r\n}\r\n' > "$stick/multibootusb/grub/grub.cfg"
     printf 'kali\n' > "$stick/multibootusb/grub/kali.cfg"
@@ -141,11 +149,24 @@ run_on_stick() {
     run_on_stick stick-e-restore-menu "$stick"
     [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
     [[ "$output" == *"This copies $copy over BOOT (Q:) multibootusb\\grub."* ]]
+    # Only grub.cfg differs; GRUB's module stays as it was on the stick.
+    [[ "$output" == *"Copied 1 changed file(s); every other file on the stick was the same"* ]]
     [[ "$output" == *"The stick's grub.cfg is the saved one again."* ]]
     cmp "$BATS_TEST_TMPDIR/old.cfg" "$stick/multibootusb/grub/grub.cfg"
     [ -f "$stick/multibootusb/grub/kali.cfg" ]
     # Folders go back in place, not into themselves.
     [ ! -e "$stick/multibootusb/grub/i386-pc/i386-pc" ]
+    # Another stick takes the untagged copy, only with a warning, and never a tagged one.
+    STICK_SIG=5555 run_on_stick stick-e-restore-menu "$stick"
+    [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+    [[ "$output" == *"stick-grub-20000101-0000 was made by an older step A and names no stick"* ]]
+    [ "$(< "$stick/multibootusb/grub/grub.cfg")" = older ]
+    rm -r "$copies/stick-grub-20000101-0000"
+    STICK_SIG=7777 run_on_stick stick-e-restore-menu "$stick"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is of another stick, or Windows does not say which disk BOOT is on, so"* ]]
+    [[ "$output" == *"Nothing was changed." ]]
+    [ "$(< "$stick/multibootusb/grub/grub.cfg")" = older ]
     # A BOOT that is not on a USB disk is no stick, for every script.
     for name in "${SCRIPTS[@]}"; do
         run_on_stick "$name" "$stick" SATA

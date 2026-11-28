@@ -246,6 +246,14 @@ EOF
     [[ "$output" == *$'\t1\twarning\tmbusb-marker\t'* ]]
 }
 
+@test "A bare #end line closes the marked block, as migrate's scan takes it" {
+    printf '%s\n' '#start' 'menuentry "ISO" {' '	linux /iso/vmlinuz' '}' '#end' \
+        'menuentry "Kali" {' '	cryptomount -u 5ca1ab1e000040008000000000000c01' '}' \
+        > "$BATS_TEST_TMPDIR/bare-end.cfg"
+    run_ku lint --porcelain "$BATS_TEST_TMPDIR/bare-end.cfg"
+    [[ "$output" != *mbusb-marker* ]]
+}
+
 @test "lint.awk gives the same findings under mawk and under gawk" {
     local awk_bin
     for awk_bin in mawk gawk; do

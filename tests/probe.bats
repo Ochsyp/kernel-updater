@@ -228,7 +228,7 @@ EOF
     [ "${lines[0]}" = $'vmlinuz\tvmlinuz-9.0.3+kali-amd64\t1\t0' ]
 }
 
-@test "crypttab and fstab entries skip comments and blank lines, and a missing key file is -" {
+@test "crypttab and fstab entries skip comments and blank lines; a missing key or option is -" {
     local by_id=/dev/disk/by-id/usb-Synthetic_Stick_5CA1AB1E00000001-0:0-part4
     {
         printf '# <target> <source> <key file> <options>\n\n'
@@ -238,9 +238,11 @@ EOF
         printf 'nokey_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03'
     } > "$KU_ROOT/etc/crypttab"
     run ku_probe_crypttab
-    [ "$output" = "$(printf '%s\t%s\t%s\n' boot_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c01 - \
-        root_crypt "$by_id" /etc/keys/root.key swap_crypt /dev/sda5 /dev/urandom \
-        nokey_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03 -)" ]
+    [ "$output" = "$(printf '%s\t%s\t%s\t%s\n' \
+        boot_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c01 - luks \
+        root_crypt "$by_id" /etc/keys/root.key luks,discard \
+        swap_crypt /dev/sda5 /dev/urandom swap \
+        nokey_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03 - -)" ]
     printf '# fstab\n%s /boot ext4 defaults 0 2\n\ntmpfs /tmp tmpfs' \
         UUID=5ca1ab1e-0000-4000-8000-000000000b01 > "$KU_ROOT/etc/fstab"
     run ku_probe_fstab
@@ -249,6 +251,54 @@ EOF
     run ku_probe_crypttab
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+@test "The root crypt probe names the mappings under /, and fails when it cannot tell" {
+    # ROOT_SOURCE is what findmnt prints for /; LSBLK_S what lsblk -s lists below it.
+    export ROOT_SOURCE=/dev/mapper/kali--vg-root
+    export LSBLK_S=$'kali--vg-root lvm\nroot_crypt crypt\nsdb4 part\nsdb disk'
+    mkstub findmnt <<'EOF'
+[[ " $* " == *" --mountpoint / "* && -n $ROOT_SOURCE ]] || exit 1
+printf '%s\n' "$ROOT_SOURCE"
+EOF
+    mkstub lsblk <<'EOF'
+[[ " $* " == *" -s "* && " $* " == *" $ROOT_SOURCE "* && -n $LSBLK_S ]] || exit 32
+printf '%s\n' "$LSBLK_S"
+EOF
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 0 ]
+    [ "$output" = root_crypt ]
+    # Root on a crypt mapping straight, and two layers of it.
+    export ROOT_SOURCE=/dev/mapper/root_crypt
+    export LSBLK_S=$'root_crypt crypt\nouter_crypt crypt\nsdb4 part'
+    run ku_probe_root_crypt_names
+    [ "$output" = $'root_crypt\nouter_crypt' ]
+    # No crypt mapping under /: nothing, and still status 0.
+    export ROOT_SOURCE=/dev/sda2 LSBLK_S=$'sda2 part\nsda disk'
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # findmnt or lsblk cannot tell, as in a chroot, or / is no device, as in a container.
+    export ROOT_SOURCE=""
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 1 ]
+    export ROOT_SOURCE=/dev/sda2 LSBLK_S=""
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 1 ]
+    export ROOT_SOURCE=overlay LSBLK_S=$'overlay part'
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 1 ]
+    # A resume device, which the initramfs unlocks too, is not followed: it cannot tell then.
+    export ROOT_SOURCE=/dev/mapper/root_crypt LSBLK_S=$'root_crypt crypt\nsdb4 part'
+    mkdir -p "$KU_ROOT/etc/initramfs-tools/conf.d"
+    printf 'RESUME=UUID=5ca1ab1e-0000-4000-8000-000000000d01\n' \
+        > "$KU_ROOT/etc/initramfs-tools/conf.d/resume"
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 1 ]
+    printf '# no hibernation\nRESUME=none\n' > "$KU_ROOT/etc/initramfs-tools/conf.d/resume"
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 0 ]
+    [ "$output" = root_crypt ]
 }
 
 @test "The initrd probe finds the modules, cryptsetup, the cryptroot configuration and key files" {

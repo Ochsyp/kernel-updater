@@ -37,6 +37,8 @@ setup() {
     GRUB="$KU_P1_DIR/multibootusb/grub"
     mkdir -p "$ROOT/boot" "$ROOT/etc/kernel/preinst.d" "$ROOT/run" "$ROOT/proc" "$GRUB/i386-pc"
     : > "$ROOT/etc/kernel/preinst.d/00-kernel-updater"
+    # No process holds a POSIX lock, so apt and dpkg are not running.
+    : > "$ROOT/proc/locks"
     printf 'BOOT_IMAGE=/vmlinuz root=/dev/mapper/kali--vg-root ro quiet splash\n' \
         > "$ROOT/proc/cmdline"
     kernels "$V1" "$V2"
@@ -102,8 +104,10 @@ EOF
     # as a kernel install while the question waits does.
     export DEBCONF_STATE="$BATS_TEST_TMPDIR/debconf" DEBCONF_IN="$BATS_TEST_TMPDIR/debconf.in"
     printf '* grub-pc/install_devices: /dev/sdb\n' > "$DEBCONF_STATE"
+    # SHOW_LOCKS, in the same way, is a /proc/locks line that apt takes while the question waits.
     mkstub debconf-show <<'EOF'
 [[ -z ${SHOW_MOVES:-} ]] || ln -sfn "boot/vmlinuz-$SHOW_MOVES" "$KU_ROOT/vmlinuz"
+[[ -z ${SHOW_LOCKS:-} ]] || printf '%s\n' "$SHOW_LOCKS" > "$KU_ROOT/proc/locks"
 cat "$DEBCONF_STATE"
 EOF
     mkstub debconf-set-selections <<'EOF'
@@ -645,6 +649,43 @@ backups() {
     [ "$(readlink "$ROOT/vmlinuz")" = "boot/vmlinuz-$V2" ]
     [ "$(readlink "$ROOT/initrd.img.old")" = "boot/initrd.img-$V1" ]
     private_output
+}
+
+@test "system exits 75 while apt or dpkg holds its lock, before the plan and after the question" {
+    local line
+    detected
+    # The stat stub gives every file the inode 600, so a lock on inode 600 is on lock-frontend.
+    mkdir -p "$ROOT/var/lib/dpkg" "$ROOT/proc/4242"
+    : > "$ROOT/var/lib/dpkg/lock-frontend"
+    printf 'apt-get\n' > "$ROOT/proc/4242/comm"
+    line='1: POSIX  ADVISORY  WRITE 4242 08:01:600 0 EOF'
+    printf '%s\n' "$line" > "$ROOT/proc/locks"
+    run_ku migrate --stage system --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"apt or dpkg is running: PID 4242 (apt-get) holds"* ]]
+    [[ "$stderr" == *"/var/lib/dpkg/lock-frontend; run the system stage again once it is done;"* ]]
+    [[ "$stderr" == *"nothing was changed"* ]]
+    [[ "$stderr" != *"plan:"* ]]
+    cmp "$BATS_TEST_TMPDIR/kernel-img.before" "$ROOT/etc/kernel-img.conf"
+    [ -z "$(backups)" ]
+    refute_line_match '^linux-update-symlinks' "$STUB_LOG"
+    # apt takes the lock while the question waits: the plan no longer holds.
+    : > "$ROOT/proc/locks"
+    export SHOW_LOCKS=$line
+    run_ku migrate --stage system --yes
+    [ "$status" -eq 75 ]
+    [[ "$stderr" == *"plan:"* ]]
+    [[ "$stderr" == *"apt or dpkg is running: PID 4242 (apt-get) holds"* ]]
+    cmp "$BATS_TEST_TMPDIR/kernel-img.before" "$ROOT/etc/kernel-img.conf"
+    [ -z "$(backups)" ]
+    refute_line_match '^linux-update-symlinks' "$STUB_LOG"
+    # When /proc/locks cannot be read, the stage cannot tell, and refuses with 3.
+    unset SHOW_LOCKS
+    rm "$ROOT/proc/locks"
+    run_ku migrate --stage system --yes
+    [ "$status" -eq 3 ]
+    [[ "$stderr" == *"so the system stage cannot tell whether apt or dpkg is running"* ]]
+    [ -z "$(backups)" ]
 }
 
 @test "A write of kernel-img.conf that fails, as on a full disk, exits 4 before the rename" {
