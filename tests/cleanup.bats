@@ -94,15 +94,23 @@ EOF
     # quarantine, with mode 0700, on the device STAT_DEV when that is set. Asked for owners and
     # devices, it shows root's and the real devices, but another user's for each path the file
     # foreign.owner beside the stub log lists, and another device for each that foreign.dev
-    # lists. The real stat answers the rest, such as the inodes of dpkg's lock files and the
-    # devices of the module trees.
+    # lists. A path that foreign.mode lists gets a mode that others can enter or change: 0755
+    # for the quarantine, 0775 for any other folder. The real stat answers the rest, such as the
+    # inodes of dpkg's lock files and the devices of the module trees.
     export REAL_STAT
     REAL_STAT=$(type -P stat)
     mkstub stat <<'EOF'
 case " $* " in
     *" %u %a %d "*)
         dev=$("$REAL_STAT" -c %d -- "${@: -1}") || exit
-        printf '0 700 %s\n' "${STAT_DEV:-$dev}"
+        owner=0 mode=700
+        if grep -F -q -x -e "${@: -1}" "${STUB_LOG%/*}/foreign.owner" 2> /dev/null; then
+            owner=1000
+        fi
+        if grep -F -q -x -e "${@: -1}" "${STUB_LOG%/*}/foreign.mode" 2> /dev/null; then
+            mode=755
+        fi
+        printf '%s %s %s\n' "$owner" "$mode" "${STAT_DEV:-$dev}"
         ;;
     *" %u %d "*)
         shift 3
@@ -118,7 +126,13 @@ case " $* " in
             printf '%s %s\n' "$owner" "$dev"
         done
         ;;
-    *" %u %a "*) printf '0 600\n' ;;
+    *" %u %a "*)
+        if grep -F -q -x -e "${@: -1}" "${STUB_LOG%/*}/foreign.mode" 2> /dev/null; then
+            printf '0 775\n'
+        else
+            printf '0 600\n'
+        fi
+        ;;
     *" -c %u -- "*)
         if grep -F -q -x -e "${*: -1}" "${STUB_LOG%/*}/foreign.owner" 2> /dev/null; then
             printf '1000\n'
@@ -1803,6 +1817,39 @@ than the quarantine"* ]]
     [ -f "$ROOT$tree/kernel/a.ko" ]
     [ -z "$(entries)" ]
     [ "$(grep -E '^(mv|mkdir|rmdir)( |$)' "$STUB_LOG" | sort -u)" = "mv --help" ]
+}
+
+@test "A quarantine others own or enter, or in a folder others can change, takes and expires none" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 s seen why how
+    local not_root="the quarantine $Q is no directory of root's with mode 0700"
+    module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
+    s=$(ago 100) seen=$(ago 60)
+    # An entry old enough to expire, which must stay all the same.
+    quarantined 9.0.4+kali-amd64 "$s" "$seen"
+    for how in owner mode folder; do
+        rm -f -- "$BATS_TEST_TMPDIR/foreign.owner" "$BATS_TEST_TMPDIR/foreign.mode"
+        why=$not_root
+        case $how in
+            owner) foreign owner "$Q" ;;
+            mode) foreign mode "$Q" ;;
+            folder)
+                foreign mode "${Q%/*}"
+                why="a user other than root can change the directory that holds the quarantine $Q"
+                ;;
+        esac
+        : > "$STUB_LOG"
+        run_ku cleanup --yes --porcelain
+        [ "$status" -eq 0 ]
+        [ "$output" = "$(kept; printf '%s\t%s\t%s\t%s\n' modules list "$tree" \
+            "no package owns it, but $why" expire skip "$Q" "$why")" ]
+        [[ "$stderr" == *"plan: expire nothing: $why"* ]]
+        [[ "$stderr" == *"cleanup: nothing to do"* ]]
+        # No tree moves and nothing is deleted: the tree and the old entry stay whole.
+        refute_line_match '^mv --no-copy|^(mkdir|rm|rmdir)( |$)' "$STUB_LOG"
+        [ -f "$ROOT$tree/kernel/a.ko" ]
+        [ -d "$ROOT$Q/9.0.4+kali-amd64.$s/tree" ]
+    done
+    private_output
 }
 
 @test "A tree whose release this run purges packages of is left, and the next run plans it" {
