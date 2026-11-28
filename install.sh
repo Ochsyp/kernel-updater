@@ -2,11 +2,11 @@
 # -------------------------------------------------------
 # kernel-updater installer
 #
-# Installs kernel-updater from this checkout: the command in /usr/local/bin, its libraries and
-# data in /usr/local/lib and /usr/local/share, the kernel hooks in /etc/kernel and apt-guard's
-# APT configuration. A manifest records every file with its SHA-256, and --uninstall removes
-# exactly what it lists. A file in the way that it did not install, or that changed since it
-# did, makes it refuse before it changes anything.
+# Installs kernel-updater from this folder, a release or a checkout: the command in
+# /usr/local/bin, its libraries and data in /usr/local/lib and /usr/local/share, the kernel
+# hooks in /etc/kernel and apt-guard's APT configuration. A manifest records every file with
+# its SHA-256, and --uninstall removes exactly what it lists. A file in the way that it did not
+# install, or that changed since it did, makes it refuse before it changes anything.
 # -------------------------------------------------------
 
 set -Eeuo pipefail
@@ -21,7 +21,7 @@ KU_SRC=${KU_SRC%/*}
 KI_PREFIX=/usr/local
 KI_MANIFEST=/var/lib/kernel-updater/install.manifest
 
-# The files to install, in order: the source in the checkout, the target and its mode.
+# The files to install, in order: the source in this folder, the target and its mode.
 KI_SRC=() KI_DEST=() KI_MODE=()
 # The installed manifest's entries: each target and the SHA-256 sums, space-separated, of the
 # contents it may have; a run that was cut short leaves two, the old and the new. And the
@@ -33,17 +33,20 @@ KI_TMP=""
 ki_usage() {
     cat << 'EOF'
 Usage: sudo ./install.sh [--dry-run] [--uninstall]
+       ./install.sh --list
 
-Installs kernel-updater from this checkout under /usr/local, its kernel hooks in /etc/kernel
+Installs kernel-updater from this folder under /usr/local, its kernel hooks in /etc/kernel
 and apt-guard in /etc/apt/apt.conf.d, and lists every file with its SHA-256 in
-/var/lib/kernel-updater/install.manifest. Run it again after updating the checkout.
+/var/lib/kernel-updater/install.manifest. Run a newer release's install.sh to update.
 
   -n, --dry-run   print what would change, change nothing
       --uninstall remove every file the manifest lists; /etc/kernel-updater.conf stays
+  -l, --list      print SOURCE, TARGET and MODE of each file it installs, tab-separated, in
+                  the order it installs them; needs no root and changes nothing
   -h, --help      show this help
 
 Refuses with exit 3, changing nothing, when a file in the way was not installed by
-kernel-updater or changed since. Exits 64 on a usage error, 66 when the checkout lacks a file,
+kernel-updater or changed since. Exits 64 on a usage error, 66 when this folder lacks a file,
 75 when another kernel-updater run holds the lock and 77 when not run as root.
 EOF
 }
@@ -55,18 +58,25 @@ ki_usage_error() {
     exit "$KU_EX_USAGE"
 }
 
-# Parse the options, then install or uninstall as root, under the single-instance lock.
+# Parse the options, then list the files, or install or uninstall as root, under the
+# single-instance lock.
 ki_main() {
-    local uninstall=0
+    local uninstall=0 list=0 count=$#
     while (( $# )); do
         case $1 in
             -n | --dry-run) KU_DRY_RUN=1 ;;
             --uninstall) uninstall=1 ;;
+            -l | --list) list=1 ;;
             -h | --help) ki_usage; exit 0 ;;
             *) ki_usage_error "unknown argument '$1'" ;;
         esac
         shift
     done
+    if (( list )); then
+        (( count == 1 )) || ki_usage_error "--list goes with no other option"
+        _ki_list
+        exit 0
+    fi
     ku_install_traps
     ku_cleanup_add _ki_cleanup
     ku_require_root
@@ -120,10 +130,10 @@ _ki_hash() {
     printf '%s' "${out%% *}"
 }
 
-# Add SOURCE, a path in the checkout, to the files to install as TARGET with MODE. Exits 66
-# when the checkout lacks it.
+# Add SOURCE, a path in this folder, to the files to install as TARGET with MODE. Exits 66
+# when the folder lacks it.
 _ki_add() {
-    [[ -f $KU_SRC/$1 ]] || ku_die "$KU_EX_NOINPUT" "the checkout lacks $1"
+    [[ -f $KU_SRC/$1 ]] || ku_die "$KU_EX_NOINPUT" "this folder lacks $1"
     KI_SRC+=("$1")
     KI_DEST+=("$2")
     KI_MODE+=("$3")
@@ -151,9 +161,19 @@ _ki_plan() {
     _ki_add hooks/apt/50kernel-updater /etc/apt/apt.conf.d/50kernel-updater 644
 }
 
+# Print SOURCE, TARGET and MODE of each file to install, tab-separated, in the order they go in.
+# Exits 66 when this folder lacks a file.
+_ki_list() {
+    local i
+    _ki_plan
+    for i in "${!KI_SRC[@]}"; do
+        printf '%s\t%s\t%s\n' "${KI_SRC[i]}" "${KI_DEST[i]}" "${KI_MODE[i]}"
+    done
+}
+
 # Install or update the files. Refuses with exit 3, before changing anything, when a target is
-# no regular file, or holds something other than what the manifest or this checkout says.
-# Files the manifest lists that this checkout no longer has are removed, when unchanged.
+# no regular file, or holds something other than what the manifest or this folder says.
+# Files the manifest lists that this folder no longer has are removed, when unchanged.
 # Before it changes a file it lists both the old and the new contents of each target in the
 # manifest, so a run cut short leaves nothing that a rerun or --uninstall would not accept.
 _ki_install() {

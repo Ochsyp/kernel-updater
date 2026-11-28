@@ -28,7 +28,7 @@ SCAN="$REPO_DIR/.githooks/privacy-scan"
     cd "$REPO_DIR"
     local f
     for f in install.sh bin/kernel-updater lib/kernel-updater/apt-guard \
-        hooks/kernel/*.d/* contrib/initramfs/overlayroot-rw ci/test ci/system; do
+        hooks/kernel/*.d/* contrib/initramfs/overlayroot-rw ci/test ci/system ci/release-check; do
         run git ls-files -s -- "$f"
         [[ "$output" == "100755 "* ]] || { printf '%s is not stored executable: %s\n' "$f" "$output" >&2; return 1; }
     done

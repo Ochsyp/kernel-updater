@@ -109,3 +109,52 @@ serials, `5ca1ab` for LVM UUIDs), which the `disk` pack lets through, and by-id 
 of a MAC address, is built from fragments at run time. A value with no recognisable shape, such
 as a disk signature, can go in the clone's untracked `.git/info/privacy-denylist`, so that the
 hooks refuse it too. The config sets no exemption and no accepted finding.
+
+<!-- standard:begin releasing -->
+## Releasing
+
+GitHub Actions builds each release, and the maintainer publishes it in the browser.
+
+1. `.github/standard/bin/release-prepare` writes the release pull request `chore/release-X.Y.Z`:
+   `VERSION`, the `VERSION_COPY` files, and the `CHANGELOG.md` section with its links. Its body
+   names the dependency updates since the last release. CI checks the version, the date and the
+   links. For a zip, tar or stack release, the `release` workflow builds it twice and compares
+   the builds.
+2. The maintainer reviews and squash-merges it. The push to `main` that changes `VERSION` runs
+   the `release` workflow: the checks of `ci` on that commit, the build, an attestation in the
+   public repositories, and a draft release `vX.Y.Z` of that commit.
+3. The maintainer checks the draft (notes, assets, target commit, image digest) and clicks
+   **Publish release**. GitHub creates the tag and the immutable release. The `verify` job then
+   checks the published release, and the maintainer looks for it to pass.
+4. To fix a draft, merge a pull request from `fix/release-X.Y.Z-<slug>`; its `CHANGELOG.md` line
+   goes into `## [X.Y.Z]`. Then run the `release` workflow on `main` (Actions, release, Run
+   workflow). Merge nothing else until the draft is published: CI says so on every pull request
+   while a release waits.
+5. Never delete a published release. Tick **Set as a pre-release** on a bad one instead, so that
+   clients and updaters ignore it, and ship X.Y.Z+1. For a container image, the tick also moves
+   `latest` back.
+
+Only the maintainer publishes a release. No one creates a release tag by hand, and no script or
+automation publishes a release, or edits or deletes a published one.
+<!-- standard:end releasing -->
+
+## Release contract
+
+A release `vX.Y.Z` holds:
+- `kernel-updater-X.Y.Z.tar.gz`: the tree at the tag in the folder `kernel-updater-X.Y.Z/`, with
+  the release manifest `kernel-updater-release.json` added. It leaves out what `.gitattributes`
+  keeps out of archives: `.github/`, `.githooks/`, `ci/`, `tests/`, `CONTRIBUTING.md` and the
+  editor and git settings;
+- `kernel-updater-release.json` as an asset of its own, byte for byte the archive's;
+- `SHA256SUMS`, with the SHA-256 of both;
+- GitHub's attestation that the `release` workflow built them.
+
+`ci/release-check` runs on every build, the dry run of each pull request included. The archive
+must hold every file that `install.sh --list` names in the checkout, byte for byte, and no
+other such file, with `install.sh` stored executable. `VERSION`, `share/kernel-updater/VERSION`
+and the manifest must name the release's version.
+
+A release is installed on the stick's Kali by hand, as the README's Installing says: `curl`
+fetches the archive and `SHA256SUMS` from the release page, `sha256sum --check` checks the
+archive, and `install.sh` from the unpacked folder installs it under `/usr/local`. No step needs
+a key, a token or a login, and releases are not sealed.

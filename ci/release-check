@@ -1,0 +1,114 @@
+#!/bin/bash
+# ci/release-check of kernel-updater (the standard's ci/ interface). The standard's
+# release-build runs it on each release archive it builds, in the release workflow and in its
+# dry run on every pull request, from the top of the repository:
+#   ci/release-check --archive FILE --version X.Y.Z
+# It unpacks FILE into a temporary folder and checks that kernel-updater-X.Y.Z/ in it holds:
+# - every file install.sh installs, as `install.sh --list` names them in the checkout, each the
+#   same byte for byte, and no other such file;
+# - install.sh stored executable, so that `sudo ./kernel-updater-X.Y.Z/install.sh` runs;
+# - VERSION and share/kernel-updater/VERSION holding X.Y.Z;
+# - the release manifest (RELEASE_MANIFEST) naming X.Y.Z.
+# Each problem goes to stderr. Exit 0 when all hold; 1 when one fails; 64 usage.
+set -euo pipefail
+
+say() {
+    printf 'release-check: %s\n' "$*" >&2
+}
+
+usage() {
+    echo "usage: ci/release-check --archive FILE --version X.Y.Z" >&2
+    exit 64
+}
+
+archive='' version=''
+while (( $# )); do
+    case $1 in
+        --archive) [[ -n ${2:-} ]] || usage; archive=$2; shift ;;
+        --version) [[ -n ${2:-} ]] || usage; version=$2; shift ;;
+        *) usage ;;
+    esac
+    shift
+done
+[[ -n $archive && -n $version ]] || usage
+if command -v cygpath > /dev/null 2>&1; then
+    archive=$(cygpath -u "$archive")
+fi
+
+conf() {
+    sh .github/standard/bin/conf --get "$1" .github/standard.conf
+}
+name=$(conf NAME)
+manifest=$(conf RELEASE_MANIFEST)
+top=$name-$version
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/release-check.XXXXXX")
+trap 'rm -rf -- "$tmp"' EXIT
+if ! tar --force-local -xzf "$archive" -C "$tmp" 2> /dev/null; then
+    say "cannot unpack ${archive##*/}"
+    exit 1
+fi
+if [[ ! -d $tmp/$top ]]; then
+    say "the archive holds no $top/"
+    exit 1
+fi
+root=$tmp/$top
+problems=0
+problem() {
+    say "$*"
+    problems=$((problems + 1))
+}
+
+# The mode as tar stored it, since an unpacked file's mode depends on the file system.
+mode=$(tar --force-local -tvzf "$archive" "$top/install.sh" 2> /dev/null | cut -c1-10) || mode=''
+[[ $mode == -rwx* ]] || problem "$top/install.sh is not executable"
+
+for file in VERSION share/kernel-updater/VERSION; do
+    if [[ ! -f $root/$file ]]; then
+        problem "the archive lacks $file"
+    elif [[ $(tr -d '\r' < "$root/$file") != "$version" ]]; then
+        problem "$file holds $(tr -d '\r' < "$root/$file" | head -n 1), not $version"
+    fi
+done
+
+if [[ ! -f $root/$manifest ]]; then
+    problem "the archive lacks $manifest"
+elif ! grep -q -x -F "  \"version\": \"$version\"," "$root/$manifest"; then
+    problem "$manifest names another version than $version"
+fi
+
+# What install.sh installs from the checkout, and from the archive: the sources, one per line.
+if ! want=$(bash ./install.sh --list | cut -f 1); then
+    say "install.sh --list fails in the checkout"
+    exit 1
+fi
+if ! have=$(bash "$root/install.sh" --list 2> /dev/null | cut -f 1); then
+    problem "install.sh --list fails in the archive, which lacks a file it installs by name"
+    have=''
+fi
+declare -A in_archive=()
+count=0
+while IFS= read -r file; do
+    [[ -n $file ]] && in_archive[$file]=1
+done <<< "$have"
+while IFS= read -r file; do
+    [[ -n $file ]] || continue
+    count=$((count + 1))
+    if [[ ! -f $root/$file ]]; then
+        problem "the archive lacks $file"
+    elif ! cmp -s -- "$file" "$root/$file"; then
+        problem "$file differs from the checkout's"
+    fi
+    unset 'in_archive[$file]'
+done <<< "$want"
+if [[ -n $have ]]; then
+    for file in "${!in_archive[@]}"; do
+        problem "the archive also installs $file, which the checkout does not"
+    done
+fi
+
+if (( problems )); then
+    say "$problems problem(s) in ${archive##*/}"
+    exit 1
+fi
+say "ok: $top holds the $count files install.sh installs, its VERSION files and $manifest"
