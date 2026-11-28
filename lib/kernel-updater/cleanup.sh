@@ -252,8 +252,8 @@ _ku_cl_wanted() {
 # boot_luks_uuid; 66 when /boot is not mounted or its LUKS header cannot be read, and 78 when it
 # is not the /boot they name (ku_boot_identity); 3 when apt-get, apt-mark or dpkg-query is
 # missing; 75 while apt or dpkg holds its lock, and 3 when that cannot be told
-# (_ku_cl_not_busy); 3 when linux-base does not keep the links in /boot or one does not reach a
-# non-empty file there, when check's kernels item fails, as while a kernel package is stuck
+# (ku_require_dpkg_idle); 3 when linux-base does not keep the links in /boot or one does not
+# reach a non-empty file there, when check's kernels item fails, as while a kernel package is stuck
 # between states, and when dpkg was interrupted; and last as _ku_cl_menu_finished says. The locks
 # come before the links, the packages and dpkg's updates directory, which a running apt or dpkg
 # changes for a moment.
@@ -275,7 +275,7 @@ _ku_cl_preconditions() {
         ku_die "$KU_EX_REFUSED" "cleanup runs apt-get, apt-mark and dpkg-query, and" \
             "$(ku_join "${tools[@]}") cannot be found; nothing was changed"
     fi
-    _ku_cl_not_busy
+    ku_require_dpkg_idle cleanup
     ku_check_items kernel-img boot-links kernels
     for i in "${!KU_CHECK_ITEM[@]}"; do
         if [[ ${KU_CHECK_ITEM[i]} == kernels ]]; then
@@ -378,75 +378,6 @@ _ku_cl_export_boots_versions() {
     ku_menu_sources_kali "$file" || return 0
     legacy=$(ku_menu_legacy_count "$file") || return 0
     (( legacy > 0 ))
-}
-
-# Exit 75 while apt or dpkg holds its frontend or database lock, naming the holder, and 3 when
-# _ku_cl_dpkg_busy cannot tell. Returns 0 while neither is held.
-_ku_cl_not_busy() {
-    local holder status=0
-    holder=$(_ku_cl_dpkg_busy) || status=$?
-    case $status in
-        0)
-            ku_die "$KU_EX_BUSY" "apt or dpkg is running: $holder; run cleanup again once it" \
-                "is done; nothing was changed"
-            ;;
-        1) ;;
-        *)
-            ku_die "$KU_EX_REFUSED" "cannot read /proc/locks or the inode of a lock file of" \
-                "dpkg, so cleanup cannot tell whether apt or dpkg is running; nothing was changed"
-            ;;
-    esac
-}
-
-# Print who holds dpkg's frontend lock or its database lock, as "PID 4242 (apt-get) holds
-# /var/lib/dpkg/lock-frontend", and return 0 while one of them is held, 1 while neither is, and
-# 2 when that cannot be told: /proc/locks or a lock file's inode cannot be read. apt and dpkg
-# take these locks with fcntl, which flock cannot test, so the inodes of the lock files are
-# looked up in /proc/locks. The device is not compared, as an overlay filesystem may show
-# another one there than stat does: a lock on a file of the same inode number elsewhere only
-# makes cleanup refuse once too often.
-_ku_cl_dpkg_busy() {
-    local name file inode locks pid comm holder
-    local -a fields=()
-    local -A held=()
-    for name in lock-frontend lock; do
-        file=$(ku_path "/var/lib/dpkg/$name")
-        # apt and dpkg create the file as they lock it, so one that is missing is not held.
-        [[ -e $file || -L $file ]] || continue
-        inode=$(stat -L -c %i -- "$file" 2> /dev/null) || return 2
-        [[ $inode =~ ^[0-9]+$ ]] || return 2
-        held[$inode]=/var/lib/dpkg/$name
-    done
-    file=$(ku_path /proc/locks)
-    if [[ ! -r $file ]] || ! { locks=$(< "$file"); } 2> /dev/null; then
-        return 2
-    fi
-    # Each line is ID: TYPE MODE ACCESS PID MAJOR:MINOR:INODE START END, and a process that
-    # waits for a lock follows its holder, with "->" after the ID.
-    while read -r -a fields; do
-        if [[ ${fields[1]:-} == '->' ]]; then
-            fields=("${fields[0]}" "${fields[@]:2}")
-        fi
-        [[ ${fields[5]:-} =~ ^[0-9A-Fa-f]+:[0-9A-Fa-f]+:([0-9]+)$ ]] || continue
-        file=${held[${BASH_REMATCH[1]}]:-}
-        [[ -n $file ]] || continue
-        pid=${fields[4]}
-        if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
-            holder="PID $pid"
-            comm=""
-            { comm=$(< "$(ku_path "/proc/$pid/comm")"); } 2> /dev/null || comm=""
-            # A process can give itself any name, so only plain characters are shown.
-            comm=${comm//[^A-Za-z0-9._+:@ -]/?}
-            if [[ -n $comm ]]; then
-                holder+=" (${comm:0:32})"
-            fi
-        else
-            holder="a process whose PID /proc/locks does not show"
-        fi
-        printf '%s holds %s' "$holder" "$file"
-        return 0
-    done <<< "$locks"
-    return 1
 }
 
 # Return 0 when dpkg's updates directory holds a file whose name is all digits, the journal an
@@ -1016,7 +947,7 @@ _ku_cl_recheck() {
         changed=1
     fi
     _ku_cl_menu_finished
-    _ku_cl_not_busy
+    ku_require_dpkg_idle cleanup
     if ! now=$(_ku_cl_snapshot) || [[ $now != "$KU_CL_SNAPSHOT" ]]; then
         changed=1
     fi
@@ -1067,7 +998,7 @@ _ku_cl_failed() {
         ku_die "$KU_EX_WRITE" "apt-get purge failed with status $1 after dpkg began to change its" \
             "database: run 'dpkg --configure -a', then '$KU_CMD check'"
     fi
-    holder=$(_ku_cl_dpkg_busy) || busy=$?
+    holder=$(ku_probe_dpkg_busy) || busy=$?
     if (( busy == 0 )); then
         KU_CL_PURGING=0
         ku_die "$KU_EX_BUSY" "apt-get purge failed with status $1 while apt or dpkg runs:" \
@@ -1461,7 +1392,7 @@ _ku_cl_trees() {
 # dpkg holds its lock or that cannot be told; 1 while neither runs.
 _ku_cl_tree_busy() {
     local holder status=0
-    holder=$(_ku_cl_dpkg_busy) || status=$?
+    holder=$(ku_probe_dpkg_busy) || status=$?
     if (( status == 0 )); then
         _ku_cl_leave "$1" "apt or dpkg is running: $holder; run cleanup again once it is done"
     elif (( status != 1 )); then

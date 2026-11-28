@@ -7,6 +7,27 @@ Each version is the GitHub release `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The postinst hook, `check`'s `initrd` item and `migrate`'s system stage want key files in the
+  initrd only for the `/etc/crypttab` entries the initramfs unlocks: a volume under `/` or under
+  a swap partition, the resume device among them, or one marked `initramfs`. A key file of a
+  volume systemd unlocks later no longer stops a kernel configure. When `lsblk` cannot tell what
+  lies under them, every key file counts, as before.
+- `lint` ends a MultiBootUSB marker block at a bare `#end` line too, as `migrate` does, so no
+  false `mbusb-marker` warning follows it.
+- `migrate`'s system stage exits 75 while apt or dpkg holds its lock, before its plan and again
+  after its question, as `cleanup` does, and 3 when it cannot tell.
+- `baseline` exits 66, recording nothing, when partition 1 holds none of the files
+  `baseline.list` names, also on a real disk, whose boot code it always reads; so does the
+  baseline `finalize` records when none is stored.
+- Windows step E puts back only a copy of the stick that is plugged in: step A notes the stick
+  beside each copy. A copy an older step A made is taken only when no copy of this stick is there,
+  with a warning.
+- Windows step E writes only the files that differ from the stick's, each checked after the copy,
+  instead of rewriting all of `multibootusb\grub`. A file whose SHA-256 cannot be read stops the
+  Windows steps instead of passing for equal.
+
 ## [1.0.0] - 2026-11-28
 
 The first release. kernel-updater replaces the owner's original script, `update_kernel.sh`.

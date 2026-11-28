@@ -268,12 +268,16 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\windows\st
 
 - `stick-a-copy-menu.ps1`: step A. It copies the menu to a dated `stick-grub-*` folder in
   `%LOCALAPPDATA%\kernel-updater\stick-grub`, and makes that folder when it is missing. It never
-  copies to the Desktop. It prints the copy's path, and the SHA-256 of `grub.cfg` on the stick
-  and in the copy. Its last line starts with `The copy matches the stick.`
+  copies to the Desktop. Beside the copy, in a `.stick` file of the same name, it notes which
+  stick the copy is of. It prints the copy's path, and the SHA-256 of `grub.cfg` on the stick and
+  in the copy. Its last line starts with `The copy matches the stick.`
 - `stick-d-chkdsk.ps1`: step D, without `/f`. On success it prints a line that starts with
   `chkdsk found no problems`.
 - `stick-e-restore-menu.ps1`: E. Once you type `yes`, it copies back the newest `stick-grub-*`
-  folder in `%LOCALAPPDATA%\kernel-updater\stick-grub`. It prints both SHA-256 sums.
+  folder in `%LOCALAPPDATA%\kernel-updater\stick-grub` that is a copy of this stick. It writes
+  only the files that differ from the stick's, and checks each one after the copy. A copy of
+  another stick is never put back. A copy that an older step A made names no stick: E takes it
+  only when no copy of this stick is there, and says so. It prints both SHA-256 sums.
 
 A. In Windows, before you start the VM, keep a copy of the menu, never on the Desktop.
 

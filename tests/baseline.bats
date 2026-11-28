@@ -208,12 +208,32 @@ expected_baseline() {
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"warning: the stored baseline is damaged; it is recorded anew"* ]]
     [ "$(< "$ROOT$BASELINE")" = "$(expected_baseline)" ]
-    # An empty partition 1 without a disk image has nothing to record.
-    export KU_P1_DIR="$BATS_TEST_TMPDIR/empty" KU_P1_DISK=""
+    # An empty partition 1 has nothing to record: with the disk's boot code alone, as on a real
+    # stick, a mount that shows another folder would pass for the stick's boot files.
+    export KU_P1_DIR="$BATS_TEST_TMPDIR/empty"
     mkdir "$KU_P1_DIR"
+    cp "$ROOT$BASELINE" "$BATS_TEST_TMPDIR/baseline.before"
     run_ku baseline --yes
     [ "$status" -eq 66 ]
     [[ "$stderr" == *"partition 1 holds none of the files baseline.list names"* ]]
+    cmp "$BATS_TEST_TMPDIR/baseline.before" "$ROOT$BASELINE"
+    export KU_P1_DISK=""
+    run_ku baseline --yes
+    [ "$status" -eq 66 ]
+    [[ "$stderr" == *"partition 1 holds none of the files baseline.list names"* ]]
+}
+
+@test "ku_baseline_record records nothing for a partition 1 that holds none of the files" {
+    local empty="$BATS_TEST_TMPDIR/empty"
+    mkdir "$empty"
+    # shellcheck disable=SC2016 # the code expands its own arguments
+    run_ku_lib 'ku_baseline_record "$1"' "$empty"
+    [ "$status" -eq 1 ]
+    [ ! -e "$ROOT$BASELINE" ]
+    # shellcheck disable=SC2016 # the code expands its own arguments
+    run_ku_lib 'ku_baseline_record "$1"' "$KU_P1_DIR"
+    [ "$status" -eq 0 ]
+    [ "$(< "$ROOT$BASELINE")" = "$(expected_baseline)" ]
 }
 
 @test "Another stick exits 78, naming the part that differs, and so do unset keys" {

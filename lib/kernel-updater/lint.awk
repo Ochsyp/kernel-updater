@@ -262,7 +262,7 @@ function check_param(w, ln,    key, m, opts, i, o) {
 # between them, so the first encrypted entry inside a marked block is reported at the marker.
 function markers(s, ln) {
     if (s ~ /^[ \t]*#start([ \t]|$)/) { marked = ln; marked_reported = 0 }
-    else if (s ~ /^[ \t]*#end[ \t]/) marked = 0
+    else if (s ~ /^[ \t]*#end([ \t]|$)/) marked = 0
 }
 
 # Return W quoted when it has the shape of a command, module or option name, and a neutral

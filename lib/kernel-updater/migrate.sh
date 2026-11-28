@@ -458,15 +458,16 @@ _ku_mg_conf_append() {
 # boot-ext or kernels item fails, no kernel would boot, or a name the links take in /boot is no
 # symlink; and when only one kernel would boot while /boot holds the image of another, since
 # linux-update-symlinks takes the .old links from the images in /boot and would point them at
-# that one. Exits 75, changing nothing, when the kernels or the links changed while its
-# question waited, as when apt installed a kernel meanwhile, so that a run once apt is done can
-# succeed.
+# that one. Exits 75, changing nothing, while apt or dpkg holds its lock, before the plan and
+# again after the question, or when the kernels or the links changed while its question waited,
+# as when apt installed a kernel meanwhile, so that a run once apt is done can succeed.
 _ku_mg_stage_system() {
     local i version name path problem target need_keys=0 newest="" previous="" edit=1
     local relink=1 devices="" img grub_read=1 others state old
     local -a problems=() bootable=() unbootable=() links=() targets=() files=()
     _ku_mg_need_detect
     ku_boot_identity
+    ku_require_dpkg_idle "the system stage"
     state=$(_ku_mg_system_state)
     ku_check_items boot-luks boot-ext kernels
     for i in "${!KU_CHECK_STATUS[@]}"; do
@@ -586,6 +587,7 @@ _ku_mg_stage_system() {
         return 0
     fi
     _ku_mg_ask system "Configure the kernel links as planned?"
+    ku_require_dpkg_idle "the system stage"
     if [[ $(_ku_mg_system_state) != "$state" ]]; then
         ku_die "$KU_EX_BUSY" "the kernels or their links changed while the question waited," \
             "as when apt installs a kernel meanwhile, so the plan no longer holds: run the system" \

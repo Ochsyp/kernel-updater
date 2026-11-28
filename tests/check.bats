@@ -109,6 +109,11 @@ stick_from_boot() {
     mkstub lsblk <<'EOF'
 [[ -z ${LSBLK_FAIL:-} ]] || exit 32
 case " $* " in
+    # The root filesystem lies on LVM in root_crypt; ROOT_CHAIN=fail makes lsblk fail there.
+    *" -s "*"kali--vg-root"*)
+        [[ ${ROOT_CHAIN:-} != fail ]] || exit 32
+        printf '%s\n' 'kali--vg-root lvm' 'root_crypt crypt' 'sdb4 part' 'sdb disk'
+        ;;
     *" -s "*) printf '%s\n' '/dev/mapper/boot_crypt crypt' '/dev/sdb3 part' '/dev/sdb disk' ;;
     *" -d "*) printf '5ca1ab1e\n' ;;
     *) printf '%s\n' '/dev/sdb   ' "/dev/sdb1 1 ${P1_LSBLK:-ntfs 5CA1AB1E00000001}" ;;
@@ -157,11 +162,18 @@ EOF
 case " $* " in
     *" --source "*) exit 1 ;;
     *" --target "*) printf 'rw,nosuid,nodev,noexec\n' ;;
+    *" --mountpoint / "*) printf '/dev/mapper/kali--vg-root\n' ;;
     *)
         [[ -n $FINDMNT_OUT ]] || exit 1
         printf '%s\n' "$FINDMNT_OUT"
         ;;
 esac
+EOF
+    # The root filesystem lies on LVM in root_crypt; ROOT_CHAIN=fail makes lsblk fail there.
+    # stick_from_boot replaces this stub with one that also finds partition 1.
+    mkstub lsblk <<'EOF'
+[[ " $* " == *" -s "*"kali--vg-root"* && ${ROOT_CHAIN:-} != fail ]] || exit 32
+printf '%s\n' 'kali--vg-root lvm' 'root_crypt crypt' 'sdb4 part' 'sdb disk'
 EOF
     mkstub dpkg-query <<'EOF'
 cat "$DPKG_QUERY_OUT"
@@ -495,6 +507,33 @@ others_ok() {
         "2 initrd(s) hold their modules, cryptsetup and the cryptroot configuration"
 }
 
+@test "initrd needs key files only for volumes the initramfs unlocks, or any when it cannot tell" {
+    # Only a volume systemd unlocks later, /home, uses a key file: the initrd needs none.
+    printf '%s\n' 'root_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c02 none luks' \
+        'home_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03 /etc/keys/home.key luks' \
+        > "$ROOT/etc/crypttab"
+    export LSINITRAMFS_DROP='^cryptroot/keyfiles'
+    run_check
+    [ "$status" -eq 0 ]
+    expect_item initrd ok \
+        "2 initrd(s) hold their modules, cryptsetup and the cryptroot configuration"
+    # Marked initramfs, the initramfs unlocks it, so its key file must be in the initrd.
+    printf '%s\n' 'root_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c02 none luks' \
+        'home_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03 /etc/keys/home.key luks,initramfs' \
+        > "$ROOT/etc/crypttab"
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item initrd fail "lacks the key files crypttab names"
+    # When lsblk cannot tell what lies under /, every key file counts, as before.
+    printf '%s\n' 'root_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c02 none luks' \
+        'home_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03 /etc/keys/home.key luks' \
+        > "$ROOT/etc/crypttab"
+    export ROOT_CHAIN=fail
+    run_check
+    [ "$status" -eq 2 ]
+    expect_item initrd fail "lacks the key files crypttab names"
+}
+
 @test "boot-luks fails on LUKS2, on argon2 keyslots and without an open LUKS container" {
     export LUKS_TYPE=LUKS2 LUKS_DUMP="$REPO_DIR/tests/fixtures/system/luks2.dump"
     run_check
@@ -665,7 +704,15 @@ others_ok() {
         expect_item "$name" skip "--no-partition leaves partition 1 alone"
     done
     others_ok
-    refute_line_match '^(lsblk|blkid)|^mount -t ' "$STUB_LOG"
+    # Partition 1 is neither looked for nor mounted; only the initrd item asks lsblk what lies
+    # under the root filesystem.
+    refute_line_match '^blkid|^mount -t ' "$STUB_LOG"
+    local call
+    while IFS= read -r call; do
+        [[ $call != lsblk* || $call == *" -s "*kali--vg-root* ]] && continue
+        printf 'partition 1 was looked for: %s\n' "$call" >&2
+        return 1
+    done < "$STUB_LOG"
     run_ku check --help
     [[ "$output" == *"--no-partition  skip the partition-1 items"* ]]
 }

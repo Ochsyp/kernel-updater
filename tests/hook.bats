@@ -27,8 +27,17 @@ setup() {
     # FINDMNT_OUT is /boot's mount line; empty means /boot is not mounted.
     export FINDMNT_OUT="/dev/mapper/boot_crypt ext4 $FS_UUID"
     mkstub findmnt <<'EOF'
+if [[ " $* " == *" --mountpoint / "* ]]; then
+    printf '/dev/mapper/kali--vg-root\n'
+    exit 0
+fi
 [[ -n $FINDMNT_OUT ]] || exit 1
 printf '%s\n' "$FINDMNT_OUT"
+EOF
+    # The root filesystem lies on LVM in root_crypt, as lsblk -s lists the devices below it.
+    mkstub lsblk <<'EOF'
+[[ " $* " == *" -s "*"kali--vg-root"* ]] || exit 32
+printf '%s\n' 'kali--vg-root lvm' 'root_crypt crypt' 'sdb4 part' 'sdb disk'
 EOF
     # BLKID_UUID is what blkid reads from the device; empty means it finds none.
     mkstub blkid <<'EOF'
@@ -238,6 +247,18 @@ quiet_and_private() {
     run_ku hook verify "$V"
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"lacks the key files crypttab names, so root would ask for a second"* ]]
+    quiet_and_private
+}
+
+@test "verify needs no key files for a volume that only systemd unlocks, after the initramfs" {
+    printf '%s\n' 'root_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c02 none luks' \
+        'home_crypt UUID=5ca1ab1e-0000-4000-8000-000000000c03 /etc/keys/home.key luks' \
+        > "$ROOT/etc/crypttab"
+    export LSINITRAMFS_DROP='^cryptroot/keyfiles'
+    run_ku hook verify "$V"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"info: kernel $V passes"* ]]
+    [[ "$stderr" != *"key files"* ]]
     quiet_and_private
 }
 

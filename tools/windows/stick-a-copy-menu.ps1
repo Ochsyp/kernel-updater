@@ -40,4 +40,17 @@ Write-Host "grub.cfg SHA-256 in the copy:  $copySum"
 if ($onStick -ne $inCopy -or $stickSum -ne $copySum) {
     Stop-Step "The copy differs from the stick: do not go on. Delete $target and run this again."
 }
+# Which stick the copy is of, beside the copy rather than in it, so E never puts it on a stick.
+$id = Get-StickId $drive
+if ($id) {
+    try {
+        Set-Content -LiteralPath "$target.stick" -Value $id -NoNewline -ErrorAction Stop
+    } catch {
+        Stop-Step (('Cannot note which stick the copy is of: {0}. Delete {1} and run this ' +
+            'again. The stick was not changed.') -f $_.Exception.Message.TrimEnd('.'), $target)
+    }
+} else {
+    Write-Host ('Windows does not say which disk BOOT is on, so the copy names no stick; step E ' +
+        'then asks you to check that it is this stick''s.')
+}
 Write-Host 'The copy matches the stick. Next: start the VM through the launcher.'

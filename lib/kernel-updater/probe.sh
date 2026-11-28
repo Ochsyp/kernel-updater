@@ -188,19 +188,53 @@ ku_probe_boot_links() {
     done
 }
 
-# Print TARGET<TAB>SOURCE<TAB>KEYFILE for each /etc/crypttab entry. KEYFILE is - when the entry
-# names none.
+# Print TARGET<TAB>SOURCE<TAB>KEYFILE<TAB>OPTIONS for each /etc/crypttab entry. KEYFILE is -
+# when the entry names none, and OPTIONS - when it lists none.
 ku_probe_crypttab() {
-    local file target source key rest
+    local file target source key options rest
     file=$(ku_path /etc/crypttab)
     [[ -f $file ]] || return 0
-    while read -r target source key rest || [[ -n $target ]]; do
+    while read -r target source key options rest || [[ -n $target ]]; do
         [[ -n $target && $target != \#* ]] || continue
         if [[ -z $key || $key == none ]]; then
             key=-
         fi
-        printf '%s\t%s\t%s\n' "$target" "${source:--}" "$key"
+        printf '%s\t%s\t%s\t%s\n' "$target" "${source:--}" "$key" "${options:--}"
     done < "$file"
+}
+
+# Print the names of the dm-crypt mappings that the initramfs unlocks, one per line: those under
+# the root filesystem, and those under each partition in /proc/swaps, one of which initramfs-tools
+# may pick as the resume device; a swap file lies on / already. lsblk -s lists the devices below
+# each. Returns 1 when it cannot tell: findmnt or lsblk fails, as in a chroot without udev, / is
+# no device, as in a container, or /proc/swaps cannot be read.
+ku_probe_root_crypt_names() {
+    local source out name type file
+    local -a devices=()
+    source=$(findmnt -n -r -o SOURCE --mountpoint / 2> /dev/null) || return 1
+    source=${source%%[[:space:]]*}
+    # A btrfs subvolume shows as DEVICE[/SUBVOLUME].
+    source=${source%%\[*}
+    [[ $source == /dev/?* ]] || return 1
+    devices=("$source")
+    file=$(ku_path /proc/swaps)
+    if [[ -e $file ]]; then
+        [[ -r $file ]] || return 1
+        while read -r name type _; do
+            if [[ $type == partition && $name == /dev/?* ]]; then
+                devices+=("$name")
+            fi
+        done < "$file"
+    fi
+    for source in "${devices[@]}"; do
+        out=$(lsblk -s -n -r -o NAME,TYPE -- "$source" 2> /dev/null) || return 1
+        [[ -n $out ]] || return 1
+        while read -r name type _; do
+            if [[ $type == crypt ]]; then
+                printf '%s\n' "${name##*/}"
+            fi
+        done <<< "$out"
+    done
 }
 
 # Print SOURCE<TAB>MOUNTPOINT<TAB>TYPE for each /etc/fstab entry.
@@ -309,4 +343,74 @@ ku_probe_grub_pc() {
         printf '%s\n' "$count"
         return 0
     done <<< "$out"
+}
+
+# Exit 75 while apt or dpkg holds its frontend or database lock, naming the holder and saying
+# to run WHAT again once it is done, and 3 when ku_probe_dpkg_busy cannot tell. Returns 0 while
+# neither lock is held.
+ku_require_dpkg_idle() {
+    local holder status=0
+    holder=$(ku_probe_dpkg_busy) || status=$?
+    case $status in
+        0)
+            ku_die "$KU_EX_BUSY" "apt or dpkg is running: $holder; run $1 again once it is" \
+                "done; nothing was changed"
+            ;;
+        1) ;;
+        *)
+            ku_die "$KU_EX_REFUSED" "cannot read /proc/locks or the inode of a lock file of" \
+                "dpkg, so $1 cannot tell whether apt or dpkg is running; nothing was changed"
+            ;;
+    esac
+}
+
+# Print who holds dpkg's frontend lock or its database lock, as "PID 4242 (apt-get) holds
+# /var/lib/dpkg/lock-frontend", and return 0 while one of them is held, 1 while neither is, and
+# 2 when that cannot be told: /proc/locks or a lock file's inode cannot be read. apt and dpkg
+# take these locks with fcntl, which flock cannot test, so the inodes of the lock files are
+# looked up in /proc/locks. The device is not compared, as an overlay filesystem may show
+# another one there than stat does: a lock on a file of the same inode number elsewhere only
+# makes the caller refuse once too often.
+ku_probe_dpkg_busy() {
+    local name file inode locks pid comm holder
+    local -a fields=()
+    local -A held=()
+    for name in lock-frontend lock; do
+        file=$(ku_path "/var/lib/dpkg/$name")
+        # apt and dpkg create the file as they lock it, so one that is missing is not held.
+        [[ -e $file || -L $file ]] || continue
+        inode=$(stat -L -c %i -- "$file" 2> /dev/null) || return 2
+        [[ $inode =~ ^[0-9]+$ ]] || return 2
+        held[$inode]=/var/lib/dpkg/$name
+    done
+    file=$(ku_path /proc/locks)
+    if [[ ! -r $file ]] || ! { locks=$(< "$file"); } 2> /dev/null; then
+        return 2
+    fi
+    # Each line is ID: TYPE MODE ACCESS PID MAJOR:MINOR:INODE START END, and a process that
+    # waits for a lock follows its holder, with "->" after the ID.
+    while read -r -a fields; do
+        if [[ ${fields[1]:-} == '->' ]]; then
+            fields=("${fields[0]}" "${fields[@]:2}")
+        fi
+        [[ ${fields[5]:-} =~ ^[0-9A-Fa-f]+:[0-9A-Fa-f]+:([0-9]+)$ ]] || continue
+        file=${held[${BASH_REMATCH[1]}]:-}
+        [[ -n $file ]] || continue
+        pid=${fields[4]}
+        if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
+            holder="PID $pid"
+            comm=""
+            { comm=$(< "$(ku_path "/proc/$pid/comm")"); } 2> /dev/null || comm=""
+            # A process can give itself any name, so only plain characters are shown.
+            comm=${comm//[^A-Za-z0-9._+:@ -]/?}
+            if [[ -n $comm ]]; then
+                holder+=" (${comm:0:32})"
+            fi
+        else
+            holder="a process whose PID /proc/locks does not show"
+        fi
+        printf '%s holds %s' "$holder" "$file"
+        return 0
+    done <<< "$locks"
+    return 1
 }
