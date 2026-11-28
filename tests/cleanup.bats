@@ -103,11 +103,14 @@ EOF
 case " $* " in
     *" %u %a %d "*)
         dev=$("$REAL_STAT" -c %d -- "${@: -1}") || exit
-        mode=700
+        owner=0 mode=700
+        if grep -F -q -x -e "${@: -1}" "${STUB_LOG%/*}/foreign.owner" 2> /dev/null; then
+            owner=1000
+        fi
         if grep -F -q -x -e "${@: -1}" "${STUB_LOG%/*}/foreign.mode" 2> /dev/null; then
             mode=755
         fi
-        printf '0 %s %s\n' "$mode" "${STAT_DEV:-$dev}"
+        printf '%s %s %s\n' "$owner" "$mode" "${STAT_DEV:-$dev}"
         ;;
     *" %u %d "*)
         shift 3
@@ -1816,21 +1819,24 @@ than the quarantine"* ]]
     [ "$(grep -E '^(mv|mkdir|rmdir)( |$)' "$STUB_LOG" | sort -u)" = "mv --help" ]
 }
 
-@test "A quarantine others can enter, or in a folder others can change, takes and expires none" {
-    local tree=/usr/lib/modules/9.0.8+kali-amd64 s seen why qdir
+@test "A quarantine others own or enter, or in a folder others can change, takes and expires none" {
+    local tree=/usr/lib/modules/9.0.8+kali-amd64 s seen why how
+    local not_root="the quarantine $Q is no directory of root's with mode 0700"
     module_tree /usr/lib/modules 9.0.8+kali-amd64 kernel/a.ko
     s=$(ago 100) seen=$(ago 60)
     # An entry old enough to expire, which must stay all the same.
     quarantined 9.0.4+kali-amd64 "$s" "$seen"
-    qdir=${Q%/*}
-    for why in "the quarantine $Q is no directory of root's with mode 0700" \
-        "a user other than root can change the directory that holds the quarantine $Q"; do
-        rm -f -- "$BATS_TEST_TMPDIR/foreign.mode"
-        if [[ $why == the\ quarantine* ]]; then
-            foreign mode "$Q"
-        else
-            foreign mode "$qdir"
-        fi
+    for how in owner mode folder; do
+        rm -f -- "$BATS_TEST_TMPDIR/foreign.owner" "$BATS_TEST_TMPDIR/foreign.mode"
+        why=$not_root
+        case $how in
+            owner) foreign owner "$Q" ;;
+            mode) foreign mode "$Q" ;;
+            folder)
+                foreign mode "${Q%/*}"
+                why="a user other than root can change the directory that holds the quarantine $Q"
+                ;;
+        esac
         : > "$STUB_LOG"
         run_ku cleanup --yes --porcelain
         [ "$status" -eq 0 ]
