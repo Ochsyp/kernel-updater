@@ -7,6 +7,12 @@ Each version is the GitHub release `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- Tests that the dry runs of `migrate`'s system and finalize stages, and of `all` once detect is
+  done, change nothing, the stick included; and that `cleanup` moves no tree into a quarantine,
+  and deletes nothing there, while others can enter it or change the folder that holds it.
+
 ### Fixed
 
 - The postinst hook, `check`'s `initrd` item and `migrate`'s system stage want key files in the

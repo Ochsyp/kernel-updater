@@ -237,6 +237,14 @@ boot_links() {
     done
 }
 
+# Print every path under DIR, ROOT by default, with its kind, its link target and, for a file,
+# its SHA-256, so that two calls differ when anything there was added, removed or changed.
+tree_state() {
+    local dir=${1:-$ROOT}
+    (cd "$dir" && find . -printf '%y %p %l\n' | LC_ALL=C sort &&
+        find . -type f -exec sha256sum {} + | LC_ALL=C sort)
+}
+
 # Print the backup directories, oldest first.
 backups() {
     (cd "$ROOT$BACKUPS" 2> /dev/null && find . -mindepth 1 -maxdepth 1 | sed 's#^\./##' | sort)
@@ -442,6 +450,26 @@ backups() {
     [[ "$stderr" == *"the links in /boot and / are in place already; nothing to do"* ]]
     refute_line_match '^linux-update-symlinks' "$STUB_LOG"
     [ "$(backups)" = 20261112T090001Z ]
+}
+
+@test "A dry run of system, and of all once detect is done, plans and changes nothing" {
+    local before args
+    # With grub_floor set too, detect has nothing to do, and all goes on to system.
+    detected 'grub_floor = 2.06'
+    before=$(tree_state)
+    for args in "--stage system --dry-run" "--dry-run"; do
+        : > "$STUB_LOG"
+        # shellcheck disable=SC2086 # the options are meant to split
+        run_ku migrate $args
+        [ "$status" -eq 0 ]
+        [[ "$stderr" == *"plan:"* ]]
+        [[ "$stderr" == *"dry run: nothing was changed"* ]]
+        [ "$(tree_state)" = "$before" ]
+        [ -z "$(backups)" ]
+        refute_line_match '^(linux-update-symlinks|debconf-set-selections|chown)' "$STUB_LOG"
+    done
+    # all stops after system, whose result the menu stage's plan builds on.
+    [[ "$stderr" == *"dry run: the stages after system build on what it would change"* ]]
 }
 
 @test "system takes the running kernel as the previous one, and a lone kernel for both" {
@@ -856,6 +884,24 @@ read it; nothing was changed"* ]]
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"rollback of the menu stage run $stamp"* ]]
     private_output
+}
+
+@test "A dry run of finalize plans the removal and changes nothing, the stick included" {
+    local before stick backups_before
+    system_done
+    run_ku migrate --stage menu --yes
+    [ "$status" -eq 0 ]
+    before=$(tree_state) stick=$(tree_state "$KU_P1_DIR") backups_before=$(backups)
+    : > "$STUB_LOG"
+    run_ku migrate --stage finalize --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"plan: grub.cfg: remove lines 65 to 137, the submenu"* ]]
+    [[ "$stderr" == *"dry run"*"nothing was"* ]]
+    [ "$(tree_state)" = "$before" ]
+    [ "$(tree_state "$KU_P1_DIR")" = "$stick" ]
+    [ "$(backups)" = "$backups_before" ]
+    [ ! -e "$ROOT/var/lib/kernel-updater/baseline" ]
+    cmp "$BATS_TEST_TMPDIR/grub.after" "$GRUB/grub.cfg"
 }
 
 @test "finalize removes the legacy entries, records the baseline, and rolls back" {
