@@ -27,6 +27,14 @@ Each version is the GitHub release `vX.Y.Z`.
 - Windows step E writes only the files that differ from the stick's, each checked after the copy,
   instead of rewriting all of `multibootusb\grub`. A file whose SHA-256 cannot be read stops the
   Windows steps instead of passing for equal.
+- The migration guide says how the release reaches Windows for its scripts: download and check
+  it with `curl.exe`, `Get-FileHash` and `tar`, and what to do when PowerShell refuses a script a
+  browser marked. It quotes both texts of check's `initrd` line.
+- The README, the guides and `SECURITY.md` match the tool where they did not: lint's search hints,
+  the items that follow `link_in_boot`, the system stage's five refusals, the skipped quarantine,
+  a `dpkg -i` of a lone `linux-binary` package, the keys detect fills, the volumes kernel-updater
+  writes as they are, the conditions of `--write-fat`, the readable-initrd warning and where
+  apt-guard runs.
 
 ## [1.0.0] - 2026-11-28
 

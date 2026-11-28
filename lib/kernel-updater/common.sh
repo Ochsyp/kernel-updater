@@ -16,8 +16,9 @@ declare -g KU_EX_FAILURE=1 KU_EX_FINDINGS=2 KU_EX_REFUSED=3 KU_EX_WRITE=4 KU_EX_
 
 # Seams for the tests: the root every system path is resolved under, the terminal
 # confirmations are read from, and the lock file. They come from the environment only with
-# KU_TEST=1, which the tests set, so a KU_ROOT left in root's environment, as with sudo -E,
-# never steers what the tool and the hooks dpkg and apt run as root read or write.
+# KU_TEST=1, which the tests set, so a KU_ROOT alone left in root's environment, as with
+# sudo -E, never steers what the tool and the hooks dpkg and apt run as root read or write; one
+# that comes with KU_TEST=1 does.
 if [[ ${KU_TEST:-} == 1 ]]; then
     KU_ROOT=${KU_ROOT:-/}
     KU_TTY=${KU_TTY:-/dev/tty}

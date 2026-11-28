@@ -295,7 +295,7 @@ fallback, and it stays as it is until the new one has booted.
 2. Rebuild it: `sudo update-initramfs -u -k VERSION`.
 3. Run `sudo /usr/local/bin/kernel-updater check`. Its `initrd` item checks that the initrd
    holds the kernel's modules, `cryptsetup`, the cryptroot configuration and the key files. It
-   warns when group or others can read the initrd.
+   warns when the initrd holds key files and group or others can read it.
 4. Boot "Kali GNU/Linux".
 5. When it fails, boot "Kali GNU/Linux (previous kernel)" and put the copy back:
    `sudo cp -p /root/initrd.img-VERSION /boot/`.

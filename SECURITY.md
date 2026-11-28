@@ -21,9 +21,11 @@ that only `KU_TEST=1` opens.
 
 ## Known exposure
 
-The tool runs as root, from the command line and from the kernel and apt hooks on every kernel
-install. A change merged here reaches root on the stick's Kali once it is installed there by
-hand, so the maintainer's review of each pull request is the gate.
+The tool runs as root, from the command line and from the kernel hooks on every kernel install.
+apt-guard runs as root on every apt run that starts dpkg, and starts the tool only when the run
+touches kernel, initramfs-tools or grub-pc packages. A change merged here reaches root on the
+stick's Kali once it is installed there by hand, so the maintainer's review of each pull request
+is the gate.
 
 Partition 1 is FAT or NTFS, which Windows, and any user who mounts it, can change. The tool
 follows no symlink there, writes it only through its safe writer, and check's tripwire reports a
