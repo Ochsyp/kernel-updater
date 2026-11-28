@@ -704,7 +704,15 @@ others_ok() {
         expect_item "$name" skip "--no-partition leaves partition 1 alone"
     done
     others_ok
-    refute_line_match '^(lsblk|blkid)|^mount -t ' "$STUB_LOG"
+    # Partition 1 is neither looked for nor mounted; only the initrd item asks lsblk what lies
+    # under the root filesystem.
+    refute_line_match '^blkid|^mount -t ' "$STUB_LOG"
+    local call
+    while IFS= read -r call; do
+        [[ $call != lsblk* || $call == *" -s "*kali--vg-root* ]] && continue
+        printf 'partition 1 was looked for: %s\n' "$call" >&2
+        return 1
+    done < "$STUB_LOG"
     run_ku check --help
     [[ "$output" == *"--no-partition  skip the partition-1 items"* ]]
 }

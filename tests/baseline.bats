@@ -226,9 +226,11 @@ expected_baseline() {
 @test "ku_baseline_record records nothing for a partition 1 that holds none of the files" {
     local empty="$BATS_TEST_TMPDIR/empty"
     mkdir "$empty"
+    # shellcheck disable=SC2016 # the code expands its own arguments
     run_ku_lib 'ku_baseline_record "$1"' "$empty"
     [ "$status" -eq 1 ]
     [ ! -e "$ROOT$BASELINE" ]
+    # shellcheck disable=SC2016 # the code expands its own arguments
     run_ku_lib 'ku_baseline_record "$1"' "$KU_P1_DIR"
     [ "$status" -eq 0 ]
     [ "$(< "$ROOT$BASELINE")" = "$(expected_baseline)" ]
