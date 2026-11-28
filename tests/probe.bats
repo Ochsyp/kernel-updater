@@ -253,17 +253,22 @@ EOF
     [ -z "$output" ]
 }
 
-@test "The root crypt probe names the mappings under /, and fails when it cannot tell" {
-    # ROOT_SOURCE is what findmnt prints for /; LSBLK_S what lsblk -s lists below it.
-    export ROOT_SOURCE=/dev/mapper/kali--vg-root
+@test "The crypt probe names the mappings under / and the swaps, or fails when it cannot tell" {
+    # ROOT_SOURCE is the device under /, which findmnt prints, or ROOT_PRINT when that is set;
+    # LSBLK_S is what lsblk -s lists below it. /dev/dm-2 is an encrypted swap on sdb5.
+    export ROOT_SOURCE=/dev/mapper/kali--vg-root ROOT_PRINT=""
     export LSBLK_S=$'kali--vg-root lvm\nroot_crypt crypt\nsdb4 part\nsdb disk'
     mkstub findmnt <<'EOF'
 [[ " $* " == *" --mountpoint / "* && -n $ROOT_SOURCE ]] || exit 1
-printf '%s\n' "$ROOT_SOURCE"
+printf '%s\n' "${ROOT_PRINT:-$ROOT_SOURCE}"
 EOF
     mkstub lsblk <<'EOF'
-[[ " $* " == *" -s "* && " $* " == *" $ROOT_SOURCE "* && -n $LSBLK_S ]] || exit 32
-printf '%s\n' "$LSBLK_S"
+[[ " $* " == *" -s "* ]] || exit 32
+case " $* " in
+    *" $ROOT_SOURCE "*) [[ -n $LSBLK_S ]] || exit 32; printf '%s\n' "$LSBLK_S" ;;
+    *" /dev/dm-2 "*) printf '%s\n' 'swap_crypt crypt' 'sdb5 part' 'sdb disk' ;;
+    *) exit 32 ;;
+esac
 EOF
     run ku_probe_root_crypt_names
     [ "$status" -eq 0 ]
@@ -288,17 +293,26 @@ EOF
     export ROOT_SOURCE=overlay LSBLK_S=$'overlay part'
     run ku_probe_root_crypt_names
     [ "$status" -eq 1 ]
-    # A resume device, which the initramfs unlocks too, is not followed: it cannot tell then.
-    export ROOT_SOURCE=/dev/mapper/root_crypt LSBLK_S=$'root_crypt crypt\nsdb4 part'
-    mkdir -p "$KU_ROOT/etc/initramfs-tools/conf.d"
-    printf 'RESUME=UUID=5ca1ab1e-0000-4000-8000-000000000d01\n' \
-        > "$KU_ROOT/etc/initramfs-tools/conf.d/resume"
-    run ku_probe_root_crypt_names
-    [ "$status" -eq 1 ]
-    printf '# no hibernation\nRESUME=none\n' > "$KU_ROOT/etc/initramfs-tools/conf.d/resume"
+    # A btrfs root shows its subvolume after the device, which lsblk does not take.
+    export ROOT_SOURCE=/dev/mapper/root_crypt ROOT_PRINT='/dev/mapper/root_crypt[/@rootfs]'
+    export LSBLK_S=$'root_crypt crypt\nsdb4 part'
     run ku_probe_root_crypt_names
     [ "$status" -eq 0 ]
     [ "$output" = root_crypt ]
+    # The initramfs unlocks a resume swap too, which it picks from the swaps itself, so the
+    # mappings under every partition swap count; a swap file lies on / already.
+    export ROOT_PRINT=""
+    mkdir -p "$KU_ROOT/proc"
+    printf '%s\n' 'Filename Type Size Used Priority' '/dev/dm-2 partition 999420 0 -2' \
+        '/swapfile file 1048572 0 -3' > "$KU_ROOT/proc/swaps"
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 0 ]
+    [ "$output" = $'root_crypt\nswap_crypt' ]
+    # A swap that lsblk cannot list means it cannot tell.
+    printf '%s\n' 'Filename Type Size Used Priority' '/dev/dm-9 partition 999420 0 -2' \
+        > "$KU_ROOT/proc/swaps"
+    run ku_probe_root_crypt_names
+    [ "$status" -eq 1 ]
 }
 
 @test "The initrd probe finds the modules, cryptsetup, the cryptroot configuration and key files" {

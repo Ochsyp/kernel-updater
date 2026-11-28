@@ -10,9 +10,10 @@ Each version is the GitHub release `vX.Y.Z`.
 ### Fixed
 
 - The postinst hook, `check`'s `initrd` item and `migrate`'s system stage want key files in the
-  initrd only for the `/etc/crypttab` entries the initramfs unlocks: a volume under `/`, or one
-  marked `initramfs`. A key file of a volume systemd unlocks later no longer stops a kernel
-  configure. When the volumes under `/` cannot be told, every key file counts, as before.
+  initrd only for the `/etc/crypttab` entries the initramfs unlocks: a volume under `/` or under
+  a swap partition, the resume device among them, or one marked `initramfs`. A key file of a
+  volume systemd unlocks later no longer stops a kernel configure. When `lsblk` cannot tell what
+  lies under them, every key file counts, as before.
 - `lint` ends a MultiBootUSB marker block at a bare `#end` line too, as `migrate` does, so no
   false `mbusb-marker` warning follows it.
 - `migrate`'s system stage exits 75 while apt or dpkg holds its lock, before its plan and again

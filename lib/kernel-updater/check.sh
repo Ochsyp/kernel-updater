@@ -520,10 +520,10 @@ _ku_check_initrd() {
 
 # Return 0 when an /etc/crypttab entry that the initramfs unlocks names a key file, which the
 # initrds must then hold so that root unlocks without a second password. cryptsetup-initramfs
-# unlocks the volumes under the root filesystem and the entries marked initramfs, and copies key
-# files only for those; a volume that systemd unlocks later keeps its key file out of the
-# initrd. When the volumes under / cannot be told (ku_probe_root_crypt_names), every entry with a
-# key file counts. A key that is a device, or none, does not count.
+# unlocks the volumes under the root filesystem and the resume swap, and the entries marked
+# initramfs, and copies key files only for those; a volume that systemd unlocks later keeps its
+# key file out of the initrd. When those volumes cannot be told (ku_probe_root_crypt_names),
+# every entry with a key file counts. A key that is a device, or none, does not count.
 ku_crypttab_names_keys() {
     local target key options names="" known=-1
     while IFS=$'\t' read -r target _ key options; do

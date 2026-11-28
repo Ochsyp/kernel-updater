@@ -203,30 +203,38 @@ ku_probe_crypttab() {
     done < "$file"
 }
 
-# Print the names of the dm-crypt mappings under the root filesystem, one per line, as lsblk -s
-# lists the devices below it: the volumes the initramfs unlocks to mount root. Returns 1 when it
-# cannot tell: findmnt or lsblk fails, as in a chroot without udev, / is no device, as in a
-# container, or a resume device is set, which the initramfs unlocks too and this does not follow.
+# Print the names of the dm-crypt mappings that the initramfs unlocks, one per line: those under
+# the root filesystem, and those under each partition in /proc/swaps, one of which initramfs-tools
+# may pick as the resume device; a swap file lies on / already. lsblk -s lists the devices below
+# each. Returns 1 when it cannot tell: findmnt or lsblk fails, as in a chroot without udev, / is
+# no device, as in a container, or /proc/swaps cannot be read.
 ku_probe_root_crypt_names() {
-    local source out name type line file
-    file=$(ku_path /etc/initramfs-tools/conf.d/resume)
-    if [[ -f $file ]]; then
-        while IFS= read -r line || [[ -n $line ]]; do
-            line=${line%$'\r'}
-            [[ $line =~ ^RESUME=(.*)$ ]] || continue
-            [[ -z ${BASH_REMATCH[1]} || ${BASH_REMATCH[1]} == none ]] || return 1
-        done < "$file"
-    fi
+    local source out name type file
+    local -a devices=()
     source=$(findmnt -n -r -o SOURCE --mountpoint / 2> /dev/null) || return 1
     source=${source%%[[:space:]]*}
+    # A btrfs subvolume shows as DEVICE[/SUBVOLUME].
+    source=${source%%\[*}
     [[ $source == /dev/?* ]] || return 1
-    out=$(lsblk -s -n -r -o NAME,TYPE -- "$source" 2> /dev/null) || return 1
-    [[ -n $out ]] || return 1
-    while read -r name type _; do
-        if [[ $type == crypt ]]; then
-            printf '%s\n' "${name##*/}"
-        fi
-    done <<< "$out"
+    devices=("$source")
+    file=$(ku_path /proc/swaps)
+    if [[ -e $file ]]; then
+        [[ -r $file ]] || return 1
+        while read -r name type _; do
+            if [[ $type == partition && $name == /dev/?* ]]; then
+                devices+=("$name")
+            fi
+        done < "$file"
+    fi
+    for source in "${devices[@]}"; do
+        out=$(lsblk -s -n -r -o NAME,TYPE -- "$source" 2> /dev/null) || return 1
+        [[ -n $out ]] || return 1
+        while read -r name type _; do
+            if [[ $type == crypt ]]; then
+                printf '%s\n' "${name##*/}"
+            fi
+        done <<< "$out"
+    done
 }
 
 # Print SOURCE<TAB>MOUNTPOINT<TAB>TYPE for each /etc/fstab entry.
